@@ -182,7 +182,11 @@ class SwarRoomViewModel(
       else repository.observeDirectMessages(convoId).catch { emit(emptyList()) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
-  // --- Live Voice Mic State ---
+  // --- Live Voice Mic & Agora Audio State ---
+  val isAgoraConfigured: Boolean
+    get() = audioEngine.isAgoraConfigured
+  val isAgoraConnected: StateFlow<Boolean> = audioEngine.isAgoraConnected
+  val agoraStatusText: StateFlow<String> = audioEngine.agoraStatusText
   val micAudioLevel: StateFlow<Float> = audioEngine.audioLevel
   val isLocalSpeaking: StateFlow<Boolean> = audioEngine.isSpeaking
   val isMicCapturing: StateFlow<Boolean> = audioEngine.isCapturing
@@ -254,6 +258,19 @@ class SwarRoomViewModel(
           .filter { it.isNotBlank() && it !in _memberProfiles.value }
           .distinct()
           .forEach { uid -> loadUserProfile(uid) }
+
+        if (_activeRoomId.value != null) {
+          val mySeat = seats.firstOrNull { it.occupantUid == currentUserId }
+          if (mySeat == null) {
+            if (!_isMicMuted.value) _isMicMuted.value = true
+            audioEngine.updateSeatPublishState(isSeated = false, isMuted = true)
+          } else {
+            if (mySeat.isMuted && !_isMicMuted.value) {
+              _isMicMuted.value = true
+            }
+            audioEngine.updateSeatPublishState(isSeated = true, isMuted = _isMicMuted.value)
+          }
+        }
       }
     }
   }
@@ -367,9 +384,15 @@ class SwarRoomViewModel(
     }
     if (prevRoomId != null) {
       stopMicEngine()
+      audioEngine.leaveRoomVoice()
     }
     _activeRoomId.value = roomId
     audioEngine.setSpeakerphone(_isSpeakerOn.value)
+    audioEngine.joinRoomVoice(
+      roomId = roomId,
+      isBroadcaster = false,
+      isMuted = true,
+    )
     viewModelScope.launch {
       if (prevRoomId != null) {
         vacateRoomPresence(prevRoomId, prevSeatHint)
@@ -410,6 +433,7 @@ class SwarRoomViewModel(
     }
     val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
     stopMicEngine()
+    audioEngine.leaveRoomVoice()
     _isRoomMinimized.value = false
     _activeRoomId.value = null
     viewModelScope.launch {
@@ -581,10 +605,9 @@ class SwarRoomViewModel(
     }
     val nextMuted = !_isMicMuted.value
     _isMicMuted.value = nextMuted
-    if (nextMuted) {
-      audioEngine.stopCapture()
-    } else {
-      audioEngine.startCapture()
+    audioEngine.updateSeatPublishState(isSeated = true, isMuted = nextMuted)
+    if (!nextMuted && !audioEngine.isAgoraConfigured) {
+      _events.tryEmit("लाइव मल्टी-यूज़र आवाज़ के लिए AI Studio Secrets में AGORA_APP_ID जोड़ें।")
     }
     viewModelScope.launch {
       repository.updateSeatAudioState(
@@ -600,7 +623,7 @@ class SwarRoomViewModel(
     val room = activeRoom.value ?: return
     val mySeat = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId } ?: return
     _isMicMuted.value = false
-    audioEngine.startCapture()
+    audioEngine.updateSeatPublishState(isSeated = true, isMuted = false)
     viewModelScope.launch {
       repository.updateSeatAudioState(room.id, mySeat.seatIndex.toInt(), isMuted = false, isSpeaking = false)
     }
@@ -620,7 +643,7 @@ class SwarRoomViewModel(
 
   private fun stopMicEngine() {
     _isMicMuted.value = true
-    audioEngine.stopCapture()
+    audioEngine.updateSeatPublishState(isSeated = false, isMuted = true)
   }
 
   // --- Room Real-Time Text Chat & Gifts ---

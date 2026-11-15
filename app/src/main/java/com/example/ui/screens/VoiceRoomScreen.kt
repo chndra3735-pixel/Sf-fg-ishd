@@ -216,6 +216,8 @@ fun VoiceRoomScreen(
       onShowToast("अभी कोई खाली सीट उपलब्ध नहीं है।")
     }
   },
+  isAgoraConnected: Boolean = false,
+  agoraStatusText: String = "",
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -1313,6 +1315,8 @@ fun VoiceRoomScreen(
       room = room,
       isHost = isHost,
       isMonitorLoopbackOn = isMonitorLoopbackOn,
+      isAgoraConnected = isAgoraConnected,
+      agoraStatusText = agoraStatusText,
       onToggleMonitorLoopback = onToggleMonitorLoopback,
       onSave = { newTitle, newTheme, newNotice ->
         onUpdateRoomSettings(newTitle, newTheme, newNotice)
@@ -2168,6 +2172,8 @@ private fun RoomSettingsDialog(
   room: VoiceRoom,
   isHost: Boolean,
   isMonitorLoopbackOn: Boolean,
+  isAgoraConnected: Boolean,
+  agoraStatusText: String,
   onToggleMonitorLoopback: () -> Unit,
   onSave: (String, String, String) -> Unit,
   onDismiss: () -> Unit,
@@ -2181,6 +2187,28 @@ private fun RoomSettingsDialog(
     title = { Text("रूम और ऑडियो सेटिंग्स") },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (agoraStatusText.isNotBlank()) {
+          Surface(
+            color = if (isAgoraConnected) SwarMint.copy(alpha = 0.14f) else SwarCyan.copy(alpha = 0.12f),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .border(
+                1.dp,
+                if (isAgoraConnected) SwarMint.copy(alpha = 0.5f) else SwarCyan.copy(alpha = 0.4f),
+                RoundedCornerShape(12.dp),
+              ),
+          ) {
+            Text(
+              text = "Agora वॉइस इंजन: $agoraStatusText",
+              style = MaterialTheme.typography.bodySmall,
+              color = if (isAgoraConnected) SwarMint else SwarCyan,
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+          }
+        }
+
         Row(
           modifier = Modifier.fillMaxWidth(),
           verticalAlignment = Alignment.CenterVertically,

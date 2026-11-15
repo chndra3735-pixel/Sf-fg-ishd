@@ -338,6 +338,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isRoomMinimized by viewModel.isRoomMinimized.collectAsStateWithLifecycle()
   val memberProfiles by viewModel.memberProfiles.collectAsStateWithLifecycle()
   val blockedUserIds by viewModel.blockedUserIds.collectAsStateWithLifecycle()
+  val isAgoraConnected by viewModel.isAgoraConnected.collectAsStateWithLifecycle()
+  val agoraStatusText by viewModel.agoraStatusText.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
@@ -451,6 +453,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onSitOnAvailableSeat = { hasPerm, requestPerm ->
           viewModel.sitOnFirstAvailableSeat(hasPerm, requestPerm)
         },
+        isAgoraConnected = isAgoraConnected,
+        agoraStatusText = agoraStatusText,
       )
       SnackbarHost(
         hostState = snackbarHostState,
