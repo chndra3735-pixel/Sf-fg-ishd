@@ -269,7 +269,7 @@ class SwarRoomViewModel(
         seatCount = seatCount,
         hostProfile = currentProfileOrDefault(),
       ).onSuccess { roomId ->
-        enterRoom(roomId, sendJoinMessage = false)
+        enterRoom(roomId, sendJoinMessage = false, incrementListenerCount = false)
         onRoomCreated(roomId)
       }.onFailure { err ->
         _events.tryEmit(err.message ?: "रूम बनाने में त्रुटि हुई")
@@ -277,14 +277,34 @@ class SwarRoomViewModel(
     }
   }
 
-  fun enterRoom(roomId: String, sendJoinMessage: Boolean = true) {
-    if (_activeRoomId.value == roomId) return
+  fun enterRoom(
+    roomId: String,
+    sendJoinMessage: Boolean = true,
+    incrementListenerCount: Boolean = true,
+  ) {
+    val prevRoomId = _activeRoomId.value
+    if (prevRoomId == roomId) return
+    val prevSeatHint = if (prevRoomId != null) {
+      activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
+    } else {
+      null
+    }
+    if (prevRoomId != null) {
+      stopMicEngine()
+    }
     _activeRoomId.value = roomId
     audioEngine.setSpeakerphone(_isSpeakerOn.value)
     viewModelScope.launch {
-      repository.adjustListenerCount(roomId, 1L)
+      if (prevRoomId != null) {
+        vacateRoomPresence(prevRoomId, prevSeatHint)
+      }
+      if (incrementListenerCount) {
+        repository.adjustListenerCount(roomId, 1L)
+      }
       if (sendJoinMessage) {
-        val room = activeRoom.value
+        val room = (rooms.value as? UiState.Success)?.data?.firstOrNull { it.id == roomId }
+          ?: activeRoom.value?.takeIf { it.id == roomId }
+          ?: repository.getRoom(roomId)
         val profile = currentProfileOrDefault()
         if (room != null) {
           repository.sendRoomSystemMessage(
@@ -302,19 +322,29 @@ class SwarRoomViewModel(
     }
   }
 
-  fun leaveActiveRoom() {
-    val roomId = _activeRoomId.value ?: return
-    val mySeat = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }
+  fun leaveActiveRoom(onComplete: (() -> Unit)? = null) {
+    val roomId = _activeRoomId.value
+    if (roomId == null) {
+      onComplete?.invoke()
+      return
+    }
+    val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
     stopMicEngine()
     _activeRoomId.value = null
     viewModelScope.launch {
-      if (mySeat != null && mySeat.seatIndex != 0L) {
-        repository.leaveSeat(roomId, mySeat.seatIndex.toInt())
-      } else if (mySeat != null) {
-        repository.updateSeatAudioState(roomId, 0, isMuted = true, isSpeaking = false)
+      try {
+        vacateRoomPresence(roomId, seatHint)
+      } finally {
+        onComplete?.invoke()
       }
-      repository.adjustListenerCount(roomId, -1L)
     }
+  }
+
+  private suspend fun vacateRoomPresence(roomId: String, seatHint: Int?) {
+    runCatching { repository.vacateUserSeatsInRoom(roomId, seatHint) }
+      .onFailure { err -> Log.w(TAG, "Vacate seats error in $roomId", err) }
+    runCatching { repository.adjustListenerCount(roomId, -1L) }
+      .onFailure { err -> Log.w(TAG, "Decrement listenerCount error in $roomId", err) }
   }
 
   // --- Seat & Live Mic Controls ---
@@ -507,6 +537,7 @@ class SwarRoomViewModel(
 
   fun uploadAndSaveAvatarDp(uri: Uri) {
     viewModelScope.launch {
+      val previousAvatarUrl = currentProfileOrDefault().avatarUrl
       _isUploadingMedia.value = true
       val result = supabaseStorage.uploadMediaFromUri(
         uri = uri,
@@ -525,7 +556,26 @@ class SwarRoomViewModel(
           clubTag = profile.clubTag,
           avatarUrl = publicUrl,
         ).onSuccess {
-          _events.tryEmit("DP Supabase Storage पर सफलतापूर्वक अपडेट हो गई!")
+          val activeId = _activeRoomId.value
+          if (activeId != null) {
+            repository.updateUserSeatProfile(activeId, profile.displayName, publicUrl)
+          }
+          if (previousAvatarUrl.isNotBlank() && previousAvatarUrl != publicUrl) {
+            supabaseStorage.deleteMediaByPublicUrl(previousAvatarUrl)
+              .onSuccess { deleted ->
+                if (deleted) {
+                  _events.tryEmit("DP अपडेट हो गई और पुरानी DP Supabase से डिलीट हो गई!")
+                } else {
+                  _events.tryEmit("DP Supabase Storage पर सफलतापूर्वक अपडेट हो गई!")
+                }
+              }
+              .onFailure { err ->
+                Log.w(TAG, "Old DP delete failed", err)
+                _events.tryEmit("नई DP सेव हुई, पर पुरानी DP हटाने में त्रुटि: ${err.message}")
+              }
+          } else {
+            _events.tryEmit("DP Supabase Storage पर सफलतापूर्वक अपडेट हो गई!")
+          }
         }.onFailure {
           _events.tryEmit("प्रोफ़ाइल URL सहेजने में त्रुटि हुई।")
         }
@@ -572,8 +622,20 @@ class SwarRoomViewModel(
   }
 
   fun deleteMoment(momentId: String) {
+    val targetMoment = (moments.value as? UiState.Success)?.data?.firstOrNull { it.id == momentId }
     viewModelScope.launch {
       repository.deleteMoment(momentId)
+        .onSuccess {
+          val mediaUrl = targetMoment?.mediaUrl.orEmpty()
+          if (mediaUrl.isNotBlank()) {
+            supabaseStorage.deleteMediaByPublicUrl(mediaUrl)
+              .onFailure { err -> Log.w(TAG, "Moment Supabase cleanup failed", err) }
+          }
+          _events.tryEmit("मोमेंट डिलीट हो गया।")
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "मोमेंट डिलीट नहीं हो सका")
+        }
     }
   }
 
@@ -586,7 +648,13 @@ class SwarRoomViewModel(
   ) {
     viewModelScope.launch {
       repository.updateUserProfile(displayName, handle, bio, gender, clubTag)
-        .onSuccess { _events.tryEmit("प्रोफ़ाइल सहेजी गई") }
+        .onSuccess {
+          val activeId = _activeRoomId.value
+          if (activeId != null) {
+            repository.updateUserSeatProfile(activeId, displayName, currentProfileOrDefault().avatarUrl)
+          }
+          _events.tryEmit("प्रोफ़ाइल सहेजी गई")
+        }
         .onFailure { _events.tryEmit("प्रोफ़ाइल अपडेट विफल") }
     }
   }
@@ -706,6 +774,237 @@ class SwarRoomViewModel(
       }.onFailure { err ->
         _events.tryEmit(err.message ?: "गिफ्ट जोड़ने में त्रुटि")
       }
+    }
+  }
+
+  fun updateCustomEmoji(
+    existing: EmojiCatalogItem,
+    label: String,
+    category: String,
+    symbol: String,
+    newImageUri: Uri?,
+    removeExistingImage: Boolean,
+    onSuccess: () -> Unit,
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही इमोजी अपडेट किया जा सकता है।")
+      return
+    }
+    if (existing.id.isBlank() || existing.id.startsWith("def_")) {
+      _events.tryEmit("डिफ़ॉल्ट इमोजी बदला नहीं जा सकता।")
+      return
+    }
+    viewModelScope.launch {
+      val oldImageUrl = existing.imageUrl
+      var finalImageUrl = if (removeExistingImage) "" else oldImageUrl
+      if (newImageUri != null) {
+        _isUploadingMedia.value = true
+        val upload = supabaseStorage.uploadMediaFromUri(
+          uri = newImageUri,
+          folder = "emojis",
+          uid = currentUserId,
+          isVideo = false,
+        )
+        _isUploadingMedia.value = false
+        upload.onSuccess { finalImageUrl = it }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "नई इमोजी इमेज अपलोड विफल")
+            return@launch
+          }
+      }
+      repository.updateEmojiInCatalog(
+        emojiId = existing.id,
+        label = label,
+        category = category,
+        symbol = symbol,
+        imageUrl = finalImageUrl,
+      ).onSuccess {
+        if (oldImageUrl.isNotBlank() && oldImageUrl != finalImageUrl) {
+          supabaseStorage.deleteMediaByPublicUrl(oldImageUrl)
+            .onFailure { err -> Log.w(TAG, "Old emoji image delete warning", err) }
+        }
+        _events.tryEmit("इमोजी अपडेट हो गया! ✨")
+        onSuccess()
+      }.onFailure { err ->
+        _events.tryEmit(err.message ?: "इमोजी अपडेट करने में त्रुटि")
+      }
+    }
+  }
+
+  fun deleteCustomEmoji(
+    item: EmojiCatalogItem,
+    onSuccess: () -> Unit,
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन ही इमोजी डिलीट कर सकते हैं।")
+      return
+    }
+    if (item.id.isBlank() || item.id.startsWith("def_")) {
+      _events.tryEmit("डिफ़ॉल्ट इमोजी डिलीट नहीं किया जा सकता।")
+      return
+    }
+    viewModelScope.launch {
+      _isUploadingMedia.value = true
+      repository.deleteEmojiFromCatalog(item.id)
+        .onSuccess {
+          val oldImageUrl = item.imageUrl
+          if (oldImageUrl.isNotBlank()) {
+            supabaseStorage.deleteMediaByPublicUrl(oldImageUrl)
+              .onSuccess { deleted ->
+                _events.tryEmit(
+                  if (deleted) "इमोजी ऐप और Supabase Storage दोनों से डिलीट हो गया!"
+                  else "इमोजी ऐप से डिलीट हो गया!"
+                )
+              }
+              .onFailure { err ->
+                _events.tryEmit("ऐप से इमोजी हटाया गया, पर Supabase फ़ाइल डिलीट नहीं हुई: ${err.message}")
+              }
+          } else {
+            _events.tryEmit("इमोजी पूरी तरह डिलीट हो गया!")
+          }
+          onSuccess()
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "इमोजी डिलीट करने में त्रुटि")
+        }
+      _isUploadingMedia.value = false
+    }
+  }
+
+  fun updateCustomGift(
+    existing: GiftCatalogItem,
+    name: String,
+    category: String,
+    emoji: String,
+    coinCost: Long,
+    newThumbnailUri: Uri?,
+    newVideoUri: Uri?,
+    removeExistingThumbnail: Boolean,
+    removeExistingVideo: Boolean,
+    onSuccess: () -> Unit,
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही गिफ्ट अपडेट किया जा सकता है।")
+      return
+    }
+    if (existing.id.isBlank() || existing.id.startsWith("def_")) {
+      _events.tryEmit("डिफ़ॉल्ट गिफ्ट बदला नहीं जा सकता।")
+      return
+    }
+    viewModelScope.launch {
+      val oldThumbUrl = existing.thumbnailUrl
+      val oldVideoUrl = if (existing.mediaType == "video") existing.mediaUrl else ""
+
+      var finalThumbUrl = if (removeExistingThumbnail) "" else oldThumbUrl
+      var finalVideoUrl = if (removeExistingVideo) "" else oldVideoUrl
+
+      if (newThumbnailUri != null) {
+        _isUploadingMedia.value = true
+        val upload = supabaseStorage.uploadMediaFromUri(
+          uri = newThumbnailUri,
+          folder = "gifts",
+          uid = currentUserId,
+          isVideo = false,
+        )
+        _isUploadingMedia.value = false
+        upload.onSuccess { finalThumbUrl = it }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "नया थंबनेल अपलोड विफल")
+            return@launch
+          }
+      }
+
+      if (newVideoUri != null) {
+        _isUploadingMedia.value = true
+        _events.tryEmit("नया गिफ्ट वीडियो कम MB में कम्प्रेश व अपलोड हो रहा है...")
+        val upload = supabaseStorage.uploadMediaFromUri(
+          uri = newVideoUri,
+          folder = "gifts",
+          uid = currentUserId,
+          isVideo = true,
+        )
+        _isUploadingMedia.value = false
+        upload.onSuccess { finalVideoUrl = it }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "नया गिफ्ट वीडियो अपलोड विफल")
+            return@launch
+          }
+      }
+
+      val finalMediaType = when {
+        finalVideoUrl.isNotBlank() -> "video"
+        finalThumbUrl.isNotBlank() -> "image"
+        else -> "emoji"
+      }
+      val finalMediaUrl = finalVideoUrl.ifBlank { finalThumbUrl }
+
+      repository.updateGiftInCatalog(
+        giftId = existing.id,
+        name = name,
+        category = category,
+        emoji = emoji,
+        thumbnailUrl = finalThumbUrl,
+        mediaUrl = finalMediaUrl,
+        mediaType = finalMediaType,
+        coinCost = coinCost,
+      ).onSuccess {
+        val obsoleteUrls = buildList {
+          if (oldThumbUrl.isNotBlank() && oldThumbUrl != finalThumbUrl && oldThumbUrl != finalMediaUrl) {
+            add(oldThumbUrl)
+          }
+          if (oldVideoUrl.isNotBlank() && oldVideoUrl != finalVideoUrl && oldVideoUrl != finalThumbUrl) {
+            add(oldVideoUrl)
+          }
+        }
+        if (obsoleteUrls.isNotEmpty()) {
+          supabaseStorage.deleteMediaByPublicUrls(obsoleteUrls)
+            .onFailure { err -> Log.w(TAG, "Replaced gift media delete warning", err) }
+        }
+        _events.tryEmit("गिफ्ट सफलतापूर्वक अपडेट हो गया! 🎁")
+        onSuccess()
+      }.onFailure { err ->
+        _events.tryEmit(err.message ?: "गिफ्ट अपडेट करने में त्रुटि")
+      }
+    }
+  }
+
+  fun deleteCustomGift(
+    gift: GiftCatalogItem,
+    onSuccess: () -> Unit,
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन ही गिफ्ट डिलीट कर सकते हैं।")
+      return
+    }
+    if (gift.id.isBlank() || gift.id.startsWith("def_")) {
+      _events.tryEmit("डिफ़ॉल्ट गिफ्ट डिलीट नहीं किया जा सकता।")
+      return
+    }
+    viewModelScope.launch {
+      _isUploadingMedia.value = true
+      repository.deleteGiftFromCatalog(gift.id)
+        .onSuccess {
+          val mediaUrls = listOf(gift.thumbnailUrl, gift.mediaUrl).filter { it.isNotBlank() }.distinct()
+          if (mediaUrls.isNotEmpty()) {
+            supabaseStorage.deleteMediaByPublicUrls(mediaUrls)
+              .onSuccess { deletedCount ->
+                _events.tryEmit(
+                  if (deletedCount > 0) "गिफ्ट ऐप और Supabase Storage दोनों से पूरी तरह डिलीट हो गया!"
+                  else "गिफ्ट ऐप से पूरी तरह डिलीट हो गया!"
+                )
+              }
+              .onFailure { err ->
+                _events.tryEmit("ऐप से गिफ्ट हटाया गया, पर Supabase फ़ाइल डिलीट नहीं हुई: ${err.message}")
+              }
+          } else {
+            _events.tryEmit("गिफ्ट पूरी तरह डिलीट हो गया!")
+          }
+          onSuccess()
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "गिफ्ट डिलीट करने में त्रुटि")
+        }
+      _isUploadingMedia.value = false
     }
   }
 

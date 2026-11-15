@@ -176,6 +176,19 @@ class SwarRoomRepository(
     )
   }
 
+  suspend fun getRoom(roomId: String): VoiceRoom? {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    return try {
+      docRef.get().await().toObject(VoiceRoom::class.java, ServerTimestampBehavior.ESTIMATE)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.GET, docRef.path)
+      null
+    }
+  }
+
   suspend fun createRoom(
     title: String,
     category: String,
@@ -419,6 +432,98 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.UPDATE, seatRef.path)
+      throw e
+    }
+  }
+
+  suspend fun vacateUserSeatsInRoom(
+    roomId: String,
+    seatIndexHint: Int? = null,
+  ): Result<Int> = runCatching {
+    val uid = requireUserId()
+    val seatsCollection = db.collection("rooms").document(roomId).collection("seats")
+    val emptyUpdates = mapOf(
+      "occupantUid" to "",
+      "occupantName" to "",
+      "occupantAvatarUrl" to "",
+      "isMuted" to false,
+      "isSpeaking" to false,
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    var vacatedCount = 0
+    try {
+      val matching = seatsCollection
+        .whereEqualTo("isRoomPublic", true)
+        .whereEqualTo("occupantUid", uid)
+        .get()
+        .await()
+      if (!matching.isEmpty) {
+        val batch = db.batch()
+        matching.documents.forEach { doc ->
+          batch.update(doc.reference, emptyUpdates)
+          vacatedCount++
+        }
+        batch.commit().await()
+      } else if (seatIndexHint != null) {
+        val seatRef = seatsCollection.document("seat_$seatIndexHint")
+        val snap = seatRef.get().await()
+        if (snap.exists() && snap.getString("occupantUid") == uid) {
+          seatRef.update(emptyUpdates).await()
+          vacatedCount++
+        }
+      }
+      vacatedCount
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, "rooms/$roomId/seats")
+      throw e
+    }
+  }
+
+  suspend fun updateUserSeatProfile(
+    roomId: String,
+    displayName: String,
+    avatarUrl: String,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val safeName = displayName.trim().take(40).ifBlank { "Swar User" }
+    val safeAvatar = avatarUrl.take(600)
+    val roomRef = db.collection("rooms").document(roomId)
+    try {
+      val roomSnap = roomRef.get().await()
+      if (roomSnap.exists() && roomSnap.getString("ownerId") == uid) {
+        roomRef.update(
+          mapOf(
+            "ownerName" to safeName,
+            "ownerAvatarUrl" to safeAvatar,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          )
+        ).await()
+      }
+      val matchingSeats = roomRef.collection("seats")
+        .whereEqualTo("isRoomPublic", true)
+        .whereEqualTo("occupantUid", uid)
+        .get()
+        .await()
+      if (!matchingSeats.isEmpty) {
+        val batch = db.batch()
+        matchingSeats.documents.forEach { doc ->
+          batch.update(
+            doc.reference,
+            mapOf(
+              "occupantName" to safeName,
+              "occupantAvatarUrl" to safeAvatar,
+              "updatedAt" to FieldValue.serverTimestamp(),
+            ),
+          )
+        }
+        batch.commit().await()
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, roomRef.path)
       throw e
     }
   }
@@ -749,6 +854,51 @@ class SwarRoomRepository(
     }
   }
 
+  suspend fun updateEmojiInCatalog(
+    emojiId: String,
+    label: String,
+    category: String,
+    symbol: String,
+    imageUrl: String,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val cleanLabel = label.trim().take(30).ifBlank { "कस्टम इमोजी" }
+    val cleanSymbol = symbol.trim().take(16)
+    val cleanImage = imageUrl.trim().take(800)
+    require(cleanSymbol.isNotEmpty() || cleanImage.isNotEmpty()) {
+      "इमोजी चिह्न या इमेज में से कम से कम एक आवश्यक है।"
+    }
+    val docRef = db.collection("emoji_catalog").document(emojiId)
+    val updates = mapOf(
+      "label" to cleanLabel,
+      "category" to category.trim().take(24).ifBlank { "ट्रेंडिंग" },
+      "symbol" to cleanSymbol,
+      "imageUrl" to cleanImage,
+      "isActive" to true,
+    )
+    try {
+      docRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun deleteEmojiFromCatalog(emojiId: String): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("emoji_catalog").document(emojiId)
+    try {
+      docRef.delete().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.DELETE, docRef.path)
+      throw e
+    }
+  }
+
   fun observeGiftCatalog(): Flow<List<GiftCatalogItem>> = flow {
     val uid = requireUserId()
     val query = db.collection("gift_catalog").whereEqualTo("isActive", true)
@@ -795,6 +945,53 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateGiftInCatalog(
+    giftId: String,
+    name: String,
+    category: String,
+    emoji: String,
+    thumbnailUrl: String,
+    mediaUrl: String,
+    mediaType: String,
+    coinCost: Long,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("gift_catalog").document(giftId)
+    val safeMediaType = if (mediaType in listOf("emoji", "image", "video")) mediaType else "emoji"
+    val safeCost = coinCost.coerceIn(1L, 999999L)
+    val updates = mapOf(
+      "name" to name.trim().take(40).ifBlank { "स्पेशल गिफ्ट" },
+      "category" to category.trim().take(24).ifBlank { "हॉट" },
+      "emoji" to emoji.trim().take(16).ifBlank { "🎁" },
+      "thumbnailUrl" to thumbnailUrl.trim().take(800),
+      "mediaUrl" to mediaUrl.trim().take(800),
+      "mediaType" to safeMediaType,
+      "coinCost" to safeCost,
+      "isActive" to true,
+    )
+    try {
+      docRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun deleteGiftFromCatalog(giftId: String): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("gift_catalog").document(giftId)
+    try {
+      docRef.delete().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.DELETE, docRef.path)
       throw e
     }
   }

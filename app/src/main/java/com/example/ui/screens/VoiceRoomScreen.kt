@@ -145,8 +145,12 @@ fun VoiceRoomScreen(
   onSendMessage: (String, String) -> Unit,
   onSendEmoji: (EmojiCatalogItem) -> Unit,
   onAddCustomEmoji: (String, String, String, Uri?, () -> Unit) -> Unit,
+  onUpdateCustomEmoji: (EmojiCatalogItem, String, String, String, Uri?, Boolean, () -> Unit) -> Unit,
+  onDeleteCustomEmoji: (EmojiCatalogItem, () -> Unit) -> Unit,
   onSendGift: (GiftCatalogItem, String, String, Int) -> Unit,
   onAddCustomGift: (String, String, String, Long, Uri?, Uri?, () -> Unit) -> Unit,
+  onUpdateCustomGift: (GiftCatalogItem, String, String, String, Long, Uri?, Uri?, Boolean, Boolean, () -> Unit) -> Unit,
+  onDeleteCustomGift: (GiftCatalogItem, () -> Unit) -> Unit,
   onDismissFullScreenGift: () -> Unit,
   onClaimBonusCoins: () -> Unit,
   onUpdateRoomSettings: (String, String, String) -> Unit,
@@ -179,11 +183,15 @@ fun VoiceRoomScreen(
   var showEmojiPanel by remember { mutableStateOf(false) }
   var showGiftPanel by remember { mutableStateOf(false) }
   var showSettingsDialog by remember { mutableStateOf(false) }
+  var showSeatedMembersSheet by remember { mutableStateOf(false) }
   var selectedSeatForSheet by remember { mutableStateOf<RoomSeat?>(null) }
 
   val isHost = room.ownerId == currentUserId
   val hostSeat = seats.firstOrNull { it.seatIndex == 0L }
   val guestSeats = remember(seats) { seats.filter { it.seatIndex > 0L } }
+  val seatedMembers = remember(seats) { seats.filter { it.occupantUid.isNotBlank() } }
+  val seatedCount = seatedMembers.size
+  val totalSeatCount = if (seats.isNotEmpty()) seats.size else room.seatCount.toInt()
   val listState = rememberLazyListState()
 
   LaunchedEffect(messages.size) {
@@ -275,16 +283,24 @@ fun VoiceRoomScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
               Icon(
                 imageVector = Icons.Filled.Person,
-                contentDescription = null,
+                contentDescription = "रूम में कुल सदस्य",
                 tint = Color(0xFFD0C9EC),
                 modifier = Modifier.size(12.dp),
               )
+              Spacer(modifier = Modifier.width(2.dp))
               Text(
-                text = room.listenerCount.toString(),
+                text = "${room.listenerCount}",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFFD0C9EC),
+                fontWeight = FontWeight.SemiBold,
               )
             }
+            Text(
+              text = "• सीट $seatedCount/$totalSeatCount",
+              style = MaterialTheme.typography.labelSmall,
+              color = SwarCyan,
+              fontWeight = FontWeight.SemiBold,
+            )
           }
         }
 
@@ -333,7 +349,7 @@ fun VoiceRoomScreen(
         }
       }
 
-      // Coins & Live Audio Badge Row
+      // Coins, Real-Time Seated Count & Live Audio Badge Row
       Row(
         modifier = Modifier
           .fillMaxWidth()
@@ -346,17 +362,50 @@ fun VoiceRoomScreen(
           onAddCoinsClick = onClaimBonusCoins,
         )
 
-        if (!isMicMuted) {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
           Surface(
-            color = SwarMint.copy(alpha = 0.22f),
+            onClick = { showSeatedMembersSheet = true },
+            color = Color(0x5512263F),
             shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+              .border(1.dp, SwarCyan.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+              .testTag("room_live_occupancy_pill"),
           ) {
-            Text(
-              text = "माइक लाइव • ${(micAudioLevel * 100).toInt()}%",
-              style = MaterialTheme.typography.labelSmall,
-              color = SwarMint,
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            )
+            Row(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+              Box(
+                modifier = Modifier
+                  .size(7.dp)
+                  .clip(CircleShape)
+                  .background(if (seatedCount > 0) SwarMint else Color(0xFFA098C0))
+              )
+              Text(
+                text = "सीट पर: $seatedCount/$totalSeatCount",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
+          }
+
+          if (!isMicMuted) {
+            Surface(
+              color = SwarMint.copy(alpha = 0.22f),
+              shape = RoundedCornerShape(14.dp),
+            ) {
+              Text(
+                text = "माइक ${(micAudioLevel * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = SwarMint,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+              )
+            }
           }
         }
       }
@@ -702,7 +751,80 @@ fun VoiceRoomScreen(
     )
   }
 
-  // 4-Category Emoji Panel Sheet (with Admin-only '+' upload button)
+  // Real-time Seated Members Panel Sheet
+  if (showSeatedMembersSheet) {
+    ModalBottomSheet(onDismissRequest = { showSeatedMembersSheet = false }) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Text(
+          text = "लाइव रूम पैनल • सीट पर बैठे: $seatedCount/$totalSeatCount",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.Bold,
+        )
+        Text(
+          text = "रूम में कुल सक्रिय सदस्य: ${room.listenerCount}",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (seatedMembers.isEmpty()) {
+          Text(
+            text = "अभी कोई भी सदस्य सीट पर नहीं बैठा है। किसी खाली सीट पर टैप करके बैठें!",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 8.dp),
+          )
+        } else {
+          seatedMembers.forEach { memberSeat ->
+            Surface(
+              color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+              shape = RoundedCornerShape(14.dp),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                UserAvatar(
+                  url = memberSeat.occupantAvatarUrl,
+                  name = memberSeat.occupantName,
+                  size = 38.dp,
+                  borderColor = if (memberSeat.seatIndex == 0L) SwarGold else SwarCyan,
+                  borderWidth = 1.5.dp,
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = memberSeat.occupantName.ifBlank { "सदस्य" },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = if (memberSeat.seatIndex == 0L) "होस्ट सीट #0" else "सीट #${memberSeat.seatIndex}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+                Icon(
+                  imageVector = if (memberSeat.isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                  contentDescription = if (memberSeat.isMuted) "म्यूट" else "माइक चालू",
+                  tint = if (memberSeat.isMuted) SwarCoral else SwarMint,
+                )
+              }
+            }
+          }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+      }
+    }
+  }
+
+  // 4-Category Emoji Panel Sheet (with Admin-only '+' upload & long-press Update/Delete)
   if (showEmojiPanel) {
     EmojiPanelSheet(
       emojis = emojiCatalog,
@@ -710,11 +832,13 @@ fun VoiceRoomScreen(
       isUploading = isUploadingMedia,
       onSelectEmoji = onSendEmoji,
       onAddCustomEmoji = onAddCustomEmoji,
+      onUpdateCustomEmoji = onUpdateCustomEmoji,
+      onDeleteCustomEmoji = onDeleteCustomEmoji,
       onDismiss = { showEmojiPanel = false },
     )
   }
 
-  // 4-Category Gift Panel Sheet (with Coins balance + Admin-only '+' video/image upload button)
+  // 4-Category Gift Panel Sheet (with Coins balance, Admin '+' upload & long-press Update/Delete)
   if (showGiftPanel) {
     GiftPanelSheet(
       room = room,
@@ -726,6 +850,8 @@ fun VoiceRoomScreen(
       onClaimBonusCoins = onClaimBonusCoins,
       onSendGift = onSendGift,
       onAddCustomGift = onAddCustomGift,
+      onUpdateCustomGift = onUpdateCustomGift,
+      onDeleteCustomGift = onDeleteCustomGift,
       onDismiss = { showGiftPanel = false },
     )
   }

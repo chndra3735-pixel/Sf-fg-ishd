@@ -349,7 +349,7 @@ private fun LobbyRoomCard(
         ) {
           LiveEqualizerBars(barColor = SwarCyan)
           Text(
-            text = room.listenerCount.toString(),
+            text = "${room.listenerCount} लाइव",
             style = MaterialTheme.typography.labelSmall,
             color = Color.White,
             fontWeight = FontWeight.Bold,

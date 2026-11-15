@@ -10,6 +10,7 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URI
 import java.net.UnknownHostException
 import java.util.UUID
@@ -125,6 +126,82 @@ class SupabaseStorageRepository(
         runCatching { prepared.file.delete() }
       }
     }
+  }
+
+  suspend fun deleteMediaByPublicUrl(publicUrl: String): Result<Boolean> {
+    return deleteMediaByPublicUrls(listOf(publicUrl)).map { it > 0 }
+  }
+
+  suspend fun deleteMediaByPublicUrls(publicUrls: Collection<String>): Result<Int> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        if (!isConfigured()) return@runCatching 0
+        val objectPaths = publicUrls.mapNotNull(::extractObjectPathFromPublicUrl).distinct()
+        if (objectPaths.isEmpty()) return@runCatching 0
+
+        val deleteEndpoint = "$supabaseUrl/storage/v1/object/$bucketName"
+        val jsonBody = org.json.JSONObject()
+          .put("prefixes", org.json.JSONArray(objectPaths))
+          .toString()
+        val requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+
+        val requestBuilder = Request.Builder()
+          .url(deleteEndpoint)
+          .delete(requestBody)
+          .addHeader("apikey", supabaseAnonKey)
+          .addHeader("Content-Type", "application/json")
+
+        if (supabaseAnonKey.startsWith("eyJ")) {
+          requestBuilder.addHeader("Authorization", "Bearer $supabaseAnonKey")
+        }
+
+        try {
+          httpClient.newCall(requestBuilder.build()).execute().use { response ->
+            if (response.code == 404) {
+              return@runCatching objectPaths.size
+            }
+            if (!response.isSuccessful) {
+              val errorBody = response.body?.string().orEmpty()
+              Log.e(TAG, "Supabase delete failed (${response.code}): $errorBody")
+              val serverMessage = extractSupabaseErrorMessage(errorBody)
+              val friendlyReason = when {
+                serverMessage.contains("row-level security", ignoreCase = true) ||
+                  serverMessage.contains("Unauthorized", ignoreCase = true) ||
+                  response.code == 401 || response.code == 403 ->
+                  "Supabase बकेट '$bucketName' पर डिलीट (DELETE) की RLS पॉलिसी चालू नहीं है।"
+                serverMessage.isNotBlank() ->
+                  "Supabase डिलीट विफल (${response.code}): $serverMessage"
+                else ->
+                  "Supabase डिलीट विफल (${response.code}): बकेट '$bucketName' की DELETE पॉलिसी जांचें।"
+              }
+              throw IllegalStateException(friendlyReason)
+            }
+          }
+        } catch (e: UnknownHostException) {
+          val host = runCatching { URI(supabaseUrl).host.orEmpty() }.getOrDefault("")
+          throw IllegalStateException(
+            "Supabase सर्वर ($host) से कनेक्शन नहीं हो सका; पुरानी फ़ाइल हटाई नहीं जा सकी।",
+            e,
+          )
+        }
+
+        objectPaths.size
+      }
+    }
+
+  private fun extractObjectPathFromPublicUrl(publicUrl: String): String? {
+    val cleanUrl = publicUrl.trim()
+    if (cleanUrl.isBlank() || !isConfigured()) return null
+    val marker = "/storage/v1/object/public/$bucketName/"
+    val markerIdx = cleanUrl.indexOf(marker)
+    if (markerIdx < 0) return null
+    val basePart = cleanUrl.substring(0, markerIdx).trimEnd('/')
+    if (!basePart.equals(supabaseUrl, ignoreCase = true)) return null
+    val objectPath = cleanUrl.substring(markerIdx + marker.length)
+      .substringBefore('?')
+      .substringBefore('#')
+      .trimStart('/')
+    return objectPath.takeIf { it.isNotBlank() }
   }
 
   private fun extractSupabaseErrorMessage(errorBody: String): String {

@@ -371,11 +371,34 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onAddCustomEmoji = { label, category, symbol, imageUri, onDone ->
           viewModel.addCustomEmoji(label, category, symbol, imageUri, onDone)
         },
+        onUpdateCustomEmoji = { existing, label, category, symbol, newImageUri, removeExisting, onDone ->
+          viewModel.updateCustomEmoji(existing, label, category, symbol, newImageUri, removeExisting, onDone)
+        },
+        onDeleteCustomEmoji = { item, onDone ->
+          viewModel.deleteCustomEmoji(item, onDone)
+        },
         onSendGift = { gift, recipientUid, recipientName, quantity ->
           viewModel.sendGift(gift, recipientUid, recipientName, quantity)
         },
         onAddCustomGift = { name, category, emoji, coinCost, thumbUri, videoUri, onDone ->
           viewModel.addCustomGift(name, category, emoji, coinCost, thumbUri, videoUri, onDone)
+        },
+        onUpdateCustomGift = { existing, name, category, emoji, coinCost, newThumbUri, newVideoUri, removeThumb, removeVideo, onDone ->
+          viewModel.updateCustomGift(
+            existing = existing,
+            name = name,
+            category = category,
+            emoji = emoji,
+            coinCost = coinCost,
+            newThumbnailUri = newThumbUri,
+            newVideoUri = newVideoUri,
+            removeExistingThumbnail = removeThumb,
+            removeExistingVideo = removeVideo,
+            onSuccess = onDone,
+          )
+        },
+        onDeleteCustomGift = { gift, onDone ->
+          viewModel.deleteCustomGift(gift, onDone)
         },
         onDismissFullScreenGift = { viewModel.dismissFullScreenGift() },
         onClaimBonusCoins = { viewModel.claimDailyBonusCoins() },
@@ -496,8 +519,9 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
             viewModel.updateProfileDetails(name, handle, bio, gender, club)
           },
           onSignOut = {
-            viewModel.leaveActiveRoom()
-            signOut(credentialManager, scope)
+            viewModel.leaveActiveRoom {
+              signOut(credentialManager, scope)
+            }
           },
         )
       }

@@ -4,9 +4,11 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +32,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -78,7 +82,7 @@ import com.example.ui.theme.SwarGold
 import com.example.ui.theme.SwarMint
 import com.example.ui.theme.SwarViolet
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun EmojiPanelSheet(
   emojis: List<EmojiCatalogItem>,
@@ -86,11 +90,22 @@ fun EmojiPanelSheet(
   isUploading: Boolean,
   onSelectEmoji: (EmojiCatalogItem) -> Unit,
   onAddCustomEmoji: (label: String, category: String, symbol: String, imageUri: Uri?, onDone: () -> Unit) -> Unit,
+  onUpdateCustomEmoji: (
+    existing: EmojiCatalogItem,
+    label: String,
+    category: String,
+    symbol: String,
+    newImageUri: Uri?,
+    removeExistingImage: Boolean,
+    onDone: () -> Unit,
+  ) -> Unit,
+  onDeleteCustomEmoji: (item: EmojiCatalogItem, onDone: () -> Unit) -> Unit,
   onDismiss: () -> Unit,
 ) {
   val categories = SwarCatalogDefaults.emojiCategories
   var selectedCategoryIdx by remember { mutableIntStateOf(0) }
   var showAdminAddDialog by remember { mutableStateOf(false) }
+  var editingEmoji by remember { mutableStateOf<EmojiCatalogItem?>(null) }
 
   val currentCategory = categories[selectedCategoryIdx]
   val filteredEmojis = remember(emojis, currentCategory) {
@@ -114,7 +129,7 @@ fun EmojiPanelSheet(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
           Text(
             text = "इमोजी और रिएक्शन पैनल",
             style = MaterialTheme.typography.titleMedium,
@@ -122,9 +137,13 @@ fun EmojiPanelSheet(
             fontWeight = FontWeight.Bold,
           )
           Text(
-            text = "लाइव रूम में तुरंत इमोजी भेजें",
+            text = if (isAdminUser) {
+              "अपलोड किए इमोजी को दबाकर रखें (Update / Delete)"
+            } else {
+              "लाइव रूम में तुरंत इमोजी भेजें"
+            },
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFB5ACDA),
+            color = if (isAdminUser) SwarCyan else Color(0xFFB5ACDA),
           )
         }
 
@@ -178,45 +197,76 @@ fun EmojiPanelSheet(
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         items(filteredEmojis, key = { it.id.ifBlank { "${it.category}_${it.label}" } }) { item ->
+          val isCustomEmoji = !item.id.startsWith("def_") && item.createdByUid.isNotBlank()
           Surface(
-            onClick = {
-              onSelectEmoji(item)
-              onDismiss()
-            },
             color = Color(0xFF281C4C),
             shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp)),
+            modifier = Modifier
+              .clip(RoundedCornerShape(16.dp))
+              .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+              .combinedClickable(
+                onClick = {
+                  onSelectEmoji(item)
+                  onDismiss()
+                },
+                onLongClick = {
+                  if (isAdminUser && isCustomEmoji) {
+                    editingEmoji = item
+                  }
+                },
+              ),
           ) {
-            Column(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 4.dp),
-              horizontalAlignment = Alignment.CenterHorizontally,
-              verticalArrangement = Arrangement.Center,
-            ) {
-              if (item.imageUrl.isNotBlank()) {
-                AsyncImage(
-                  model = item.imageUrl,
-                  contentDescription = item.label,
+            Box(modifier = Modifier.fillMaxWidth()) {
+              if (isAdminUser && isCustomEmoji) {
+                Box(
                   modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(10.dp)),
-                  contentScale = ContentScale.Crop,
-                )
-              } else {
+                    .align(Alignment.TopStart)
+                    .padding(4.dp)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(SwarCyan.copy(alpha = 0.25f)),
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Icon(
+                    imageVector = Icons.Filled.Edit,
+                    contentDescription = "इमोजी संपादित करें",
+                    tint = SwarCyan,
+                    modifier = Modifier.size(10.dp),
+                  )
+                }
+              }
+
+              Column(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(vertical = 10.dp, horizontal = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+              ) {
+                if (item.imageUrl.isNotBlank()) {
+                  AsyncImage(
+                    model = item.imageUrl,
+                    contentDescription = item.label,
+                    modifier = Modifier
+                      .size(38.dp)
+                      .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop,
+                  )
+                } else {
+                  Text(
+                    text = item.symbol.ifBlank { "😊" },
+                    fontSize = 30.sp,
+                  )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                  text = item.symbol.ifBlank { "😊" },
-                  fontSize = 30.sp,
+                  text = item.label,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = Color.White,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
                 )
               }
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(
-                text = item.label,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
             }
           }
         }
@@ -236,9 +286,28 @@ fun EmojiPanelSheet(
       },
     )
   }
+
+  val targetEditEmoji = editingEmoji
+  if (targetEditEmoji != null && isAdminUser) {
+    EditEmojiAdminDialog(
+      existing = targetEditEmoji,
+      isBusy = isUploading,
+      onDismiss = { editingEmoji = null },
+      onUpdate = { label, category, symbol, newImageUri, removeExistingImage ->
+        onUpdateCustomEmoji(targetEditEmoji, label, category, symbol, newImageUri, removeExistingImage) {
+          editingEmoji = null
+        }
+      },
+      onDelete = {
+        onDeleteCustomEmoji(targetEditEmoji) {
+          editingEmoji = null
+        }
+      },
+    )
+  }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GiftPanelSheet(
   room: VoiceRoom,
@@ -258,6 +327,19 @@ fun GiftPanelSheet(
     videoUri: Uri?,
     onDone: () -> Unit,
   ) -> Unit,
+  onUpdateCustomGift: (
+    existing: GiftCatalogItem,
+    name: String,
+    category: String,
+    emoji: String,
+    coinCost: Long,
+    newThumbnailUri: Uri?,
+    newVideoUri: Uri?,
+    removeExistingThumbnail: Boolean,
+    removeExistingVideo: Boolean,
+    onDone: () -> Unit,
+  ) -> Unit,
+  onDeleteCustomGift: (gift: GiftCatalogItem, onDone: () -> Unit) -> Unit,
   onDismiss: () -> Unit,
 ) {
   val categories = SwarCatalogDefaults.giftCategories
@@ -284,6 +366,7 @@ fun GiftPanelSheet(
   var selectedGift by remember(filteredGifts) { mutableStateOf(filteredGifts.firstOrNull() ?: gifts.firstOrNull()) }
   var selectedQuantity by remember { mutableIntStateOf(1) }
   var showAdminAddGiftDialog by remember { mutableStateOf(false) }
+  var editingGift by remember { mutableStateOf<GiftCatalogItem?>(null) }
 
   ModalBottomSheet(
     onDismissRequest = onDismiss,
@@ -311,9 +394,13 @@ fun GiftPanelSheet(
             fontWeight = FontWeight.Bold,
           )
           Text(
-            text = "भेजा गया गिफ्ट रूम और ग्लोबल पट्टी में चलेगा",
+            text = if (isAdminUser) {
+              "अपलोड किए गिफ्ट को दबाकर रखें (Update / Delete)"
+            } else {
+              "भेजा गया गिफ्ट रूम और ग्लोबल पट्टी में चलेगा"
+            },
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFB5ACDA),
+            color = if (isAdminUser) SwarCyan else Color(0xFFB5ACDA),
           )
         }
 
@@ -402,14 +489,43 @@ fun GiftPanelSheet(
       ) {
         items(filteredGifts, key = { it.id.ifBlank { "${it.category}_${it.name}" } }) { gift ->
           val isPicked = selectedGift?.id == gift.id
+          val isCustomGift = !gift.id.startsWith("def_") && gift.createdByUid.isNotBlank()
           val borderColor = if (isPicked) SwarGold else Color(0x33FFFFFF)
           Surface(
-            onClick = { selectedGift = gift },
             color = if (isPicked) Color(0xFF352263) else Color(0xFF231642),
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.border(if (isPicked) 2.dp else 1.dp, borderColor, RoundedCornerShape(14.dp)),
+            modifier = Modifier
+              .clip(RoundedCornerShape(14.dp))
+              .border(if (isPicked) 2.dp else 1.dp, borderColor, RoundedCornerShape(14.dp))
+              .combinedClickable(
+                onClick = { selectedGift = gift },
+                onLongClick = {
+                  if (isAdminUser && isCustomGift) {
+                    editingGift = gift
+                  }
+                },
+              ),
           ) {
             Box(modifier = Modifier.fillMaxWidth()) {
+              if (isAdminUser && isCustomGift) {
+                Box(
+                  modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(4.dp)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(SwarCyan.copy(alpha = 0.25f)),
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Icon(
+                    imageVector = Icons.Filled.Edit,
+                    contentDescription = "गिफ्ट एडिट या डिलीट करें",
+                    tint = SwarCyan,
+                    modifier = Modifier.size(10.dp),
+                  )
+                }
+              }
+
               if (gift.mediaType == "video") {
                 Surface(
                   color = SwarCoral,
@@ -536,6 +652,38 @@ fun GiftPanelSheet(
       onSubmit = { name, category, emoji, cost, thumbUri, videoUri ->
         onAddCustomGift(name, category, emoji, cost, thumbUri, videoUri) {
           showAdminAddGiftDialog = false
+        }
+      },
+    )
+  }
+
+  val targetEditGift = editingGift
+  if (targetEditGift != null && isAdminUser) {
+    EditGiftAdminDialog(
+      existing = targetEditGift,
+      isBusy = isUploading,
+      onDismiss = { editingGift = null },
+      onUpdate = { name, category, emoji, cost, newThumbUri, newVideoUri, removeExistingThumb, removeExistingVideo ->
+        onUpdateCustomGift(
+          targetEditGift,
+          name,
+          category,
+          emoji,
+          cost,
+          newThumbUri,
+          newVideoUri,
+          removeExistingThumb,
+          removeExistingVideo,
+        ) {
+          editingGift = null
+        }
+      },
+      onDelete = {
+        onDeleteCustomGift(targetEditGift) {
+          if (selectedGift?.id == targetEditGift.id) {
+            selectedGift = null
+          }
+          editingGift = null
         }
       },
     )
@@ -765,6 +913,355 @@ private fun AddGiftAdminDialog(
         enabled = !isUploading,
       ) {
         Text(if (isUploading) "अपलोड हो रहा है..." else "पब्लिश करें")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("रद्द करें") }
+    },
+  )
+}
+
+@Composable
+private fun EditEmojiAdminDialog(
+  existing: EmojiCatalogItem,
+  isBusy: Boolean,
+  onDismiss: () -> Unit,
+  onUpdate: (
+    label: String,
+    category: String,
+    symbol: String,
+    newImageUri: Uri?,
+    removeExistingImage: Boolean,
+  ) -> Unit,
+  onDelete: () -> Unit,
+) {
+  var label by remember(existing.id) { mutableStateOf(existing.label) }
+  var symbol by remember(existing.id) { mutableStateOf(existing.symbol) }
+  var category by remember(existing.id) {
+    mutableStateOf(
+      if (existing.category in SwarCatalogDefaults.emojiCategories) existing.category
+      else SwarCatalogDefaults.emojiCategories.first()
+    )
+  }
+  var newImageUri by remember(existing.id) { mutableStateOf<Uri?>(null) }
+  var removeExistingImage by remember(existing.id) { mutableStateOf(false) }
+  var confirmDeleteArmed by remember(existing.id) { mutableStateOf(false) }
+
+  val imagePicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri ->
+      if (uri != null) {
+        newImageUri = uri
+        removeExistingImage = false
+      }
+    },
+  )
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("इमोजी अपडेट / डिलीट (एडमिन)") },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        OutlinedTextField(
+          value = label,
+          onValueChange = { label = it.take(30) },
+          label = { Text("इमोजी का नाम") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+          value = symbol,
+          onValueChange = { symbol = it.take(16) },
+          label = { Text("इमोजी चिह्न") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Text("श्रेणी चुनें", style = MaterialTheme.typography.labelLarge)
+        Row(
+          modifier = Modifier.horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          SwarCatalogDefaults.emojiCategories.forEach { cat ->
+            FilterChip(
+              selected = category == cat,
+              onClick = { category = cat },
+              label = { Text(cat) },
+            )
+          }
+        }
+        OutlinedButton(
+          onClick = {
+            imagePicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            when {
+              newImageUri != null -> "नई इमेज चयनित ✓"
+              existing.imageUrl.isNotBlank() && !removeExistingImage -> "मौजूदा इमेज बदलें"
+              else -> "नई इमेज चुनें (वैकल्पिक)"
+            }
+          )
+        }
+        if (existing.imageUrl.isNotBlank() && !removeExistingImage && newImageUri == null) {
+          TextButton(onClick = { removeExistingImage = true }) {
+            Text("पुरानी इमेज हटाएं", color = SwarCoral)
+          }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+        Button(
+          onClick = {
+            if (!confirmDeleteArmed) {
+              confirmDeleteArmed = true
+            } else {
+              onDelete()
+            }
+          },
+          enabled = !isBusy,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = if (confirmDeleteArmed) Color(0xFFB71C1C) else SwarCoral.copy(alpha = 0.22f),
+            contentColor = if (confirmDeleteArmed) Color.White else SwarCoral,
+          ),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("delete_custom_emoji_button"),
+        ) {
+          Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            if (confirmDeleteArmed) "पक्का? अभी पूरी तरह डिलीट करें"
+            else "इस इमोजी को डिलीट करें"
+          )
+        }
+      }
+    },
+    confirmButton = {
+      val hasAnyVisual = symbol.isNotBlank() || newImageUri != null ||
+        (existing.imageUrl.isNotBlank() && !removeExistingImage)
+      Button(
+        onClick = {
+          onUpdate(
+            label.ifBlank { "कस्टम इमोजी" },
+            category,
+            symbol,
+            newImageUri,
+            removeExistingImage,
+          )
+        },
+        enabled = !isBusy && hasAnyVisual,
+      ) {
+        Text(if (isBusy) "प्रक्रिया जारी..." else "अपडेट करें")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("रद्द करें") }
+    },
+  )
+}
+
+@Composable
+private fun EditGiftAdminDialog(
+  existing: GiftCatalogItem,
+  isBusy: Boolean,
+  onDismiss: () -> Unit,
+  onUpdate: (
+    name: String,
+    category: String,
+    emoji: String,
+    coinCost: Long,
+    newThumbnailUri: Uri?,
+    newVideoUri: Uri?,
+    removeExistingThumbnail: Boolean,
+    removeExistingVideo: Boolean,
+  ) -> Unit,
+  onDelete: () -> Unit,
+) {
+  var name by remember(existing.id) { mutableStateOf(existing.name) }
+  var emoji by remember(existing.id) { mutableStateOf(existing.emoji.ifBlank { "🎁" }) }
+  var coinCostText by remember(existing.id) { mutableStateOf(existing.coinCost.toString()) }
+  var category by remember(existing.id) {
+    mutableStateOf(
+      if (existing.category in SwarCatalogDefaults.giftCategories) existing.category
+      else SwarCatalogDefaults.giftCategories.first()
+    )
+  }
+  var newThumbUri by remember(existing.id) { mutableStateOf<Uri?>(null) }
+  var newVideoUri by remember(existing.id) { mutableStateOf<Uri?>(null) }
+  var removeExistingThumb by remember(existing.id) { mutableStateOf(false) }
+  var removeExistingVideo by remember(existing.id) { mutableStateOf(false) }
+  var confirmDeleteArmed by remember(existing.id) { mutableStateOf(false) }
+
+  val hasExistingVideo = existing.mediaType == "video" && existing.mediaUrl.isNotBlank()
+
+  val thumbPicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri ->
+      if (uri != null) {
+        newThumbUri = uri
+        removeExistingThumb = false
+      }
+    },
+  )
+  val videoPicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri ->
+      if (uri != null) {
+        newVideoUri = uri
+        removeExistingVideo = false
+      }
+    },
+  )
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("गिफ्ट अपडेट / डिलीट (एडमिन)") },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        OutlinedTextField(
+          value = name,
+          onValueChange = { name = it.take(40) },
+          label = { Text("गिफ्ट का नाम") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedTextField(
+            value = emoji,
+            onValueChange = { emoji = it.take(8) },
+            label = { Text("आइकन") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+          )
+          OutlinedTextField(
+            value = coinCostText,
+            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
+            label = { Text("कॉइंस कीमत") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = Modifier.weight(1.4f),
+          )
+        }
+        Text("गिफ्ट श्रेणी चुनें", style = MaterialTheme.typography.labelLarge)
+        Row(
+          modifier = Modifier.horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          SwarCatalogDefaults.giftCategories.forEach { cat ->
+            FilterChip(
+              selected = category == cat,
+              onClick = { category = cat },
+              label = { Text(cat) },
+            )
+          }
+        }
+        OutlinedButton(
+          onClick = {
+            thumbPicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            when {
+              newThumbUri != null -> "नया थंबनेल चयनित ✓"
+              existing.thumbnailUrl.isNotBlank() && !removeExistingThumb -> "थंबनेल बदलें (मौजूदा सेव है)"
+              else -> "थंबनेल चुनें (वैकल्पिक)"
+            }
+          )
+        }
+        if (existing.thumbnailUrl.isNotBlank() && !removeExistingThumb && newThumbUri == null) {
+          TextButton(onClick = { removeExistingThumb = true }) {
+            Text("मौजूदा थंबनेल हटाएं", color = SwarCoral)
+          }
+        }
+
+        OutlinedButton(
+          onClick = {
+            videoPicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+            )
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            when {
+              newVideoUri != null -> "नया वीडियो गिफ्ट चयनित ✓"
+              hasExistingVideo && !removeExistingVideo -> "वीडियो गिफ्ट बदलें (मौजूदा सेव है)"
+              else -> "फुल-स्क्रीन वीडियो चुनें (वैकल्पिक)"
+            }
+          )
+        }
+        if (hasExistingVideo && !removeExistingVideo && newVideoUri == null) {
+          TextButton(onClick = { removeExistingVideo = true }) {
+            Text("मौजूदा वीडियो हटाएं", color = SwarCoral)
+          }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+        Button(
+          onClick = {
+            if (!confirmDeleteArmed) {
+              confirmDeleteArmed = true
+            } else {
+              onDelete()
+            }
+          },
+          enabled = !isBusy,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = if (confirmDeleteArmed) Color(0xFFB71C1C) else SwarCoral.copy(alpha = 0.22f),
+            contentColor = if (confirmDeleteArmed) Color.White else SwarCoral,
+          ),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("delete_custom_gift_button"),
+        ) {
+          Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            if (confirmDeleteArmed) "पक्का? ऐप और Supabase दोनों से डिलीट करें"
+            else "इस गिफ्ट को पूरी तरह डिलीट करें"
+          )
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = {
+          val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: existing.coinCost
+          onUpdate(
+            name.ifBlank { "स्पेशल गिफ्ट" },
+            category,
+            emoji.ifBlank { "🎁" },
+            parsedCost,
+            newThumbUri,
+            newVideoUri,
+            removeExistingThumb,
+            removeExistingVideo,
+          )
+        },
+        enabled = !isBusy,
+      ) {
+        Text(if (isBusy) "प्रक्रिया जारी..." else "अपडेट करें")
       }
     },
     dismissButton = {
