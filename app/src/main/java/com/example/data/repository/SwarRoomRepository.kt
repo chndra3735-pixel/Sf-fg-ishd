@@ -202,7 +202,7 @@ class SwarRoomRepository(
     val uid = requireUserId()
     val roomId = "room_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val roomRef = db.collection("rooms").document(roomId)
-    val validatedSeats = if (seatCount in listOf(8, 12, 20)) seatCount else 20
+    val validatedSeats = if (seatCount in listOf(8, 12, 20, 22)) seatCount else 22
     val roomCode = (100000..999999).random().toString()
     val safeTheme = if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset")) backgroundTheme else "stadium"
 
@@ -265,6 +265,44 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.CREATE, roomRef.path)
+      throw e
+    }
+  }
+
+  suspend fun ensureMinimumSeats(room: VoiceRoom, targetSeatCount: Int = 22): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    if (room.ownerId != uid) return@runCatching
+    val seatsCollection = db.collection("rooms").document(room.id).collection("seats")
+    val existing = seatsCollection.whereEqualTo("isRoomPublic", room.isPublic).get().await()
+    val existingIndices = existing.documents
+      .mapNotNull { it.getLong("seatIndex")?.toInt() }
+      .toSet()
+    val missingIndices = (0 until targetSeatCount).filter { it !in existingIndices }
+    if (missingIndices.isEmpty()) return@runCatching
+    val batch = db.batch()
+    missingIndices.forEach { index ->
+      val seatRef = seatsCollection.document("seat_$index")
+      val seatPayload = mapOf(
+        "roomId" to room.id,
+        "roomOwnerId" to room.ownerId,
+        "isRoomPublic" to room.isPublic,
+        "seatIndex" to index.toLong(),
+        "occupantUid" to "",
+        "occupantName" to "",
+        "occupantAvatarUrl" to "",
+        "isLocked" to false,
+        "isMuted" to false,
+        "isSpeaking" to false,
+        "updatedAt" to FieldValue.serverTimestamp(),
+      )
+      batch.set(seatRef, seatPayload)
+    }
+    try {
+      batch.commit().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, "rooms/${room.id}/seats")
       throw e
     }
   }
@@ -363,6 +401,51 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.UPDATE, seatRef.path)
+      throw e
+    }
+  }
+
+  suspend fun moveToSeat(
+    roomId: String,
+    vacateSeatIndices: List<Int>,
+    targetSeatIndex: Int,
+    profile: UserProfile,
+    preserveMuted: Boolean = false,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val seatsCollection = db.collection("rooms").document(roomId).collection("seats")
+    val batch = db.batch()
+    val emptyUpdates = mapOf(
+      "occupantUid" to "",
+      "occupantName" to "",
+      "occupantAvatarUrl" to "",
+      "isMuted" to false,
+      "isSpeaking" to false,
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    vacateSeatIndices
+      .distinct()
+      .filter { it != targetSeatIndex }
+      .forEach { oldIdx ->
+        batch.update(seatsCollection.document("seat_$oldIdx"), emptyUpdates)
+      }
+    val targetUpdates = mutableMapOf<String, Any>(
+      "occupantUid" to uid,
+      "occupantName" to profile.displayName.take(40).ifBlank { "Speaker" },
+      "occupantAvatarUrl" to profile.avatarUrl.take(600),
+      "isSpeaking" to false,
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    if (!preserveMuted) {
+      targetUpdates["isMuted"] = false
+    }
+    batch.update(seatsCollection.document("seat_$targetSeatIndex"), targetUpdates)
+    try {
+      batch.commit().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, "rooms/$roomId/seats/seat_$targetSeatIndex")
       throw e
     }
   }

@@ -29,20 +29,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,12 +64,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.data.model.VoiceRoom
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
+import com.example.ui.theme.SwarDeepNight
 import com.example.ui.theme.SwarGold
 import com.example.ui.theme.SwarMint
 import com.example.ui.theme.SwarViolet
@@ -211,11 +220,6 @@ fun CreateRoomDialog(
   ) -> Unit,
 ) {
   var title by remember { mutableStateOf("") }
-  var category by remember { mutableStateOf("लोकप्रिय") }
-  var theme by remember { mutableStateOf("stadium") }
-  var clubTag by remember { mutableStateOf("UP55") }
-  var welcomeNotice by remember { mutableStateOf("SwarRoom में आपका स्वागत है। कृपया सभ्य तरीके से बात करें।") }
-  var seatCount by remember { mutableIntStateOf(20) }
   var pickedCoverUri by remember { mutableStateOf<Uri?>(null) }
 
   val coverPicker = rememberLauncherForActivityResult(
@@ -231,62 +235,37 @@ fun CreateRoomDialog(
         modifier = Modifier
           .fillMaxWidth()
           .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp),
       ) {
-        OutlinedTextField(
-          value = title,
-          onValueChange = { title = it.take(60) },
-          label = { Text("रूम का नाम") },
-          placeholder = { Text("उदा. मस्ती और संगीत अड्डा") },
-          singleLine = true,
+        // Top: Profile / Room Photo Upload
+        Box(
           modifier = Modifier
-            .fillMaxWidth()
-            .testTag("room_title_input"),
-        )
-        OutlinedTextField(
-          value = clubTag,
-          onValueChange = { clubTag = it.take(12) },
-          label = { Text("क्लब बैज (उदा. UP55)") },
-          singleLine = true,
-          modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-          value = welcomeNotice,
-          onValueChange = { welcomeNotice = it.take(200) },
-          label = { Text("स्वागत संदेश") },
-          maxLines = 2,
-          modifier = Modifier.fillMaxWidth(),
-        )
-
-        Text("श्रेणी चुनें", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          listOf("लोकप्रिय", "संगीत", "क्रिकेट", "दोस्ती").forEach { item ->
-            FilterChip(
-              selected = category == item,
-              onClick = { category = item },
-              label = { Text(item, style = MaterialTheme.typography.labelSmall) },
+            .size(92.dp)
+            .clip(CircleShape)
+            .border(2.dp, SwarCyan, CircleShape)
+            .background(SwarCyan.copy(alpha = 0.12f))
+            .clickable {
+              coverPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+              )
+            }
+            .testTag("create_room_photo_picker"),
+          contentAlignment = Alignment.Center,
+        ) {
+          if (pickedCoverUri != null) {
+            AsyncImage(
+              model = pickedCoverUri,
+              contentDescription = "चुनी गई रूम प्रोफ़ाइल फ़ोटो",
+              modifier = Modifier.fillMaxSize(),
+              contentScale = ContentScale.Crop,
             )
-          }
-        }
-
-        Text("वॉइस सीट संख्या", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          listOf(8, 12, 20).forEach { count ->
-            FilterChip(
-              selected = seatCount == count,
-              onClick = { seatCount = count },
-              label = { Text("$count सीट") },
-            )
-          }
-        }
-
-        Text("रूम थीम", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          listOf("stadium" to "स्टेडियम", "aurora" to "ऑरोरा", "neon" to "नियॉन").forEach { (key, label) ->
-            FilterChip(
-              selected = theme == key,
-              onClick = { theme = key },
-              label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+          } else {
+            Icon(
+              imageVector = Icons.Filled.AddPhotoAlternate,
+              contentDescription = "प्रोफ़ाइल फ़ोटो अपलोड करें",
+              tint = SwarCyan,
+              modifier = Modifier.size(34.dp),
             )
           }
         }
@@ -302,28 +281,41 @@ fun CreateRoomDialog(
           Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
           Spacer(modifier = Modifier.width(8.dp))
           Text(
-            if (pickedCoverUri == null) "रूम कवर फ़ोटो चुनें (Supabase)" else "कवर फ़ोटो चयनित ✓"
+            if (pickedCoverUri == null) "प्रोफ़ाइल फ़ोटो अपलोड करें" else "फ़ोटो बदलें ✓"
           )
         }
+
+        // Bottom: Room Name Input
+        OutlinedTextField(
+          value = title,
+          onValueChange = { title = it.take(60) },
+          label = { Text("रूम का नाम") },
+          placeholder = { Text("अपना रूम नाम लिखें...") },
+          singleLine = true,
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("room_title_input"),
+        )
       }
     },
     confirmButton = {
       Button(
         onClick = {
           onCreate(
-            title.ifBlank { "लाइव वॉइस रूम" },
-            category,
-            theme,
-            clubTag,
-            welcomeNotice,
-            seatCount,
+            title.trim().ifBlank { "लाइव वॉइस रूम" },
+            "लोकप्रिय",
+            "stadium",
+            "SWAR",
+            "SwarRoom में आपका स्वागत है। कृपया एक दूसरे का सम्मान करें और सभ्य तरीके से चैट करें।",
+            22,
             pickedCoverUri,
           )
         },
         enabled = !isUploading,
+        colors = ButtonDefaults.buttonColors(containerColor = SwarCyan, contentColor = Color.Black),
         modifier = Modifier.testTag("confirm_create_room_button"),
       ) {
-        Text(if (isUploading) "अपलोड हो रहा है..." else "रूम शुरू करें")
+        Text(if (isUploading) "अपलोड हो रहा है..." else "सबमिट करें", fontWeight = FontWeight.Bold)
       }
     },
     dismissButton = {
@@ -436,4 +428,103 @@ fun CreateMomentDialog(
       TextButton(onClick = onDismiss) { Text("रद्द करें") }
     },
   )
+}
+
+@Composable
+fun MinimizedRoomFloatingBar(
+  room: VoiceRoom,
+  isMicMuted: Boolean,
+  onExpand: () -> Unit,
+  onToggleMic: () -> Unit,
+  onExitRoom: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Surface(
+    onClick = onExpand,
+    shape = RoundedCornerShape(26.dp),
+    color = SwarDeepNight.copy(alpha = 0.96f),
+    shadowElevation = 10.dp,
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 10.dp)
+      .border(1.5.dp, Brush.horizontalGradient(listOf(SwarCyan, SwarViolet)), RoundedCornerShape(26.dp))
+      .testTag("minimized_room_bar"),
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 10.dp, vertical = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      UserAvatar(
+        url = room.coverUrl.ifBlank { room.ownerAvatarUrl },
+        name = room.title.ifBlank { room.ownerName },
+        size = 42.dp,
+        borderColor = SwarGold,
+        borderWidth = 1.5.dp,
+      )
+      Spacer(modifier = Modifier.width(10.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          LiveEqualizerBars(barColor = SwarCyan)
+          Text(
+            text = room.title.ifBlank { "लाइव वॉइस रूम" },
+            style = MaterialTheme.typography.titleSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        Text(
+          text = "रूम चल रहा है • वापस खोलने के लिए टैप करें",
+          style = MaterialTheme.typography.labelSmall,
+          color = Color(0xFFD0C9EC),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+
+      IconButton(
+        onClick = onToggleMic,
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .clip(CircleShape)
+          .background(if (isMicMuted) Color(0x33FFFFFF) else SwarMint.copy(alpha = 0.25f))
+          .testTag("minimized_room_mic_button"),
+      ) {
+        Icon(
+          imageVector = if (isMicMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+          contentDescription = if (isMicMuted) "माइक चालू करें" else "माइक बंद करें",
+          tint = if (isMicMuted) Color.White else SwarMint,
+        )
+      }
+
+      IconButton(
+        onClick = onExpand,
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("minimized_room_expand_button"),
+      ) {
+        Icon(
+          imageVector = Icons.Filled.OpenInFull,
+          contentDescription = "रूम बड़ा करें",
+          tint = SwarCyan,
+        )
+      }
+
+      IconButton(
+        onClick = onExitRoom,
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("minimized_room_exit_button"),
+      ) {
+        Icon(
+          imageVector = Icons.Filled.Close,
+          contentDescription = "रूम से बाहर निकलें",
+          tint = SwarCoral,
+        )
+      }
+    }
+  }
 }

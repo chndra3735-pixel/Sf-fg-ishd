@@ -62,7 +62,7 @@ service cloud.firestore {
              data.backgroundTheme in ['stadium', 'aurora', 'neon', 'sunset'] &&
              data.clubTag is string && data.clubTag.size() <= 16 &&
              data.welcomeNotice is string && data.welcomeNotice.size() <= 200 &&
-             data.seatCount is int && data.seatCount in [8, 12, 20] &&
+             data.seatCount is int && data.seatCount in [8, 12, 20, 22] &&
              data.listenerCount is int && data.listenerCount >= 0 && data.listenerCount <= 9999 &&
              data.isLive is bool &&
              data.isPublic is bool &&
@@ -74,7 +74,7 @@ service cloud.firestore {
       return data.roomId is string && isValidId(data.roomId) &&
              data.roomOwnerId is string && data.roomOwnerId.size() >= 1 && data.roomOwnerId.size() <= 128 &&
              data.isRoomPublic is bool &&
-             data.seatIndex is int && data.seatIndex >= 0 && data.seatIndex <= 19 &&
+             data.seatIndex is int && data.seatIndex >= 0 && data.seatIndex <= 21 &&
              data.occupantUid is string && data.occupantUid.size() <= 128 &&
              data.occupantName is string && data.occupantName.size() <= 40 &&
              data.occupantAvatarUrl is string && data.occupantAvatarUrl.size() <= 600 &&

@@ -4,7 +4,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,7 +30,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -74,9 +71,9 @@ fun LobbyScreen(
   currentUserId: String,
   onRoomClick: (VoiceRoom) -> Unit,
   onCreateRoomClick: () -> Unit,
+  onOpenStagePreview: (() -> Unit)? = null,
 ) {
   var selectedTab by remember { mutableStateOf("लोकप्रिय") }
-  var selectedCategory by remember { mutableStateOf("सभी") }
   var isSearchOpen by remember { mutableStateOf(false) }
   var searchQuery by remember { mutableStateOf("") }
 
@@ -177,23 +174,6 @@ fun LobbyScreen(
       )
     }
 
-    // Category filter chips
-    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .horizontalScroll(rememberScrollState())
-        .padding(horizontal = 16.dp, vertical = 6.dp),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      listOf("सभी", "लोकप्रिय", "संगीत", "क्रिकेट", "दोस्ती", "मस्ती").forEach { category ->
-        FilterChip(
-          selected = selectedCategory == category,
-          onClick = { selectedCategory = category },
-          label = { Text(category) },
-        )
-      }
-    }
-
     when (roomsState) {
       is UiState.Loading -> {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -215,20 +195,19 @@ fun LobbyScreen(
         }
       }
       is UiState.Success -> {
-        val filtered = remember(roomsState.data, selectedTab, selectedCategory, searchQuery, currentUserId) {
+        val filtered = remember(roomsState.data, selectedTab, searchQuery, currentUserId) {
           roomsState.data
             .filter { room ->
               val matchesTab = when (selectedTab) {
                 "फॉलोइंग" -> room.ownerId == currentUserId || room.listenerCount >= 1
                 else -> true
               }
-              val matchesCat = selectedCategory == "सभी" || room.category == selectedCategory
               val q = searchQuery.trim()
               val matchesQuery = q.isEmpty() ||
                 room.title.contains(q, ignoreCase = true) ||
                 room.ownerName.contains(q, ignoreCase = true) ||
                 room.roomCode.contains(q, ignoreCase = true)
-              matchesTab && matchesCat && matchesQuery
+              matchesTab && matchesQuery
             }
             .let { list ->
               if (selectedTab == "लोकप्रिय") list.sortedByDescending { it.listenerCount }
@@ -237,7 +216,10 @@ fun LobbyScreen(
         }
 
         if (filtered.isEmpty()) {
-          EmptyRoomsView(onCreateRoomClick = onCreateRoomClick)
+          EmptyRoomsView(
+            onCreateRoomClick = onCreateRoomClick,
+            onOpenStagePreview = onOpenStagePreview,
+          )
         } else {
           LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 160.dp),
@@ -421,7 +403,10 @@ private fun LobbyRoomCard(
 }
 
 @Composable
-private fun EmptyRoomsView(onCreateRoomClick: () -> Unit) {
+private fun EmptyRoomsView(
+  onCreateRoomClick: () -> Unit,
+  onOpenStagePreview: (() -> Unit)? = null,
+) {
   Column(
     modifier = Modifier
       .fillMaxSize()
@@ -463,6 +448,16 @@ private fun EmptyRoomsView(onCreateRoomClick: () -> Unit) {
       modifier = Modifier.testTag("empty_create_room_button"),
     ) {
       Text("नया वॉइस रूम बनाएं", fontWeight = FontWeight.Bold)
+    }
+    if (onOpenStagePreview != null) {
+      Spacer(modifier = Modifier.height(10.dp))
+      androidx.compose.material3.OutlinedButton(
+        onClick = onOpenStagePreview,
+        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.testTag("open_stage_preview_button"),
+      ) {
+        Text("वॉइस रूम स्टेज और पैनल देखें", fontWeight = FontWeight.SemiBold)
+      }
     }
   }
 }

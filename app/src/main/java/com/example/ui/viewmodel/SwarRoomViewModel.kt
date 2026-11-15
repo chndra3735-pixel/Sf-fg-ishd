@@ -1,5 +1,6 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -30,10 +31,12 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 sealed interface UiState<out T> {
@@ -52,6 +55,7 @@ class SwarRoomViewModel(
   private val initialAvatarUrl: String,
   val currentUserEmail: String = "",
   val isEmailVerified: Boolean = false,
+  private val appContext: Context? = null,
 ) : ViewModel() {
 
   val isAdminUser: Boolean =
@@ -84,8 +88,32 @@ class SwarRoomViewModel(
       .catch { error -> emit(UiState.Error(unwrapFirestoreMessage(error, "मोमेंट्स लोड नहीं हो सके"))) }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), UiState.Loading)
 
+  private val blockPrefs by lazy {
+    appContext?.applicationContext?.getSharedPreferences("swarroom_blocks_$currentUserId", Context.MODE_PRIVATE)
+  }
+
+  private val _blockedUserIds = MutableStateFlow(
+    appContext?.applicationContext
+      ?.getSharedPreferences("swarroom_blocks_$currentUserId", Context.MODE_PRIVATE)
+      ?.getStringSet(KEY_BLOCKED_UIDS, emptySet())
+      ?.toSet()
+      ?: emptySet()
+  )
+  val blockedUserIds: StateFlow<Set<String>> = _blockedUserIds.asStateFlow()
+
+  private val _memberProfiles = MutableStateFlow<Map<String, UserProfile>>(emptyMap())
+  val memberProfiles: StateFlow<Map<String, UserProfile>> = _memberProfiles.asStateFlow()
+
   val conversations: StateFlow<UiState<List<Conversation>>> =
-    repository.observeConversations()
+    combine(
+      repository.observeConversations(),
+      _blockedUserIds,
+    ) { list, blocked ->
+      list.filter { convo ->
+        val otherUids = convo.participantUids.filter { it != currentUserId }
+        otherUids.none { it in blocked }
+      }
+    }
       .map<List<Conversation>, UiState<List<Conversation>>> { UiState.Success(it) }
       .catch { error -> emit(UiState.Error(unwrapFirestoreMessage(error, "संदेश लोड नहीं हो सके"))) }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), UiState.Loading)
@@ -118,6 +146,9 @@ class SwarRoomViewModel(
   private val _activeRoomId = MutableStateFlow<String?>(null)
   val activeRoomId: StateFlow<String?> = _activeRoomId.asStateFlow()
 
+  private val _isRoomMinimized = MutableStateFlow(false)
+  val isRoomMinimized: StateFlow<Boolean> = _isRoomMinimized.asStateFlow()
+
   val activeRoom: StateFlow<VoiceRoom?> =
     _activeRoomId.flatMapLatest { roomId ->
       if (roomId == null) flowOf(null)
@@ -131,9 +162,14 @@ class SwarRoomViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
   val activeRoomMessages: StateFlow<List<RoomMessage>> =
-    _activeRoomId.flatMapLatest { roomId ->
-      if (roomId == null) flowOf(emptyList())
-      else repository.observeRoomMessages(roomId).catch { emit(emptyList()) }
+    combine(
+      _activeRoomId.flatMapLatest { roomId ->
+        if (roomId == null) flowOf(emptyList())
+        else repository.observeRoomMessages(roomId).catch { emit(emptyList()) }
+      },
+      _blockedUserIds,
+    ) { msgs, blocked ->
+      if (blocked.isEmpty()) msgs else msgs.filter { it.senderUid !in blocked }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
   // --- Active Direct Conversation ---
@@ -203,6 +239,23 @@ class SwarRoomViewModel(
           }
         }
     }
+
+    // Keep own profile synced in memberProfiles cache and prefetch profiles of seated room members
+    viewModelScope.launch {
+      userProfile.collect { state ->
+        val mine = (state as? UiState.Success)?.data ?: return@collect
+        _memberProfiles.update { it + (currentUserId to mine) }
+      }
+    }
+    viewModelScope.launch {
+      activeRoomSeats.collect { seats ->
+        seats.asSequence()
+          .map { it.occupantUid }
+          .filter { it.isNotBlank() && it !in _memberProfiles.value }
+          .distinct()
+          .forEach { uid -> loadUserProfile(uid) }
+      }
+    }
   }
 
   private fun enqueueFullScreenGift(event: GiftEvent) {
@@ -243,6 +296,13 @@ class SwarRoomViewModel(
     onRoomCreated: (String) -> Unit,
   ) {
     viewModelScope.launch {
+      val existingRoom = (rooms.value as? UiState.Success)?.data?.firstOrNull { it.ownerId == currentUserId }
+      if (existingRoom != null) {
+        enterRoom(existingRoom.id, sendJoinMessage = false, incrementListenerCount = true)
+        onRoomCreated(existingRoom.id)
+        return@launch
+      }
+
       var coverUrl = ""
       if (coverImageUri != null) {
         _isUploadingMedia.value = true
@@ -277,13 +337,29 @@ class SwarRoomViewModel(
     }
   }
 
+  fun minimizeActiveRoom() {
+    if (_activeRoomId.value != null) {
+      _isRoomMinimized.value = true
+    }
+  }
+
+  fun expandActiveRoom() {
+    if (_activeRoomId.value != null) {
+      _isRoomMinimized.value = false
+    }
+  }
+
   fun enterRoom(
     roomId: String,
     sendJoinMessage: Boolean = true,
     incrementListenerCount: Boolean = true,
   ) {
     val prevRoomId = _activeRoomId.value
-    if (prevRoomId == roomId) return
+    if (prevRoomId == roomId) {
+      _isRoomMinimized.value = false
+      return
+    }
+    _isRoomMinimized.value = false
     val prevSeatHint = if (prevRoomId != null) {
       activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
     } else {
@@ -301,10 +377,13 @@ class SwarRoomViewModel(
       if (incrementListenerCount) {
         repository.adjustListenerCount(roomId, 1L)
       }
+      val room = (rooms.value as? UiState.Success)?.data?.firstOrNull { it.id == roomId }
+        ?: activeRoom.value?.takeIf { it.id == roomId }
+        ?: repository.getRoom(roomId)
+      if (room != null && room.ownerId == currentUserId) {
+        runCatching { repository.ensureMinimumSeats(room, 22) }
+      }
       if (sendJoinMessage) {
-        val room = (rooms.value as? UiState.Success)?.data?.firstOrNull { it.id == roomId }
-          ?: activeRoom.value?.takeIf { it.id == roomId }
-          ?: repository.getRoom(roomId)
         val profile = currentProfileOrDefault()
         if (room != null) {
           repository.sendRoomSystemMessage(
@@ -325,11 +404,13 @@ class SwarRoomViewModel(
   fun leaveActiveRoom(onComplete: (() -> Unit)? = null) {
     val roomId = _activeRoomId.value
     if (roomId == null) {
+      _isRoomMinimized.value = false
       onComplete?.invoke()
       return
     }
     val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
     stopMicEngine()
+    _isRoomMinimized.value = false
     _activeRoomId.value = null
     viewModelScope.launch {
       try {
@@ -355,26 +436,29 @@ class SwarRoomViewModel(
     viewModelScope.launch {
       when {
         seat.occupantUid == currentUserId -> {
-          // Toggle mic if on own seat
           toggleMic(hasAudioPermission, onNeedAudioPermission)
         }
         seat.occupantUid.isEmpty() && !seat.isLocked -> {
           if (!hasAudioPermission) {
             onNeedAudioPermission()
           }
-          // Leave any previous seat first
-          val prevSeat = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }
-          if (prevSeat != null) {
-            repository.leaveSeat(room.id, prevSeat.seatIndex.toInt())
-          }
-          repository.claimSeat(room.id, seat.seatIndex.toInt(), currentProfileOrDefault())
-            .onSuccess {
-              if (hasAudioPermission) {
-                _isMicMuted.value = false
-                audioEngine.startCapture()
-              }
+          val prevSeatIndices = activeRoomSeats.value
+            .filter { it.occupantUid == currentUserId && it.seatIndex != seat.seatIndex }
+            .map { it.seatIndex.toInt() }
+          repository.moveToSeat(
+            roomId = room.id,
+            vacateSeatIndices = prevSeatIndices,
+            targetSeatIndex = seat.seatIndex.toInt(),
+            profile = currentProfileOrDefault(),
+            preserveMuted = seat.isMuted,
+          ).onSuccess {
+            if (!seat.isMuted && hasAudioPermission) {
+              _isMicMuted.value = false
+              audioEngine.startCapture()
+            } else if (seat.isMuted) {
+              stopMicEngine()
             }
-            .onFailure { _events.tryEmit("सीट लेने में त्रुटि: ${it.message}") }
+          }.onFailure { _events.tryEmit("सीट लेने में त्रुटि: ${it.message}") }
         }
         seat.isLocked && isHost -> {
           repository.toggleSeatLock(room.id, seat.seatIndex.toInt(), lock = false)
@@ -392,10 +476,10 @@ class SwarRoomViewModel(
 
   fun leaveMySeat() {
     val roomId = _activeRoomId.value ?: return
-    val mySeat = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId } ?: return
+    val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
     stopMicEngine()
     viewModelScope.launch {
-      repository.leaveSeat(roomId, mySeat.seatIndex.toInt())
+      repository.vacateUserSeatsInRoom(roomId, seatHint)
     }
   }
 
@@ -404,6 +488,84 @@ class SwarRoomViewModel(
     viewModelScope.launch {
       repository.toggleSeatLock(roomId, seat.seatIndex.toInt(), !seat.isLocked)
     }
+  }
+
+  fun toggleSeatMute(seat: RoomSeat, hasAudioPermission: Boolean, onNeedAudioPermission: () -> Unit) {
+    val room = activeRoom.value ?: return
+    if (seat.occupantUid == currentUserId) {
+      toggleMic(hasAudioPermission, onNeedAudioPermission)
+      return
+    }
+    if (room.ownerId != currentUserId) return
+    val nextMuted = !seat.isMuted
+    viewModelScope.launch {
+      repository.updateSeatAudioState(
+        roomId = room.id,
+        seatIndex = seat.seatIndex.toInt(),
+        isMuted = nextMuted,
+        isSpeaking = false,
+      )
+    }
+  }
+
+  fun kickSeatOccupant(seat: RoomSeat) {
+    val room = activeRoom.value ?: return
+    if (room.ownerId != currentUserId || seat.occupantUid.isBlank() || seat.occupantUid == currentUserId) {
+      return
+    }
+    viewModelScope.launch {
+      repository.leaveSeat(room.id, seat.seatIndex.toInt())
+        .onSuccess {
+          _events.tryEmit("${seat.occupantName.ifBlank { "सदस्य" }} को सीट से किक आउट किया गया।")
+        }
+        .onFailure { err ->
+          _events.tryEmit("किक आउट करने में त्रुटि: ${err.message}")
+        }
+    }
+  }
+
+  fun sitOnFirstAvailableSeat(hasAudioPermission: Boolean, onNeedAudioPermission: () -> Unit) {
+    val firstOpenSeat = activeRoomSeats.value.firstOrNull { it.occupantUid.isBlank() && !it.isLocked }
+    if (firstOpenSeat == null) {
+      _events.tryEmit("अभी कोई खाली सीट उपलब्ध नहीं है।")
+      return
+    }
+    onSeatTapped(firstOpenSeat, hasAudioPermission, onNeedAudioPermission)
+  }
+
+  fun loadUserProfile(uid: String) {
+    if (uid.isBlank()) return
+    viewModelScope.launch {
+      val fetched = repository.getUserProfile(uid) ?: return@launch
+      _memberProfiles.update { it + (uid to fetched) }
+    }
+  }
+
+  fun blockUser(uid: String, displayName: String) {
+    if (uid.isBlank() || uid == currentUserId) return
+    val updated = _blockedUserIds.value + uid
+    _blockedUserIds.value = updated
+    blockPrefs?.edit()?.putStringSet(KEY_BLOCKED_UIDS, updated)?.apply()
+    val room = activeRoom.value
+    if (room != null && room.ownerId == currentUserId) {
+      val seat = activeRoomSeats.value.firstOrNull { it.occupantUid == uid }
+      if (seat != null) {
+        viewModelScope.launch {
+          runCatching { repository.leaveSeat(room.id, seat.seatIndex.toInt()) }
+        }
+      }
+    }
+    val safeName = displayName.ifBlank { "यूज़र" }
+    _events.tryEmit("$safeName को ब्लॉक किया गया।")
+  }
+
+  fun unblockUser(uid: String, displayName: String) {
+    if (uid.isBlank()) return
+    val updated = _blockedUserIds.value - uid
+    _blockedUserIds.value = updated
+    blockPrefs?.edit()?.putStringSet(KEY_BLOCKED_UIDS, updated)?.apply()
+    val safeName = displayName.ifBlank { "यूज़र" }
+    _events.tryEmit("$safeName को अनब्लॉक किया गया।")
   }
 
   fun toggleMic(hasAudioPermission: Boolean, onNeedAudioPermission: () -> Unit) {
@@ -1074,5 +1236,6 @@ class SwarRoomViewModel(
     const val TAG = "SwarRoomVM"
     const val STOP_TIMEOUT_MS = 5000L
     const val ADMIN_EMAIL = "chndra3735@gmail.com"
+    const val KEY_BLOCKED_UIDS = "blocked_uids"
   }
 }

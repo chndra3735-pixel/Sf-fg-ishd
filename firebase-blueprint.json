@@ -33,7 +33,7 @@
         "backgroundTheme": { "type": "string", "enum": ["stadium", "aurora", "neon", "sunset"] },
         "clubTag": { "type": "string", "description": "Room club badge." },
         "welcomeNotice": { "type": "string", "description": "Room welcome announcement." },
-        "seatCount": { "type": "integer", "description": "Total voice seats (8, 12, or 20)." },
+        "seatCount": { "type": "integer", "description": "Total voice seats (8, 12, 20, or 22)." },
         "listenerCount": { "type": "integer", "description": "Active listeners count." },
         "isLive": { "type": "boolean" },
         "isPublic": { "type": "boolean" },

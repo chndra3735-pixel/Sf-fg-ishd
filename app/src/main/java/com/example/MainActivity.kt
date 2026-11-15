@@ -1,10 +1,15 @@
 package com.example
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -80,11 +85,12 @@ import com.example.audio.VoiceAudioEngine
 import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.SupabaseStorageRepository
 import com.example.data.repository.SwarRoomRepository
-import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.authStateFlow
 import com.example.ui.auth.signOut
 import com.example.ui.components.CreateMomentDialog
 import com.example.ui.components.CreateRoomDialog
+import com.example.ui.components.MinimizedRoomFloatingBar
+import com.example.ui.screens.GuestPreviewSwarRoomApp
 import com.example.ui.screens.LobbyScreen
 import com.example.ui.screens.MessagesScreen
 import com.example.ui.screens.MomentsScreen
@@ -157,7 +163,11 @@ fun SwarRoomAppRoot(
 
   val user = currentUser
   if (user == null) {
-    AuthScreen(onAuthSuccess = {})
+    GuestPreviewSwarRoomApp(
+      isSupabaseConfigured = remember(context) {
+        SupabaseStorageRepository(context.applicationContext).isConfigured()
+      },
+    )
   } else {
     key(user.uid) {
       AuthenticatedSwarRoomApp(user = user)
@@ -301,6 +311,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           initialAvatarUrl = user.photoUrl?.toString().orEmpty(),
           currentUserEmail = user.email.orEmpty(),
           isEmailVerified = user.isEmailVerified,
+          appContext = app,
         )
       }
     },
@@ -324,11 +335,21 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isSpeakerOn by viewModel.isSpeakerOn.collectAsStateWithLifecycle()
   val isMonitorLoopbackOn by viewModel.isMonitorLoopbackOn.collectAsStateWithLifecycle()
   val micAudioLevel by viewModel.micAudioLevel.collectAsStateWithLifecycle()
+  val isRoomMinimized by viewModel.isRoomMinimized.collectAsStateWithLifecycle()
+  val memberProfiles by viewModel.memberProfiles.collectAsStateWithLifecycle()
+  val blockedUserIds by viewModel.blockedUserIds.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
   var showCreateMomentDialog by remember { mutableStateOf(false) }
   val snackbarHostState = remember { SnackbarHostState() }
+  val miniBarAudioPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+    onResult = { granted ->
+      if (granted) viewModel.onAudioPermissionGranted()
+      else scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.mic_permission_needed)) }
+    },
+  )
 
   LaunchedEffect(viewModel) {
     viewModel.events.collect { message ->
@@ -337,9 +358,10 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   }
 
   val currentRoom = activeRoom
-  if (currentRoom != null) {
+  if (currentRoom != null && !isRoomMinimized) {
     Box(modifier = Modifier.fillMaxSize()) {
-      val coins = (profileState as? UiState.Success)?.data?.coins ?: 1500L
+      val userProfile = (profileState as? UiState.Success)?.data
+      val coins = userProfile?.coins ?: 1500L
       VoiceRoomScreen(
         room = currentRoom,
         seats = activeRoomSeats,
@@ -414,6 +436,21 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onShowToast = { msg ->
           scope.launch { snackbarHostState.showSnackbar(msg) }
         },
+        currentUserName = userProfile?.displayName?.ifBlank { user.displayName.orEmpty() } ?: user.displayName.orEmpty(),
+        currentUserAvatar = userProfile?.avatarUrl?.ifBlank { user.photoUrl?.toString().orEmpty() } ?: user.photoUrl?.toString().orEmpty(),
+        onToggleSeatMute = { seat, hasPerm, requestPerm ->
+          viewModel.toggleSeatMute(seat, hasPerm, requestPerm)
+        },
+        onMinimizeRoom = { viewModel.minimizeActiveRoom() },
+        userProfiles = memberProfiles,
+        blockedUserIds = blockedUserIds,
+        onRequestUserProfile = { uid -> viewModel.loadUserProfile(uid) },
+        onBlockUser = { uid, name -> viewModel.blockUser(uid, name) },
+        onUnblockUser = { uid, name -> viewModel.unblockUser(uid, name) },
+        onKickSeatOccupant = { seat -> viewModel.kickSeatOccupant(seat) },
+        onSitOnAvailableSeat = { hasPerm, requestPerm ->
+          viewModel.sitOnFirstAvailableSeat(hasPerm, requestPerm)
+        },
       )
       SnackbarHost(
         hostState = snackbarHostState,
@@ -486,12 +523,19 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         .fillMaxSize()
         .padding(innerPadding),
     ) {
+      val myOwnedRoom = (roomsState as? UiState.Success)?.data?.firstOrNull { it.ownerId == user.uid }
       when (currentTab) {
         MainTab.ROOMS -> LobbyScreen(
           roomsState = roomsState,
           currentUserId = user.uid,
           onRoomClick = { room -> viewModel.enterRoom(room.id) },
-          onCreateRoomClick = { showCreateRoomDialog = true },
+          onCreateRoomClick = {
+            if (myOwnedRoom != null) {
+              viewModel.enterRoom(myOwnedRoom.id)
+            } else {
+              showCreateRoomDialog = true
+            }
+          },
         )
         MainTab.MOMENTS -> MomentsScreen(
           momentsState = momentsState,
@@ -525,10 +569,30 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           },
         )
       }
+
+      if (currentRoom != null && isRoomMinimized) {
+        MinimizedRoomFloatingBar(
+          room = currentRoom,
+          isMicMuted = isMicMuted,
+          onExpand = { viewModel.expandActiveRoom() },
+          onToggleMic = {
+            val hasPerm = ContextCompat.checkSelfPermission(
+              context,
+              Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
+            viewModel.toggleMic(hasPerm) {
+              miniBarAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+          },
+          onExitRoom = { viewModel.leaveActiveRoom() },
+          modifier = Modifier.align(Alignment.BottomCenter),
+        )
+      }
     }
   }
 
-  if (showCreateRoomDialog) {
+  val ownedRoom = (roomsState as? UiState.Success)?.data?.firstOrNull { it.ownerId == user.uid }
+  if (showCreateRoomDialog && ownedRoom == null) {
     CreateRoomDialog(
       isUploading = isUploadingMedia,
       onDismiss = { showCreateRoomDialog = false },

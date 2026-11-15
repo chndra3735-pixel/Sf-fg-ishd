@@ -1,10 +1,15 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,7 +28,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -32,12 +39,15 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,11 +55,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
 import com.example.ui.components.CoinEmblem
 import com.example.ui.components.SupabaseConfigNoticeCard
@@ -69,8 +82,12 @@ fun ProfileScreen(
   onUploadAvatarDp: (Uri) -> Unit,
   onUpdateProfile: (displayName: String, handle: String, bio: String, gender: String, clubTag: String) -> Unit,
   onSignOut: () -> Unit,
+  isSignedIn: Boolean = true,
+  isSigningIn: Boolean = false,
+  onSignInClick: (() -> Unit)? = null,
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
+  val context = LocalContext.current
 
   val dpPicker = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia(),
@@ -78,6 +95,12 @@ fun ProfileScreen(
   )
 
   val profile = (profileState as? UiState.Success)?.data
+  val numericId = remember(profile?.userId) {
+    SwarUserIdentity.numericIdForUid(profile?.userId.orEmpty())
+  }
+  val levelInfo = remember(profile?.coins) {
+    SwarUserIdentity.levelForProfile(profile)
+  }
 
   Column(
     modifier = Modifier
@@ -149,7 +172,100 @@ fun ProfileScreen(
           style = MaterialTheme.typography.bodySmall,
           color = SwarCyan,
         )
+
         Spacer(modifier = Modifier.height(8.dp))
+        // Unique 10-Digit ID Pill + Copy Icon
+        Surface(
+          color = Color(0x28FFFFFF),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.border(1.dp, SwarCyan.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+        ) {
+          Row(
+            modifier = Modifier.padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              text = "ID: $numericId",
+              style = MaterialTheme.typography.labelLarge,
+              color = Color.White,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.testTag("profile_numeric_id"),
+            )
+            IconButton(
+              onClick = {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(ClipData.newPlainText("SwarRoom ID", numericId))
+                Toast.makeText(context, "ID कॉपी हो गई: $numericId", Toast.LENGTH_SHORT).show()
+              },
+              modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .testTag("copy_own_id_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.ContentCopy,
+                contentDescription = "ID कॉपी करें",
+                tint = SwarCyan,
+                modifier = Modifier.size(18.dp),
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        // Level Badge & Progress Bar
+        Surface(
+          color = levelInfo.badgeColor.copy(alpha = 0.16f),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, levelInfo.badgeColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+        ) {
+          Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Icon(
+                  imageVector = Icons.Filled.WorkspacePremium,
+                  contentDescription = null,
+                  tint = levelInfo.badgeColor,
+                  modifier = Modifier.size(18.dp),
+                )
+                Text(
+                  text = "Lv.${levelInfo.level} • ${levelInfo.title}",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = levelInfo.badgeColor,
+                  fontWeight = FontWeight.Bold,
+                  modifier = Modifier.testTag("profile_level_badge"),
+                )
+              }
+              Text(
+                text = if (levelInfo.level >= 99) "मैक्स लेवल" else "अगले लेवल में ${levelInfo.nextLevelRemainingCoins} कॉइंस",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFFD0C9EC),
+              )
+            }
+            LinearProgressIndicator(
+              progress = { levelInfo.progress },
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(4.dp)),
+              color = levelInfo.badgeColor,
+              trackColor = Color(0x33FFFFFF),
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
           text = profile?.bio.orEmpty().ifBlank { "SwarRoom पर लाइव बातचीत और संगीत!" },
           style = MaterialTheme.typography.bodyMedium,
@@ -242,18 +358,37 @@ fun ProfileScreen(
       }
     }
 
-    Button(
-      onClick = onSignOut,
-      colors = ButtonDefaults.buttonColors(containerColor = SwarCoral, contentColor = Color.White),
-      shape = RoundedCornerShape(16.dp),
-      modifier = Modifier
-        .fillMaxWidth()
-        .height(50.dp)
-        .testTag("sign_out_button"),
-    ) {
-      Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
-      Spacer(modifier = Modifier.width(8.dp))
-      Text("साइन आउट करें", fontWeight = FontWeight.Bold)
+    if (isSignedIn) {
+      Button(
+        onClick = onSignOut,
+        colors = ButtonDefaults.buttonColors(containerColor = SwarCoral, contentColor = Color.White),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(50.dp)
+          .testTag("sign_out_button"),
+      ) {
+        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("साइन आउट करें", fontWeight = FontWeight.Bold)
+      }
+    } else if (onSignInClick != null) {
+      Button(
+        onClick = onSignInClick,
+        enabled = !isSigningIn,
+        colors = ButtonDefaults.buttonColors(containerColor = SwarCyan, contentColor = SwarDeepNight),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(52.dp)
+          .testTag("profile_google_sign_in_button"),
+      ) {
+        if (isSigningIn) {
+          CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = SwarDeepNight)
+        } else {
+          Text("Google से साइन इन करें", fontWeight = FontWeight.Bold)
+        }
+      }
     }
   }
 
