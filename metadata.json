@@ -1,0 +1,6 @@
+{
+  "name": "SwarRoom",
+  "description": "लाइव वॉइस चैट रूम और रीयल-टाइम टेक्स्ट मैसेजिंग ऐप — सोशल ऑडियो रूम, सीट प्रबंधन और लाइव चैट",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

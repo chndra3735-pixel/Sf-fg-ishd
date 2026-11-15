@@ -1,0 +1,963 @@
+package com.example.data.repository
+
+import android.content.Context
+import com.example.R
+import com.example.data.model.Conversation
+import com.example.data.model.DirectMessage
+import com.example.data.model.EmojiCatalogItem
+import com.example.data.model.GiftCatalogItem
+import com.example.data.model.GiftEvent
+import com.example.data.model.MomentPost
+import com.example.data.model.RoomMessage
+import com.example.data.model.RoomSeat
+import com.example.data.model.UserProfile
+import com.example.data.model.VoiceRoom
+import com.example.data.remote.OperationType
+import com.example.data.remote.handleFirestoreError
+import com.google.firebase.Firebase
+import com.google.firebase.Timestamp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.DocumentSnapshot.ServerTimestampBehavior
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.snapshots
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.tasks.await
+import java.util.UUID
+
+class SwarRoomRepository(
+  private val db: FirebaseFirestore,
+  private val auth: FirebaseAuth = Firebase.auth,
+) {
+  constructor(context: Context) : this(
+    FirebaseFirestore.getInstance(
+      context.applicationContext.getString(R.string.firestore_database_id)
+    ),
+    Firebase.auth,
+  )
+
+  private fun requireUserId(): String {
+    return auth.currentUser?.uid
+      ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
+  }
+
+  // --- User Profile ---
+
+  fun observeUserProfile(uid: String): Flow<UserProfile?> = flow {
+    val docRef = db.collection("users").document(uid)
+    emitAll(
+      docRef.snapshots()
+        .map { snapshot ->
+          if (snapshot.exists()) {
+            snapshot.toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+          } else {
+            null
+          }
+        }
+        .catch { error -> handleFlowError(error, OperationType.GET, docRef.path, uid); throw error }
+    )
+  }
+
+  suspend fun ensureUserProfile(
+    displayName: String,
+    avatarUrl: String,
+  ): Result<UserProfile> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("users").document(uid)
+    val existing = docRef.get().await()
+    if (existing.exists()) {
+      val profile = existing.toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+      if (profile != null) return@runCatching profile
+    }
+    val safeName = displayName.trim().take(40).ifBlank { "Swar User" }
+    val safeHandle = safeName.lowercase().replace(Regex("[^a-z0-9_]"), "_").take(20).ifBlank { "user_${uid.take(6)}" }
+    val payload = mapOf(
+      "userId" to uid,
+      "displayName" to safeName,
+      "handle" to safeHandle,
+      "avatarUrl" to avatarUrl.take(600),
+      "bio" to "SwarRoom पर लाइव बातचीत और संगीत!",
+      "gender" to "male",
+      "clubTag" to "SWAR",
+      "coins" to 1500L,
+      "createdAt" to FieldValue.serverTimestamp(),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+      docRef.get().await().toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+        ?: UserProfile(id = uid, userId = uid, displayName = safeName, handle = safeHandle, avatarUrl = avatarUrl)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateUserProfile(
+    displayName: String,
+    handle: String,
+    bio: String,
+    gender: String,
+    clubTag: String,
+    avatarUrl: String? = null,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("users").document(uid)
+    val updates = mutableMapOf<String, Any>(
+      "displayName" to displayName.trim().take(40).ifBlank { "Swar User" },
+      "handle" to handle.trim().take(30).ifBlank { "swar_${uid.take(6)}" },
+      "bio" to bio.trim().take(160),
+      "gender" to if (gender in listOf("male", "female", "other")) gender else "other",
+      "clubTag" to clubTag.trim().take(16).ifBlank { "SWAR" },
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    if (avatarUrl != null) {
+      updates["avatarUrl"] = avatarUrl.take(600)
+    }
+    try {
+      docRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun getUserProfile(uid: String): UserProfile? {
+    val docRef = db.collection("users").document(uid)
+    return try {
+      docRef.get().await().toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.GET, docRef.path)
+      null
+    }
+  }
+
+  // --- Voice Rooms ---
+
+  fun observePublicRooms(): Flow<List<VoiceRoom>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("rooms").whereEqualTo("isPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(VoiceRoom::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "rooms", uid); throw error }
+    )
+  }
+
+  fun observeRoom(roomId: String): Flow<VoiceRoom?> = flow {
+    val uid = requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    emitAll(
+      docRef.snapshots()
+        .map { snapshot ->
+          if (snapshot.exists()) {
+            snapshot.toObject(VoiceRoom::class.java, ServerTimestampBehavior.ESTIMATE)
+          } else {
+            null
+          }
+        }
+        .catch { error -> handleFlowError(error, OperationType.GET, docRef.path, uid); throw error }
+    )
+  }
+
+  suspend fun createRoom(
+    title: String,
+    category: String,
+    backgroundTheme: String,
+    clubTag: String,
+    welcomeNotice: String,
+    coverUrl: String,
+    seatCount: Int,
+    hostProfile: UserProfile,
+  ): Result<String> = runCatching {
+    val uid = requireUserId()
+    val roomId = "room_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val roomRef = db.collection("rooms").document(roomId)
+    val validatedSeats = if (seatCount in listOf(8, 12, 20)) seatCount else 20
+    val roomCode = (100000..999999).random().toString()
+    val safeTheme = if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset")) backgroundTheme else "stadium"
+
+    val batch = db.batch()
+    val roomPayload = mapOf(
+      "ownerId" to uid,
+      "ownerName" to hostProfile.displayName.take(40).ifBlank { "Host" },
+      "ownerAvatarUrl" to hostProfile.avatarUrl.take(600),
+      "title" to title.trim().take(60).ifBlank { "लाइव वॉइस रूम" },
+      "roomCode" to roomCode,
+      "category" to category.trim().take(24).ifBlank { "लोकप्रिय" },
+      "coverUrl" to coverUrl.take(600),
+      "backgroundTheme" to safeTheme,
+      "clubTag" to clubTag.trim().take(16).ifBlank { hostProfile.clubTag.ifBlank { "SWAR" } },
+      "welcomeNotice" to welcomeNotice.trim().take(200).ifBlank {
+        "SwarRoom में आपका स्वागत है। कृपया एक दूसरे का सम्मान करें और सभ्य तरीके से चैट करें।"
+      },
+      "seatCount" to validatedSeats.toLong(),
+      "listenerCount" to 1L,
+      "isLive" to true,
+      "isPublic" to true,
+      "createdAt" to FieldValue.serverTimestamp(),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    batch.set(roomRef, roomPayload)
+
+    for (index in 0 until validatedSeats) {
+      val seatRef = roomRef.collection("seats").document("seat_$index")
+      val isHostSeat = index == 0
+      val seatPayload = mapOf(
+        "roomId" to roomId,
+        "roomOwnerId" to uid,
+        "isRoomPublic" to true,
+        "seatIndex" to index.toLong(),
+        "occupantUid" to if (isHostSeat) uid else "",
+        "occupantName" to if (isHostSeat) hostProfile.displayName.take(40) else "",
+        "occupantAvatarUrl" to if (isHostSeat) hostProfile.avatarUrl.take(600) else "",
+        "isLocked" to false,
+        "isMuted" to false,
+        "isSpeaking" to false,
+        "updatedAt" to FieldValue.serverTimestamp(),
+      )
+      batch.set(seatRef, seatPayload)
+    }
+
+    try {
+      batch.commit().await()
+      sendRoomSystemMessage(
+        roomId = roomId,
+        roomOwnerId = uid,
+        isRoomPublic = true,
+        senderName = hostProfile.displayName.ifBlank { "Host" },
+        senderAvatarUrl = hostProfile.avatarUrl,
+        text = "${hostProfile.displayName} का कमरे में स्वागत है",
+        messageType = "join",
+        badgeTag = clubTag.ifBlank { "HOST" },
+      )
+      roomId
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, roomRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateRoomSettings(
+    roomId: String,
+    title: String,
+    backgroundTheme: String,
+    welcomeNotice: String,
+    coverUrl: String? = null,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    val updates = mutableMapOf<String, Any>(
+      "title" to title.trim().take(60).ifBlank { "लाइव वॉइस रूम" },
+      "backgroundTheme" to if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset")) backgroundTheme else "stadium",
+      "welcomeNotice" to welcomeNotice.trim().take(200),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    if (coverUrl != null) {
+      updates["coverUrl"] = coverUrl.take(600)
+    }
+    try {
+      docRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun adjustListenerCount(roomId: String, delta: Long): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    try {
+      db.runTransaction { tx ->
+        val snap = tx.get(docRef)
+        if (!snap.exists()) return@runTransaction
+        val current = snap.getLong("listenerCount") ?: 1L
+        val next = (current + delta).coerceIn(0L, 9999L)
+        tx.update(docRef, mapOf("listenerCount" to next, "updatedAt" to FieldValue.serverTimestamp()))
+      }.await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun deleteRoom(roomId: String): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    try {
+      docRef.delete().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.DELETE, docRef.path)
+      throw e
+    }
+  }
+
+  // --- Room Seats ---
+
+  fun observeRoomSeats(roomId: String): Flow<List<RoomSeat>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("rooms").document(roomId).collection("seats")
+      .whereEqualTo("isRoomPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(RoomSeat::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedBy { it.seatIndex }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "rooms/$roomId/seats", uid); throw error }
+    )
+  }
+
+  suspend fun claimSeat(roomId: String, seatIndex: Int, profile: UserProfile): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val seatRef = db.collection("rooms").document(roomId).collection("seats").document("seat_$seatIndex")
+    try {
+      seatRef.update(
+        mapOf(
+          "occupantUid" to uid,
+          "occupantName" to profile.displayName.take(40).ifBlank { "Speaker" },
+          "occupantAvatarUrl" to profile.avatarUrl.take(600),
+          "isMuted" to false,
+          "isSpeaking" to false,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        )
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, seatRef.path)
+      throw e
+    }
+  }
+
+  suspend fun leaveSeat(roomId: String, seatIndex: Int): Result<Unit> = runCatching {
+    requireUserId()
+    val seatRef = db.collection("rooms").document(roomId).collection("seats").document("seat_$seatIndex")
+    try {
+      seatRef.update(
+        mapOf(
+          "occupantUid" to "",
+          "occupantName" to "",
+          "occupantAvatarUrl" to "",
+          "isMuted" to false,
+          "isSpeaking" to false,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        )
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, seatRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateSeatAudioState(
+    roomId: String,
+    seatIndex: Int,
+    isMuted: Boolean,
+    isSpeaking: Boolean,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val seatRef = db.collection("rooms").document(roomId).collection("seats").document("seat_$seatIndex")
+    try {
+      seatRef.update(
+        mapOf(
+          "isMuted" to isMuted,
+          "isSpeaking" to isSpeaking,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        )
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, seatRef.path)
+      throw e
+    }
+  }
+
+  suspend fun toggleSeatLock(roomId: String, seatIndex: Int, lock: Boolean): Result<Unit> = runCatching {
+    requireUserId()
+    val seatRef = db.collection("rooms").document(roomId).collection("seats").document("seat_$seatIndex")
+    try {
+      val updates = mutableMapOf<String, Any>(
+        "isLocked" to lock,
+        "updatedAt" to FieldValue.serverTimestamp(),
+      )
+      if (lock) {
+        updates["occupantUid"] = ""
+        updates["occupantName"] = ""
+        updates["occupantAvatarUrl"] = ""
+        updates["isSpeaking"] = false
+      }
+      seatRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, seatRef.path)
+      throw e
+    }
+  }
+
+  // --- Real-Time Room Text Messages ---
+
+  fun observeRoomMessages(roomId: String): Flow<List<RoomMessage>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("rooms").document(roomId).collection("messages")
+      .whereEqualTo("isRoomPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(RoomMessage::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedBy { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "rooms/$roomId/messages", uid); throw error }
+    )
+  }
+
+  suspend fun sendRoomMessage(
+    room: VoiceRoom,
+    sender: UserProfile,
+    text: String,
+    messageType: String = "text",
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val cleanText = text.trim().take(500)
+    require(cleanText.isNotEmpty()) { "Message cannot be empty" }
+    val msgId = "msg_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val msgRef = db.collection("rooms").document(room.id).collection("messages").document(msgId)
+    val payload = mapOf(
+      "roomId" to room.id,
+      "roomOwnerId" to room.ownerId,
+      "isRoomPublic" to room.isPublic,
+      "senderUid" to uid,
+      "senderName" to sender.displayName.take(40).ifBlank { "User" },
+      "senderAvatarUrl" to sender.avatarUrl.take(600),
+      "text" to cleanText,
+      "messageType" to if (messageType in listOf("text", "join", "gift", "emoji")) messageType else "text",
+      "badgeTag" to sender.clubTag.take(24),
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      msgRef.set(payload).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, msgRef.path)
+      throw e
+    }
+  }
+
+  suspend fun sendRoomSystemMessage(
+    roomId: String,
+    roomOwnerId: String,
+    isRoomPublic: Boolean,
+    senderName: String,
+    senderAvatarUrl: String,
+    text: String,
+    messageType: String,
+    badgeTag: String,
+  ) {
+    val uid = requireUserId()
+    val msgId = "sys_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val msgRef = db.collection("rooms").document(roomId).collection("messages").document(msgId)
+    val payload = mapOf(
+      "roomId" to roomId,
+      "roomOwnerId" to roomOwnerId,
+      "isRoomPublic" to isRoomPublic,
+      "senderUid" to uid,
+      "senderName" to senderName.take(40).ifBlank { "User" },
+      "senderAvatarUrl" to senderAvatarUrl.take(600),
+      "text" to text.trim().take(500).ifBlank { "Joined room" },
+      "messageType" to if (messageType in listOf("text", "join", "gift", "emoji")) messageType else "join",
+      "badgeTag" to badgeTag.take(24),
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      msgRef.set(payload).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, msgRef.path)
+    }
+  }
+
+  // --- 1-on-1 Direct Messaging ---
+
+  fun observeConversations(): Flow<List<Conversation>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("conversations").whereArrayContains("participantUids", uid)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(Conversation::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "conversations", uid); throw error }
+    )
+  }
+
+  fun observeDirectMessages(conversationId: String): Flow<List<DirectMessage>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("conversations").document(conversationId)
+      .collection("messages")
+      .whereArrayContains("participantUids", uid)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(DirectMessage::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedBy { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error ->
+          handleFlowError(error, OperationType.LIST, "conversations/$conversationId/messages", uid)
+          throw error
+        }
+    )
+  }
+
+  suspend fun startOrGetConversation(
+    currentUser: UserProfile,
+    otherUid: String,
+    otherName: String,
+    otherAvatarUrl: String,
+  ): Result<String> = runCatching {
+    val uid = requireUserId()
+    val sortedUids = listOf(uid, otherUid).sorted()
+    val convoId = "${sortedUids[0]}_${sortedUids[1]}"
+    val docRef = db.collection("conversations").document(convoId)
+    val existing = docRef.get().await()
+    if (!existing.exists()) {
+      val payload = mapOf(
+        "participantUids" to sortedUids,
+        "participantNames" to mapOf(
+          uid to currentUser.displayName.take(40).ifBlank { "Me" },
+          otherUid to otherName.take(40).ifBlank { "Friend" },
+        ),
+        "participantAvatars" to mapOf(
+          uid to currentUser.avatarUrl.take(600),
+          otherUid to otherAvatarUrl.take(600),
+        ),
+        "lastMessage" to "नई बातचीत शुरू हुई",
+        "lastSenderUid" to uid,
+        "createdAt" to FieldValue.serverTimestamp(),
+        "updatedAt" to FieldValue.serverTimestamp(),
+      )
+      try {
+        docRef.set(payload).await()
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.CREATE, docRef.path)
+        throw e
+      }
+    }
+    convoId
+  }
+
+  suspend fun sendDirectMessage(
+    conversationId: String,
+    participantUids: List<String>,
+    senderName: String,
+    text: String,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val cleanText = text.trim().take(1000)
+    require(cleanText.isNotEmpty()) { "Message cannot be empty" }
+    val msgId = "dm_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val convoRef = db.collection("conversations").document(conversationId)
+    val msgRef = convoRef.collection("messages").document(msgId)
+
+    val batch = db.batch()
+    batch.set(
+      msgRef,
+      mapOf(
+        "conversationId" to conversationId,
+        "participantUids" to participantUids,
+        "senderUid" to uid,
+        "senderName" to senderName.take(40).ifBlank { "User" },
+        "text" to cleanText,
+        "createdAt" to FieldValue.serverTimestamp(),
+      ),
+    )
+    batch.update(
+      convoRef,
+      mapOf(
+        "lastMessage" to cleanText.take(500),
+        "lastSenderUid" to uid,
+        "updatedAt" to FieldValue.serverTimestamp(),
+      ),
+    )
+    try {
+      batch.commit().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, msgRef.path)
+      throw e
+    }
+  }
+
+  // --- Community Video & Image Moments (Media stored in Supabase Storage) ---
+
+  fun observeMoments(): Flow<List<MomentPost>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("moments").whereEqualTo("isPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(MomentPost::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "moments", uid); throw error }
+    )
+  }
+
+  suspend fun createMomentPost(
+    author: UserProfile,
+    caption: String,
+    mediaUrl: String,
+    mediaType: String,
+  ): Result<String> = runCatching {
+    val uid = requireUserId()
+    val momentId = "mom_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val docRef = db.collection("moments").document(momentId)
+    val payload = mapOf(
+      "authorUid" to uid,
+      "authorName" to author.displayName.take(40).ifBlank { "Creator" },
+      "authorAvatarUrl" to author.avatarUrl.take(600),
+      "caption" to caption.trim().take(300),
+      "mediaUrl" to mediaUrl.take(800),
+      "mediaType" to if (mediaType == "video") "video" else "image",
+      "isPublic" to true,
+      "likesCount" to 0L,
+      "createdAt" to FieldValue.serverTimestamp(),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+      momentId
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun likeMoment(momentId: String): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("moments").document(momentId)
+    try {
+      docRef.update(
+        mapOf(
+          "likesCount" to FieldValue.increment(1L),
+          "updatedAt" to FieldValue.serverTimestamp(),
+        )
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun deleteMoment(momentId: String): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("moments").document(momentId)
+    try {
+      docRef.delete().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.DELETE, docRef.path)
+      throw e
+    }
+  }
+
+  // --- Admin-Managed Emoji & Gift Catalogs + Global Gift Events ---
+
+  fun observeEmojiCatalog(): Flow<List<EmojiCatalogItem>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("emoji_catalog").whereEqualTo("isActive", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(EmojiCatalogItem::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedBy { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "emoji_catalog", uid); throw error }
+    )
+  }
+
+  suspend fun addEmojiToCatalog(
+    label: String,
+    category: String,
+    symbol: String,
+    imageUrl: String,
+  ): Result<String> = runCatching {
+    val uid = requireUserId()
+    val cleanLabel = label.trim().take(30).ifBlank { "कस्टम इमोजी" }
+    val cleanSymbol = symbol.trim().take(16)
+    val cleanImage = imageUrl.trim().take(800)
+    require(cleanSymbol.isNotEmpty() || cleanImage.isNotEmpty()) {
+      "इमोजी चिह्न या इमेज में से कम से कम एक आवश्यक है।"
+    }
+    val emojiId = "emo_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val docRef = db.collection("emoji_catalog").document(emojiId)
+    val payload = mapOf(
+      "createdByUid" to uid,
+      "label" to cleanLabel,
+      "category" to category.trim().take(24).ifBlank { "ट्रेंडिंग" },
+      "symbol" to cleanSymbol,
+      "imageUrl" to cleanImage,
+      "isActive" to true,
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+      emojiId
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      throw e
+    }
+  }
+
+  fun observeGiftCatalog(): Flow<List<GiftCatalogItem>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("gift_catalog").whereEqualTo("isActive", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(GiftCatalogItem::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedBy { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "gift_catalog", uid); throw error }
+    )
+  }
+
+  suspend fun addGiftToCatalog(
+    name: String,
+    category: String,
+    emoji: String,
+    thumbnailUrl: String,
+    mediaUrl: String,
+    mediaType: String,
+    coinCost: Long,
+  ): Result<String> = runCatching {
+    val uid = requireUserId()
+    val giftId = "gift_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val docRef = db.collection("gift_catalog").document(giftId)
+    val safeMediaType = if (mediaType in listOf("emoji", "image", "video")) mediaType else "emoji"
+    val safeCost = coinCost.coerceIn(1L, 999999L)
+    val payload = mapOf(
+      "createdByUid" to uid,
+      "name" to name.trim().take(40).ifBlank { "स्पेशल गिफ्ट" },
+      "category" to category.trim().take(24).ifBlank { "हॉट" },
+      "emoji" to emoji.trim().take(16).ifBlank { "🎁" },
+      "thumbnailUrl" to thumbnailUrl.trim().take(800),
+      "mediaUrl" to mediaUrl.trim().take(800),
+      "mediaType" to safeMediaType,
+      "coinCost" to safeCost,
+      "isActive" to true,
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+      giftId
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      throw e
+    }
+  }
+
+  fun observeGlobalGiftEvents(): Flow<List<GiftEvent>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("gift_events").whereEqualTo("isPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(GiftEvent::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            .take(40)
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "gift_events", uid); throw error }
+    )
+  }
+
+  suspend fun sendGiftTransaction(
+    room: VoiceRoom,
+    sender: UserProfile,
+    recipientUid: String,
+    recipientName: String,
+    gift: GiftCatalogItem,
+    quantity: Int,
+  ): Result<GiftEvent> = runCatching {
+    val uid = requireUserId()
+    val safeQty = quantity.coerceIn(1, 99)
+    val totalCost = (gift.coinCost * safeQty).coerceIn(0L, 999999L)
+    val userRef = db.collection("users").document(uid)
+    val eventId = "evt_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val eventRef = db.collection("gift_events").document(eventId)
+    val msgId = "gmsg_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val msgRef = db.collection("rooms").document(room.id).collection("messages").document(msgId)
+
+    val safeGiftName = gift.name.take(40).ifBlank { "गिफ्ट" }
+    val safeGiftEmoji = gift.emoji.take(16).ifBlank { "🎁" }
+    val safeRecipientName = recipientName.trim().take(40).ifBlank { "सभी सदस्य" }
+    val safeSenderName = sender.displayName.trim().take(40).ifBlank { "User" }
+    val safeMediaUrl = gift.mediaUrl.ifBlank { gift.thumbnailUrl }.take(800)
+    val safeMediaType = when {
+      gift.mediaType == "video" && safeMediaUrl.isNotBlank() -> "video"
+      gift.mediaType == "image" && safeMediaUrl.isNotBlank() -> "image"
+      else -> "emoji"
+    }
+
+    val eventPayload = mapOf(
+      "roomId" to room.id,
+      "roomTitle" to room.title.take(60).ifBlank { "लाइव रूम" },
+      "senderUid" to uid,
+      "senderName" to safeSenderName,
+      "senderAvatarUrl" to sender.avatarUrl.take(600),
+      "recipientUid" to recipientUid.take(128),
+      "recipientName" to safeRecipientName,
+      "giftId" to gift.id.take(128).ifBlank { "builtin_gift" },
+      "giftName" to safeGiftName,
+      "giftEmoji" to safeGiftEmoji,
+      "giftMediaUrl" to safeMediaUrl,
+      "giftMediaType" to safeMediaType,
+      "coinCost" to totalCost,
+      "quantity" to safeQty.toLong(),
+      "isPublic" to true,
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+
+    val qtySuffix = if (safeQty > 1) " x$safeQty" else ""
+    val msgPayload = mapOf(
+      "roomId" to room.id,
+      "roomOwnerId" to room.ownerId,
+      "isRoomPublic" to room.isPublic,
+      "senderUid" to uid,
+      "senderName" to safeSenderName,
+      "senderAvatarUrl" to sender.avatarUrl.take(600),
+      "text" to "$safeRecipientName को $safeGiftEmoji $safeGiftName$qtySuffix भेजा!",
+      "messageType" to "gift",
+      "badgeTag" to "🎁 GIFT",
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+
+    try {
+      db.runTransaction { tx ->
+        val userSnap = tx.get(userRef)
+        val currentCoins = userSnap.getLong("coins") ?: 0L
+        if (currentCoins < totalCost) {
+          throw IllegalStateException("कॉइंस कम हैं! इस गिफ्ट के लिए $totalCost कॉइंस चाहिए।")
+        }
+        tx.update(
+          userRef,
+          mapOf(
+            "coins" to (currentCoins - totalCost),
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        tx.set(eventRef, eventPayload)
+        tx.set(msgRef, msgPayload)
+      }.await()
+      GiftEvent(
+        id = eventId,
+        roomId = room.id,
+        roomTitle = room.title.take(60),
+        senderUid = uid,
+        senderName = safeSenderName,
+        senderAvatarUrl = sender.avatarUrl,
+        recipientUid = recipientUid,
+        recipientName = safeRecipientName,
+        giftId = gift.id.ifBlank { "builtin_gift" },
+        giftName = safeGiftName,
+        giftEmoji = safeGiftEmoji,
+        giftMediaUrl = safeMediaUrl,
+        giftMediaType = safeMediaType,
+        coinCost = totalCost,
+        quantity = safeQty.toLong(),
+        isPublic = true,
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: IllegalStateException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, eventRef.path)
+      throw e
+    }
+  }
+
+  suspend fun claimBonusCoins(amount: Long = 500L): Result<Long> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("users").document(uid)
+    val safeBonus = amount.coerceIn(1L, 50000L)
+    try {
+      db.runTransaction { tx ->
+        val snap = tx.get(docRef)
+        val current = snap.getLong("coins") ?: 0L
+        val next = (current + safeBonus).coerceAtMost(999999999L)
+        tx.update(
+          docRef,
+          mapOf(
+            "coins" to next,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        next
+      }.await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  private fun handleFlowError(
+    error: Throwable,
+    operationType: OperationType,
+    path: String,
+    expectedUid: String,
+  ) {
+    val firestoreError = generateSequence(error) { it.cause }
+      .filterIsInstance<FirebaseFirestoreException>()
+      .firstOrNull()
+    if (firestoreError == null && error is CancellationException) throw error
+    val exceptionToLog = firestoreError ?: (error as? Exception)
+    if (exceptionToLog != null && auth.currentUser?.uid == expectedUid) {
+      handleFirestoreError(exceptionToLog, operationType, path)
+    }
+  }
+}

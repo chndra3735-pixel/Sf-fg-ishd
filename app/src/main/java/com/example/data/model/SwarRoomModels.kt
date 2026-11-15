@@ -1,0 +1,199 @@
+package com.example.data.model
+
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.DocumentId
+import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.PropertyName
+import com.google.firebase.firestore.ServerTimestamp
+
+@IgnoreExtraProperties
+data class UserProfile(
+  @DocumentId val id: String = "",
+  val userId: String = "",
+  val displayName: String = "",
+  val handle: String = "",
+  val avatarUrl: String = "",
+  val bio: String = "",
+  val gender: String = "male",
+  val clubTag: String = "SWAR",
+  val coins: Long = 1000L,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class VoiceRoom(
+  @DocumentId val id: String = "",
+  val ownerId: String = "",
+  val ownerName: String = "",
+  val ownerAvatarUrl: String = "",
+  val title: String = "",
+  val roomCode: String = "",
+  val category: String = "लोकप्रिय",
+  val coverUrl: String = "",
+  val backgroundTheme: String = "stadium",
+  val clubTag: String = "SWAR",
+  val welcomeNotice: String = "SwarRoom में आपका स्वागत है। कृपया एक दूसरे का सम्मान करें और सभ्य तरीके से चैट करें।",
+  val seatCount: Long = 20L,
+  val listenerCount: Long = 1L,
+  @get:PropertyName("isLive") @field:PropertyName("isLive") val isLive: Boolean = true,
+  @get:PropertyName("isPublic") @field:PropertyName("isPublic") val isPublic: Boolean = true,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class RoomSeat(
+  @DocumentId val id: String = "",
+  val roomId: String = "",
+  val roomOwnerId: String = "",
+  @get:PropertyName("isRoomPublic") @field:PropertyName("isRoomPublic") val isRoomPublic: Boolean = true,
+  val seatIndex: Long = 0L,
+  val occupantUid: String = "",
+  val occupantName: String = "",
+  val occupantAvatarUrl: String = "",
+  @get:PropertyName("isLocked") @field:PropertyName("isLocked") val isLocked: Boolean = false,
+  @get:PropertyName("isMuted") @field:PropertyName("isMuted") val isMuted: Boolean = false,
+  @get:PropertyName("isSpeaking") @field:PropertyName("isSpeaking") val isSpeaking: Boolean = false,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class RoomMessage(
+  @DocumentId val id: String = "",
+  val roomId: String = "",
+  val roomOwnerId: String = "",
+  @get:PropertyName("isRoomPublic") @field:PropertyName("isRoomPublic") val isRoomPublic: Boolean = true,
+  val senderUid: String = "",
+  val senderName: String = "",
+  val senderAvatarUrl: String = "",
+  val text: String = "",
+  val messageType: String = "text",
+  val badgeTag: String = "",
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class Conversation(
+  @DocumentId val id: String = "",
+  val participantUids: List<String> = emptyList(),
+  val participantNames: Map<String, String> = emptyMap(),
+  val participantAvatars: Map<String, String> = emptyMap(),
+  val lastMessage: String = "",
+  val lastSenderUid: String = "",
+  @ServerTimestamp val createdAt: Timestamp? = null,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class DirectMessage(
+  @DocumentId val id: String = "",
+  val conversationId: String = "",
+  val participantUids: List<String> = emptyList(),
+  val senderUid: String = "",
+  val senderName: String = "",
+  val text: String = "",
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class MomentPost(
+  @DocumentId val id: String = "",
+  val authorUid: String = "",
+  val authorName: String = "",
+  val authorAvatarUrl: String = "",
+  val caption: String = "",
+  val mediaUrl: String = "",
+  val mediaType: String = "image",
+  @get:PropertyName("isPublic") @field:PropertyName("isPublic") val isPublic: Boolean = true,
+  val likesCount: Long = 0L,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class EmojiCatalogItem(
+  @DocumentId val id: String = "",
+  val createdByUid: String = "",
+  val label: String = "",
+  val category: String = "ट्रेंडिंग",
+  val symbol: String = "",
+  val imageUrl: String = "",
+  @get:PropertyName("isActive") @field:PropertyName("isActive") val isActive: Boolean = true,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class GiftCatalogItem(
+  @DocumentId val id: String = "",
+  val createdByUid: String = "",
+  val name: String = "",
+  val category: String = "हॉट",
+  val emoji: String = "🎁",
+  val thumbnailUrl: String = "",
+  val mediaUrl: String = "",
+  val mediaType: String = "emoji",
+  val coinCost: Long = 10L,
+  @get:PropertyName("isActive") @field:PropertyName("isActive") val isActive: Boolean = true,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+@IgnoreExtraProperties
+data class GiftEvent(
+  @DocumentId val id: String = "",
+  val roomId: String = "",
+  val roomTitle: String = "",
+  val senderUid: String = "",
+  val senderName: String = "",
+  val senderAvatarUrl: String = "",
+  val recipientUid: String = "",
+  val recipientName: String = "",
+  val giftId: String = "",
+  val giftName: String = "",
+  val giftEmoji: String = "🎁",
+  val giftMediaUrl: String = "",
+  val giftMediaType: String = "emoji",
+  val coinCost: Long = 0L,
+  val quantity: Long = 1L,
+  @get:PropertyName("isPublic") @field:PropertyName("isPublic") val isPublic: Boolean = true,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+object SwarCatalogDefaults {
+  val emojiCategories = listOf("ट्रेंडिंग", "मस्ती", "प्यार", "प्रतिक्रिया")
+  val giftCategories = listOf("हॉट", "लग्ज़री", "वीडियो VIP", "लकी")
+
+  val builtInEmojis = listOf(
+    EmojiCatalogItem(id = "def_e1", label = "फायर", category = "ट्रेंडिंग", symbol = "🔥"),
+    EmojiCatalogItem(id = "def_e2", label = "शानदार", category = "ट्रेंडिंग", symbol = "🤩"),
+    EmojiCatalogItem(id = "def_e3", label = "रॉकस्टार", category = "ट्रेंडिंग", symbol = "🤘"),
+    EmojiCatalogItem(id = "def_e4", label = "VIP", category = "ट्रेंडिंग", symbol = "💎"),
+    EmojiCatalogItem(id = "def_e5", label = "हंसी", category = "मस्ती", symbol = "😂"),
+    EmojiCatalogItem(id = "def_e6", label = "डांस", category = "मस्ती", symbol = "💃"),
+    EmojiCatalogItem(id = "def_e7", label = "पार्टी", category = "मस्ती", symbol = "🥳"),
+    EmojiCatalogItem(id = "def_e8", label = "गाना", category = "मस्ती", symbol = "🎵"),
+    EmojiCatalogItem(id = "def_e9", label = "दिल से", category = "प्यार", symbol = "❤️"),
+    EmojiCatalogItem(id = "def_e10", label = "गुलाब", category = "प्यार", symbol = "🌹"),
+    EmojiCatalogItem(id = "def_e11", label = "प्यारा", category = "प्यार", symbol = "🥰"),
+    EmojiCatalogItem(id = "def_e12", label = "चमक", category = "प्यार", symbol = "💖"),
+    EmojiCatalogItem(id = "def_e13", label = "तालियां", category = "प्रतिक्रिया", symbol = "👏"),
+    EmojiCatalogItem(id = "def_e14", label = "नमस्ते", category = "प्रतिक्रिया", symbol = "🙏"),
+    EmojiCatalogItem(id = "def_e15", label = "सलाम", category = "प्रतिक्रिया", symbol = "🫡"),
+    EmojiCatalogItem(id = "def_e16", label = "वाह", category = "प्रतिक्रिया", symbol = "😮"),
+  )
+
+  val builtInGifts = listOf(
+    GiftCatalogItem(id = "def_g1", name = "गोल्डन रोज़", category = "हॉट", emoji = "🌹", coinCost = 10L),
+    GiftCatalogItem(id = "def_g2", name = "म्यूज़िक माइक", category = "हॉट", emoji = "🎤", coinCost = 50L),
+    GiftCatalogItem(id = "def_g3", name = "शाही ताज", category = "हॉट", emoji = "👑", coinCost = 100L),
+    GiftCatalogItem(id = "def_g4", name = "स्पोर्ट्स कार", category = "लग्ज़री", emoji = "🏎️", coinCost = 500L),
+    GiftCatalogItem(id = "def_g5", name = "डायमंड रिंग", category = "लग्ज़री", emoji = "💍", coinCost = 300L),
+    GiftCatalogItem(id = "def_g6", name = "प्राइवेट जेट", category = "लग्ज़री", emoji = "🛩️", coinCost = 999L),
+    GiftCatalogItem(id = "def_g7", name = "फायरवर्क शो", category = "वीडियो VIP", emoji = "🎆", coinCost = 750L),
+    GiftCatalogItem(id = "def_g8", name = "गोल्डन ड्रैगन", category = "वीडियो VIP", emoji = "🐉", coinCost = 1200L),
+    GiftCatalogItem(id = "def_g9", name = "लकी स्टार", category = "लकी", emoji = "🌟", coinCost = 20L),
+    GiftCatalogItem(id = "def_g10", name = "रॉकेट बूस्ट", category = "लकी", emoji = "🚀", coinCost = 150L),
+    GiftCatalogItem(id = "def_g11", name = "ट्रॉफी कप", category = "लकी", emoji = "🏆", coinCost = 250L),
+  )
+}
+

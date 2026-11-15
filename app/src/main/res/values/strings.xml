@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">SwarRoom</string>
+    <string name="app_tagline">लाइव वॉइस चैट रूम और रीयल-टाइम टेक्स्ट मैसेजिंग</string>
+    <string name="sign_in_google">Google से साइन इन करें</string>
+    <string name="tab_following">फॉलोइंग</string>
+    <string name="tab_popular">लोकप्रिय</string>
+    <string name="tab_recent">हाल ही का</string>
+    <string name="nav_rooms">रूम</string>
+    <string name="nav_moments">मोमेंट्स</string>
+    <string name="nav_messages">संदेश</string>
+    <string name="nav_profile">प्रोफ़ाइल</string>
+    <string name="say_hello_hint">नमस्ते कहें...</string>
+    <string name="talk_pill">बात करना</string>
+    <string name="create_room_title">नया वॉइस रूम बनाएं</string>
+    <string name="supabase_not_configured">मीडिया अपलोड (DP/वीडियो) के लिए AI Studio या GitHub Secrets में SUPABASE_URL और SUPABASE_ANON_KEY सेट करें।</string>
+    <string name="mic_permission_needed">लाइव वॉइस बातचीत के लिए माइक्रोफ़ोन अनुमति आवश्यक है।</string>
+</resources>

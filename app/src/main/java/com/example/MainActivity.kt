@@ -1,0 +1,536 @@
+package com.example
+
+import android.content.Context
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
+import kotlinx.coroutines.launch
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import coil.Coil
+import coil.ImageLoader
+import com.example.audio.VoiceAudioEngine
+import com.example.data.repository.SupabaseNetworkClient
+import com.example.data.repository.SupabaseStorageRepository
+import com.example.data.repository.SwarRoomRepository
+import com.example.ui.auth.AuthScreen
+import com.example.ui.auth.authStateFlow
+import com.example.ui.auth.signOut
+import com.example.ui.components.CreateMomentDialog
+import com.example.ui.components.CreateRoomDialog
+import com.example.ui.screens.LobbyScreen
+import com.example.ui.screens.MessagesScreen
+import com.example.ui.screens.MomentsScreen
+import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.VoiceRoomScreen
+import com.example.ui.theme.SwarCoral
+import com.example.ui.theme.SwarCyan
+import com.example.ui.theme.SwarDeepNight
+import com.example.ui.theme.SwarRoomTheme
+import com.example.ui.theme.SwarStageIndigo
+import com.example.ui.theme.SwarViolet
+import com.example.ui.viewmodel.SwarRoomViewModel
+import com.example.ui.viewmodel.UiState
+import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestore
+
+private enum class MainTab(val route: String) {
+  ROOMS("rooms"),
+  MOMENTS("moments"),
+  MESSAGES("messages"),
+  PROFILE("profile"),
+}
+
+private fun ensureFirebaseAuth(context: Context): FirebaseAuth? {
+  return runCatching {
+    val appReady = if (FirebaseApp.getApps(context).isNotEmpty()) {
+      true
+    } else {
+      FirebaseApp.initializeApp(context) != null
+    }
+    if (appReady) Firebase.auth else null
+  }.getOrNull()
+}
+
+class MainActivity : ComponentActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    Coil.setImageLoader {
+      ImageLoader.Builder(applicationContext)
+        .okHttpClient { SupabaseNetworkClient.sharedOkHttpClient }
+        .build()
+    }
+    enableEdgeToEdge()
+    setContent {
+      SwarRoomTheme {
+        SwarRoomAppRoot()
+      }
+    }
+  }
+}
+
+@Composable
+fun SwarRoomAppRoot(
+  firebaseAuthProvider: (Context) -> FirebaseAuth? = ::ensureFirebaseAuth,
+) {
+  val context = LocalContext.current
+  var retryCount by remember { mutableIntStateOf(0) }
+  val auth = remember(context, retryCount, firebaseAuthProvider) { firebaseAuthProvider(context) }
+
+  if (auth == null) {
+    FirebaseSetupRequiredScreen(onRetry = { retryCount++ })
+    return
+  }
+
+  val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+
+  val user = currentUser
+  if (user == null) {
+    AuthScreen(onAuthSuccess = {})
+  } else {
+    key(user.uid) {
+      AuthenticatedSwarRoomApp(user = user)
+    }
+  }
+}
+
+@Composable
+private fun FirebaseSetupRequiredScreen(
+  onRetry: () -> Unit,
+) {
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(
+        Brush.verticalGradient(
+          colors = listOf(SwarDeepNight, SwarStageIndigo, Color(0xFF0E0820))
+        )
+      )
+      .safeDrawingPadding()
+      .padding(horizontal = 24.dp, vertical = 20.dp),
+    contentAlignment = Alignment.Center,
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .widthIn(max = 460.dp)
+        .verticalScroll(rememberScrollState()),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+      Box(
+        modifier = Modifier
+          .size(72.dp)
+          .clip(CircleShape)
+          .background(Brush.linearGradient(listOf(SwarCoral, SwarViolet))),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(
+          imageVector = Icons.Filled.CloudOff,
+          contentDescription = "Firebase कॉन्फ़िगरेशन आवश्यक",
+          tint = Color.White,
+          modifier = Modifier.size(36.dp),
+        )
+      }
+
+      Text(
+        text = "Firebase सेटअप अधूरा है",
+        style = MaterialTheme.typography.headlineSmall,
+        color = Color.White,
+        textAlign = TextAlign.Center,
+      )
+
+      Text(
+        text = "इस APK को बनाते समय google-services.json फ़ाइल शामिल नहीं हो सकी, इसलिए ऐप ने क्रैश होने से पहले सुरक्षित रूप से रोका है।",
+        style = MaterialTheme.typography.bodyMedium,
+        color = Color(0xFFC5BFE2),
+        textAlign = TextAlign.Center,
+      )
+
+      Surface(
+        color = Color(0x22FFFFFF),
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(
+          modifier = Modifier.padding(16.dp),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Text(
+            text = "सही APK बनाने के 3 आसान चरण:",
+            style = MaterialTheme.typography.titleSmall,
+            color = SwarCyan,
+            fontWeight = FontWeight.Bold,
+          )
+          Text(
+            text = "1. GitHub रिपॉजिटरी के Settings → Secrets and variables → Actions खोलें।",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+          )
+          Text(
+            text = "2. GOOGLE_SERVICES_JSON नाम का Secret जोड़कर अपने प्रोजेक्ट की google-services.json फ़ाइल पेस्ट करें।",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+          )
+          Text(
+            text = "3. GitHub Actions दोबारा चलाएं और नया SwarRoom.apk इंस्टॉल करें।",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+          )
+        }
+      }
+
+      Button(
+        onClick = onRetry,
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(52.dp)
+          .testTag("retry_firebase_init_button"),
+        shape = RoundedCornerShape(26.dp),
+        colors = ButtonDefaults.buttonColors(
+          containerColor = SwarCyan,
+          contentColor = SwarDeepNight,
+        ),
+      ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(imageVector = Icons.Filled.Refresh, contentDescription = null)
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "पुनः जांचें",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  val credentialManager = remember(context) {
+    runCatching { CredentialManager.create(context) }.getOrNull()
+  }
+
+  val viewModel: SwarRoomViewModel = viewModel(
+    key = user.uid,
+    factory = viewModelFactory {
+      initializer {
+        val app = checkNotNull(this[APPLICATION_KEY]) { "APPLICATION_KEY missing" }
+        val databaseId = app.getString(R.string.firestore_database_id)
+        val db = FirebaseFirestore.getInstance(databaseId)
+        SwarRoomViewModel(
+          repository = SwarRoomRepository(db, Firebase.auth),
+          supabaseStorage = SupabaseStorageRepository(app),
+          audioEngine = VoiceAudioEngine(app),
+          currentUserId = user.uid,
+          initialDisplayName = user.displayName.orEmpty(),
+          initialAvatarUrl = user.photoUrl?.toString().orEmpty(),
+          currentUserEmail = user.email.orEmpty(),
+          isEmailVerified = user.isEmailVerified,
+        )
+      }
+    },
+  )
+
+  val profileState by viewModel.userProfile.collectAsStateWithLifecycle()
+  val roomsState by viewModel.rooms.collectAsStateWithLifecycle()
+  val momentsState by viewModel.moments.collectAsStateWithLifecycle()
+  val conversationsState by viewModel.conversations.collectAsStateWithLifecycle()
+  val activeRoom by viewModel.activeRoom.collectAsStateWithLifecycle()
+  val activeRoomSeats by viewModel.activeRoomSeats.collectAsStateWithLifecycle()
+  val activeRoomMessages by viewModel.activeRoomMessages.collectAsStateWithLifecycle()
+  val emojiCatalog by viewModel.emojiCatalog.collectAsStateWithLifecycle()
+  val giftCatalog by viewModel.giftCatalog.collectAsStateWithLifecycle()
+  val latestMarqueeGift by viewModel.latestMarqueeGift.collectAsStateWithLifecycle()
+  val activeFullScreenGift by viewModel.activeFullScreenGift.collectAsStateWithLifecycle()
+  val activeConversationId by viewModel.activeConversationId.collectAsStateWithLifecycle()
+  val activeDirectMessages by viewModel.activeDirectMessages.collectAsStateWithLifecycle()
+  val isUploadingMedia by viewModel.isUploadingMedia.collectAsStateWithLifecycle()
+  val isMicMuted by viewModel.isMicMuted.collectAsStateWithLifecycle()
+  val isSpeakerOn by viewModel.isSpeakerOn.collectAsStateWithLifecycle()
+  val isMonitorLoopbackOn by viewModel.isMonitorLoopbackOn.collectAsStateWithLifecycle()
+  val micAudioLevel by viewModel.micAudioLevel.collectAsStateWithLifecycle()
+
+  var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
+  var showCreateRoomDialog by remember { mutableStateOf(false) }
+  var showCreateMomentDialog by remember { mutableStateOf(false) }
+  val snackbarHostState = remember { SnackbarHostState() }
+
+  LaunchedEffect(viewModel) {
+    viewModel.events.collect { message ->
+      snackbarHostState.showSnackbar(message)
+    }
+  }
+
+  val currentRoom = activeRoom
+  if (currentRoom != null) {
+    Box(modifier = Modifier.fillMaxSize()) {
+      val coins = (profileState as? UiState.Success)?.data?.coins ?: 1500L
+      VoiceRoomScreen(
+        room = currentRoom,
+        seats = activeRoomSeats,
+        messages = activeRoomMessages,
+        currentUserId = user.uid,
+        isAdminUser = viewModel.isAdminUser,
+        isUploadingMedia = isUploadingMedia,
+        userCoins = coins,
+        emojiCatalog = emojiCatalog,
+        giftCatalog = giftCatalog,
+        latestMarqueeGift = latestMarqueeGift,
+        activeFullScreenGift = activeFullScreenGift,
+        isMicMuted = isMicMuted,
+        isSpeakerOn = isSpeakerOn,
+        isMonitorLoopbackOn = isMonitorLoopbackOn,
+        micAudioLevel = micAudioLevel,
+        onLeaveRoom = { viewModel.leaveActiveRoom() },
+        onSeatTapped = { seat, hasPerm, requestPerm ->
+          viewModel.onSeatTapped(seat, hasPerm, requestPerm)
+        },
+        onLeaveSeat = { viewModel.leaveMySeat() },
+        onToggleSeatLock = { viewModel.toggleSeatLock(it) },
+        onToggleMic = { hasPerm, requestPerm -> viewModel.toggleMic(hasPerm, requestPerm) },
+        onAudioPermissionGranted = { viewModel.onAudioPermissionGranted() },
+        onToggleSpeaker = { viewModel.toggleSpeaker() },
+        onToggleMonitorLoopback = { viewModel.toggleMonitorLoopback() },
+        onSendMessage = { text, type -> viewModel.sendRoomText(text, type) },
+        onSendEmoji = { item -> viewModel.sendEmojiReaction(item) },
+        onAddCustomEmoji = { label, category, symbol, imageUri, onDone ->
+          viewModel.addCustomEmoji(label, category, symbol, imageUri, onDone)
+        },
+        onSendGift = { gift, recipientUid, recipientName, quantity ->
+          viewModel.sendGift(gift, recipientUid, recipientName, quantity)
+        },
+        onAddCustomGift = { name, category, emoji, coinCost, thumbUri, videoUri, onDone ->
+          viewModel.addCustomGift(name, category, emoji, coinCost, thumbUri, videoUri, onDone)
+        },
+        onDismissFullScreenGift = { viewModel.dismissFullScreenGift() },
+        onClaimBonusCoins = { viewModel.claimDailyBonusCoins() },
+        onUpdateRoomSettings = { title, theme, notice ->
+          viewModel.updateRoomSettings(title, theme, notice)
+        },
+        onStartDirectChat = { otherUid, otherName, otherAvatar ->
+          viewModel.startDirectChatWith(otherUid, otherName, otherAvatar) {
+            viewModel.leaveActiveRoom()
+            currentTab = MainTab.MESSAGES
+          }
+        },
+        onShowToast = { msg ->
+          scope.launch { snackbarHostState.showSnackbar(msg) }
+        },
+      )
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+          .align(androidx.compose.ui.Alignment.TopCenter)
+          .padding(top = 64.dp),
+      )
+    }
+    return
+  }
+
+  Scaffold(
+    contentWindowInsets = WindowInsets.safeDrawing,
+    snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+    bottomBar = {
+      NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+        NavigationBarItem(
+          selected = currentTab == MainTab.ROOMS,
+          onClick = { currentTab = MainTab.ROOMS },
+          icon = {
+            Icon(
+              imageVector = if (currentTab == MainTab.ROOMS) Icons.Filled.Home else Icons.Outlined.Home,
+              contentDescription = null,
+            )
+          },
+          label = { Text(stringResource(id = R.string.nav_rooms)) },
+          modifier = Modifier.testTag("nav_tab_rooms"),
+        )
+        NavigationBarItem(
+          selected = currentTab == MainTab.MOMENTS,
+          onClick = { currentTab = MainTab.MOMENTS },
+          icon = {
+            Icon(
+              imageVector = if (currentTab == MainTab.MOMENTS) Icons.Filled.Explore else Icons.Outlined.Explore,
+              contentDescription = null,
+            )
+          },
+          label = { Text(stringResource(id = R.string.nav_moments)) },
+          modifier = Modifier.testTag("nav_tab_moments"),
+        )
+        NavigationBarItem(
+          selected = currentTab == MainTab.MESSAGES,
+          onClick = { currentTab = MainTab.MESSAGES },
+          icon = {
+            Icon(
+              imageVector = if (currentTab == MainTab.MESSAGES) Icons.AutoMirrored.Filled.Chat else Icons.AutoMirrored.Outlined.Chat,
+              contentDescription = null,
+            )
+          },
+          label = { Text(stringResource(id = R.string.nav_messages)) },
+          modifier = Modifier.testTag("nav_tab_messages"),
+        )
+        NavigationBarItem(
+          selected = currentTab == MainTab.PROFILE,
+          onClick = { currentTab = MainTab.PROFILE },
+          icon = {
+            Icon(
+              imageVector = if (currentTab == MainTab.PROFILE) Icons.Filled.Person else Icons.Outlined.Person,
+              contentDescription = null,
+            )
+          },
+          label = { Text(stringResource(id = R.string.nav_profile)) },
+          modifier = Modifier.testTag("nav_tab_profile"),
+        )
+      }
+    },
+  ) { innerPadding ->
+    Box(
+      modifier = Modifier
+        .fillMaxSize()
+        .padding(innerPadding),
+    ) {
+      when (currentTab) {
+        MainTab.ROOMS -> LobbyScreen(
+          roomsState = roomsState,
+          currentUserId = user.uid,
+          onRoomClick = { room -> viewModel.enterRoom(room.id) },
+          onCreateRoomClick = { showCreateRoomDialog = true },
+        )
+        MainTab.MOMENTS -> MomentsScreen(
+          momentsState = momentsState,
+          currentUserId = user.uid,
+          isSupabaseConfigured = viewModel.isSupabaseConfigured,
+          onAddMomentClick = { showCreateMomentDialog = true },
+          onLikeMoment = { viewModel.likeMoment(it) },
+          onDeleteMoment = { viewModel.deleteMoment(it) },
+        )
+        MainTab.MESSAGES -> MessagesScreen(
+          conversationsState = conversationsState,
+          activeConversationId = activeConversationId,
+          directMessages = activeDirectMessages,
+          currentUserId = user.uid,
+          onOpenConversation = { viewModel.openConversation(it) },
+          onCloseConversation = { viewModel.closeConversation() },
+          onSendDirectMessage = { convo, text -> viewModel.sendDirectMessage(convo, text) },
+        )
+        MainTab.PROFILE -> ProfileScreen(
+          profileState = profileState,
+          isUploadingMedia = isUploadingMedia,
+          isSupabaseConfigured = viewModel.isSupabaseConfigured,
+          onUploadAvatarDp = { uri -> viewModel.uploadAndSaveAvatarDp(uri) },
+          onUpdateProfile = { name, handle, bio, gender, club ->
+            viewModel.updateProfileDetails(name, handle, bio, gender, club)
+          },
+          onSignOut = {
+            viewModel.leaveActiveRoom()
+            signOut(credentialManager, scope)
+          },
+        )
+      }
+    }
+  }
+
+  if (showCreateRoomDialog) {
+    CreateRoomDialog(
+      isUploading = isUploadingMedia,
+      onDismiss = { showCreateRoomDialog = false },
+      onCreate = { title, category, theme, clubTag, welcome, seatsCount, coverUri ->
+        viewModel.createRoom(
+          title = title,
+          category = category,
+          backgroundTheme = theme,
+          clubTag = clubTag,
+          welcomeNotice = welcome,
+          seatCount = seatsCount,
+          coverImageUri = coverUri,
+          onRoomCreated = { showCreateRoomDialog = false },
+        )
+      },
+    )
+  }
+
+  if (showCreateMomentDialog) {
+    CreateMomentDialog(
+      isUploading = isUploadingMedia,
+      onDismiss = { showCreateMomentDialog = false },
+      onSubmit = { uri, isVideo, caption ->
+        viewModel.uploadMomentPost(uri, isVideo, caption)
+        showCreateMomentDialog = false
+      },
+    )
+  }
+}

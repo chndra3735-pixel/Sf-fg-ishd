@@ -1,0 +1,434 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'chndra3735@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40 &&
+             data.handle is string && data.handle.size() >= 1 && data.handle.size() <= 30 &&
+             data.avatarUrl is string && data.avatarUrl.size() <= 600 &&
+             data.bio is string && data.bio.size() <= 160 &&
+             data.gender in ['male', 'female', 'other'] &&
+             data.clubTag is string && data.clubTag.size() <= 16 &&
+             data.coins is int && data.coins >= 0 && data.coins <= 999999999 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidVoiceRoom(data) {
+      return data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 40 &&
+             data.ownerAvatarUrl is string && data.ownerAvatarUrl.size() <= 600 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 60 &&
+             data.roomCode is string && data.roomCode.size() >= 3 && data.roomCode.size() <= 12 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 24 &&
+             data.coverUrl is string && data.coverUrl.size() <= 600 &&
+             data.backgroundTheme in ['stadium', 'aurora', 'neon', 'sunset'] &&
+             data.clubTag is string && data.clubTag.size() <= 16 &&
+             data.welcomeNotice is string && data.welcomeNotice.size() <= 200 &&
+             data.seatCount is int && data.seatCount in [8, 12, 20] &&
+             data.listenerCount is int && data.listenerCount >= 0 && data.listenerCount <= 9999 &&
+             data.isLive is bool &&
+             data.isPublic is bool &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidRoomSeat(data) {
+      return data.roomId is string && isValidId(data.roomId) &&
+             data.roomOwnerId is string && data.roomOwnerId.size() >= 1 && data.roomOwnerId.size() <= 128 &&
+             data.isRoomPublic is bool &&
+             data.seatIndex is int && data.seatIndex >= 0 && data.seatIndex <= 19 &&
+             data.occupantUid is string && data.occupantUid.size() <= 128 &&
+             data.occupantName is string && data.occupantName.size() <= 40 &&
+             data.occupantAvatarUrl is string && data.occupantAvatarUrl.size() <= 600 &&
+             data.isLocked is bool &&
+             data.isMuted is bool &&
+             data.isSpeaking is bool &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidRoomMessage(data) {
+      return data.roomId is string && isValidId(data.roomId) &&
+             data.roomOwnerId is string && data.roomOwnerId.size() >= 1 && data.roomOwnerId.size() <= 128 &&
+             data.isRoomPublic is bool &&
+             data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128 &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 40 &&
+             data.senderAvatarUrl is string && data.senderAvatarUrl.size() <= 600 &&
+             data.text is string && data.text.size() >= 1 && data.text.size() <= 500 &&
+             data.messageType in ['text', 'join', 'gift', 'emoji'] &&
+             data.badgeTag is string && data.badgeTag.size() <= 24 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidConversation(data) {
+      return data.participantUids is list &&
+             data.participantUids.size() == 2 &&
+             data.participantUids[0] is string &&
+             data.participantUids[1] is string &&
+             data.participantNames is map && data.participantNames.size() <= 2 &&
+             data.participantAvatars is map && data.participantAvatars.size() <= 2 &&
+             data.lastMessage is string && data.lastMessage.size() <= 500 &&
+             data.lastSenderUid is string && data.lastSenderUid.size() <= 128 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidDirectMessage(data) {
+      return data.conversationId is string && isValidId(data.conversationId) &&
+             data.participantUids is list &&
+             data.participantUids.size() == 2 &&
+             data.participantUids[0] is string &&
+             data.participantUids[1] is string &&
+             data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128 &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 40 &&
+             data.text is string && data.text.size() >= 1 && data.text.size() <= 1000 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidMomentPost(data) {
+      return data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
+             data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 40 &&
+             data.authorAvatarUrl is string && data.authorAvatarUrl.size() <= 600 &&
+             data.caption is string && data.caption.size() <= 300 &&
+             data.mediaUrl is string && data.mediaUrl.size() >= 1 && data.mediaUrl.size() <= 800 &&
+             data.mediaType in ['video', 'image'] &&
+             data.isPublic is bool &&
+             data.likesCount is int && data.likesCount >= 0 && data.likesCount <= 999999 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidEmojiItem(data) {
+      return data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+             data.label is string && data.label.size() >= 1 && data.label.size() <= 30 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 24 &&
+             data.symbol is string && data.symbol.size() <= 16 &&
+             data.imageUrl is string && data.imageUrl.size() <= 800 &&
+             (data.symbol.size() >= 1 || data.imageUrl.size() >= 1) &&
+             data.isActive is bool &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidGiftItem(data) {
+      return data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 40 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 24 &&
+             data.emoji is string && data.emoji.size() <= 16 &&
+             data.thumbnailUrl is string && data.thumbnailUrl.size() <= 800 &&
+             data.mediaUrl is string && data.mediaUrl.size() <= 800 &&
+             data.mediaType in ['emoji', 'image', 'video'] &&
+             data.coinCost is int && data.coinCost >= 1 && data.coinCost <= 999999 &&
+             data.isActive is bool &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidGiftEvent(data) {
+      return data.roomId is string && isValidId(data.roomId) &&
+             data.roomTitle is string && data.roomTitle.size() >= 1 && data.roomTitle.size() <= 60 &&
+             data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128 &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 40 &&
+             data.senderAvatarUrl is string && data.senderAvatarUrl.size() <= 600 &&
+             data.recipientUid is string && data.recipientUid.size() <= 128 &&
+             data.recipientName is string && data.recipientName.size() >= 1 && data.recipientName.size() <= 40 &&
+             data.giftId is string && data.giftId.size() >= 1 && data.giftId.size() <= 128 &&
+             data.giftName is string && data.giftName.size() >= 1 && data.giftName.size() <= 40 &&
+             data.giftEmoji is string && data.giftEmoji.size() <= 16 &&
+             data.giftMediaUrl is string && data.giftMediaUrl.size() <= 800 &&
+             data.giftMediaType in ['emoji', 'image', 'video'] &&
+             data.coinCost is int && data.coinCost >= 0 && data.coinCost <= 999999 &&
+             data.quantity is int && data.quantity >= 1 && data.quantity <= 99 &&
+             data.isPublic is bool &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    // --- Collection Rules ---
+
+    // 1. User Profiles (Public display metadata only, zero PII)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // 2. Voice Chat Rooms
+    match /rooms/{roomId} {
+      allow get: if isSignedIn() && isValidId(roomId) &&
+                    (resource == null || resource.data.isPublic == true || resource.data.ownerId == request.auth.uid);
+      allow list: if isSignedIn() &&
+                     (resource.data.isPublic == true || resource.data.ownerId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(roomId) &&
+                       incoming().ownerId == request.auth.uid &&
+                       incoming().keys().hasAll(['ownerId', 'ownerName', 'ownerAvatarUrl', 'title', 'roomCode', 'category', 'coverUrl', 'backgroundTheme', 'clubTag', 'welcomeNotice', 'seatCount', 'listenerCount', 'isLive', 'isPublic', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerId', 'ownerName', 'ownerAvatarUrl', 'title', 'roomCode', 'category', 'coverUrl', 'backgroundTheme', 'clubTag', 'welcomeNotice', 'seatCount', 'listenerCount', 'isLive', 'isPublic', 'createdAt', 'updatedAt']) &&
+                       isValidVoiceRoom(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(roomId) &&
+                       isValidVoiceRoom(incoming()) &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().seatCount == existing().seatCount &&
+                       incoming().roomCode == existing().roomCode && (
+                         (existing().ownerId == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['ownerName', 'ownerAvatarUrl', 'title', 'category', 'coverUrl', 'backgroundTheme', 'clubTag', 'welcomeNotice', 'listenerCount', 'isLive', 'isPublic', 'updatedAt'])) ||
+                         (existing().isPublic == true &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['listenerCount', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(roomId) && existing().ownerId == request.auth.uid;
+
+      // 2a. Room Voice Seats
+      match /seats/{seatId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(seatId) &&
+                      (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+        allow list: if isSignedIn() &&
+                       (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(seatId) &&
+                         incoming().roomId == roomId &&
+                         incoming().roomOwnerId == request.auth.uid &&
+                         incoming().keys().hasAll(['roomId', 'roomOwnerId', 'isRoomPublic', 'seatIndex', 'occupantUid', 'occupantName', 'occupantAvatarUrl', 'isLocked', 'isMuted', 'isSpeaking', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['roomId', 'roomOwnerId', 'isRoomPublic', 'seatIndex', 'occupantUid', 'occupantName', 'occupantAvatarUrl', 'isLocked', 'isMuted', 'isSpeaking', 'updatedAt']) &&
+                         isValidRoomSeat(incoming()) &&
+                         getAfter(/databases/$(database)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid;
+
+        allow update: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(seatId) &&
+                         isValidRoomSeat(incoming()) &&
+                         incoming().roomId == existing().roomId &&
+                         incoming().roomOwnerId == existing().roomOwnerId &&
+                         incoming().isRoomPublic == existing().isRoomPublic &&
+                         incoming().seatIndex == existing().seatIndex && (
+                           (existing().roomOwnerId == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['occupantUid', 'occupantName', 'occupantAvatarUrl', 'isLocked', 'isMuted', 'isSpeaking', 'updatedAt'])) ||
+                           (existing().isRoomPublic == true &&
+                            existing().isLocked == false &&
+                            existing().occupantUid == '' &&
+                            incoming().occupantUid == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['occupantUid', 'occupantName', 'occupantAvatarUrl', 'isMuted', 'isSpeaking', 'updatedAt'])) ||
+                           (existing().occupantUid == request.auth.uid &&
+                            (incoming().occupantUid == request.auth.uid || incoming().occupantUid == '') &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['occupantUid', 'occupantName', 'occupantAvatarUrl', 'isMuted', 'isSpeaking', 'updatedAt']))
+                         );
+
+        allow delete: if isSignedIn() && isValidId(roomId) && isValidId(seatId) && existing().roomOwnerId == request.auth.uid;
+      }
+
+      // 2b. Real-time Room Messages (append-only)
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(messageId) &&
+                      (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+        allow list: if isSignedIn() &&
+                       (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(messageId) &&
+                         incoming().roomId == roomId &&
+                         incoming().senderUid == request.auth.uid &&
+                         incoming().keys().hasAll(['roomId', 'roomOwnerId', 'isRoomPublic', 'senderUid', 'senderName', 'senderAvatarUrl', 'text', 'messageType', 'badgeTag', 'createdAt']) &&
+                         incoming().keys().hasOnly(['roomId', 'roomOwnerId', 'isRoomPublic', 'senderUid', 'senderName', 'senderAvatarUrl', 'text', 'messageType', 'badgeTag', 'createdAt']) &&
+                         isValidRoomMessage(incoming()) &&
+                         exists(/databases/$(database)/documents/rooms/$(roomId));
+
+        allow update, delete: if false;
+      }
+    }
+
+    // 3. Direct 1-on-1 Conversations
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn() && isValidId(conversationId) &&
+                    (resource == null || request.auth.uid in resource.data.participantUids);
+      allow list: if isSignedIn() &&
+                     request.auth.uid in resource.data.participantUids;
+
+      allow create: if isSignedIn() &&
+                       isValidId(conversationId) &&
+                       request.auth.uid in incoming().participantUids &&
+                       incoming().keys().hasAll(['participantUids', 'participantNames', 'participantAvatars', 'lastMessage', 'lastSenderUid', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['participantUids', 'participantNames', 'participantAvatars', 'lastMessage', 'lastSenderUid', 'createdAt', 'updatedAt']) &&
+                       isValidConversation(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(conversationId) &&
+                       isValidConversation(incoming()) &&
+                       request.auth.uid in existing().participantUids &&
+                       incoming().participantUids == existing().participantUids &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['participantNames', 'participantAvatars', 'lastMessage', 'lastSenderUid', 'updatedAt']);
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(conversationId) && isValidId(messageId) &&
+                      request.auth.uid in resource.data.participantUids;
+        allow list: if isSignedIn() &&
+                       request.auth.uid in resource.data.participantUids;
+
+        allow create: if isSignedIn() &&
+                         isValidId(conversationId) &&
+                         isValidId(messageId) &&
+                         incoming().conversationId == conversationId &&
+                         incoming().senderUid == request.auth.uid &&
+                         request.auth.uid in incoming().participantUids &&
+                         incoming().keys().hasAll(['conversationId', 'participantUids', 'senderUid', 'senderName', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['conversationId', 'participantUids', 'senderUid', 'senderName', 'text', 'createdAt']) &&
+                         isValidDirectMessage(incoming()) &&
+                         request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantUids;
+
+        allow update, delete: if false;
+      }
+    }
+
+    // 4. Community Video & DP Moments (media hosted on Supabase Storage)
+    match /moments/{momentId} {
+      allow get: if isSignedIn() && isValidId(momentId) &&
+                    (resource == null || resource.data.isPublic == true || resource.data.authorUid == request.auth.uid);
+      allow list: if isSignedIn() &&
+                     (resource.data.isPublic == true || resource.data.authorUid == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(momentId) &&
+                       incoming().authorUid == request.auth.uid &&
+                       incoming().keys().hasAll(['authorUid', 'authorName', 'authorAvatarUrl', 'caption', 'mediaUrl', 'mediaType', 'isPublic', 'likesCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['authorUid', 'authorName', 'authorAvatarUrl', 'caption', 'mediaUrl', 'mediaType', 'isPublic', 'likesCount', 'createdAt', 'updatedAt']) &&
+                       isValidMomentPost(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(momentId) &&
+                       isValidMomentPost(incoming()) &&
+                       incoming().authorUid == existing().authorUid &&
+                       incoming().mediaUrl == existing().mediaUrl &&
+                       incoming().mediaType == existing().mediaType &&
+                       incoming().createdAt == existing().createdAt && (
+                         (existing().authorUid == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'isPublic', 'updatedAt'])) ||
+                         (existing().isPublic == true &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(momentId) && existing().authorUid == request.auth.uid;
+    }
+
+    // 5. Admin-managed Emoji Catalog (only chndra3735@gmail.com verified or admin doc can write; all signed-in users can view active emojis)
+    match /emoji_catalog/{emojiId} {
+      allow get: if isSignedIn() && isValidId(emojiId) &&
+                    (resource == null || resource.data.isActive == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.isActive == true || isAdmin());
+
+      allow create: if isAdmin() &&
+                       isValidId(emojiId) &&
+                       incoming().createdByUid == request.auth.uid &&
+                       incoming().keys().hasAll(['createdByUid', 'label', 'category', 'symbol', 'imageUrl', 'isActive', 'createdAt']) &&
+                       incoming().keys().hasOnly(['createdByUid', 'label', 'category', 'symbol', 'imageUrl', 'isActive', 'createdAt']) &&
+                       isValidEmojiItem(incoming());
+
+      allow update: if isAdmin() &&
+                       isValidId(emojiId) &&
+                       isValidEmojiItem(incoming()) &&
+                       incoming().createdByUid == existing().createdByUid &&
+                       incoming().createdAt == existing().createdAt;
+
+      allow delete: if isAdmin() && isValidId(emojiId);
+    }
+
+    // 6. Admin-managed Gift Catalog (only chndra3735@gmail.com verified or admin doc can write; all signed-in users can view active gifts)
+    match /gift_catalog/{giftId} {
+      allow get: if isSignedIn() && isValidId(giftId) &&
+                    (resource == null || resource.data.isActive == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.isActive == true || isAdmin());
+
+      allow create: if isAdmin() &&
+                       isValidId(giftId) &&
+                       incoming().createdByUid == request.auth.uid &&
+                       incoming().keys().hasAll(['createdByUid', 'name', 'category', 'emoji', 'thumbnailUrl', 'mediaUrl', 'mediaType', 'coinCost', 'isActive', 'createdAt']) &&
+                       incoming().keys().hasOnly(['createdByUid', 'name', 'category', 'emoji', 'thumbnailUrl', 'mediaUrl', 'mediaType', 'coinCost', 'isActive', 'createdAt']) &&
+                       isValidGiftItem(incoming());
+
+      allow update: if isAdmin() &&
+                       isValidId(giftId) &&
+                       isValidGiftItem(incoming()) &&
+                       incoming().createdByUid == existing().createdByUid &&
+                       incoming().createdAt == existing().createdAt;
+
+      allow delete: if isAdmin() && isValidId(giftId);
+    }
+
+    // 7. Global Gift Broadcast Events (Full-screen room video playback & cross-room right-to-left marquee strip)
+    match /gift_events/{eventId} {
+      allow get: if isSignedIn() && isValidId(eventId) &&
+                    (resource == null || resource.data.isPublic == true || resource.data.senderUid == request.auth.uid);
+      allow list: if isSignedIn() &&
+                     (resource.data.isPublic == true || resource.data.senderUid == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(eventId) &&
+                       incoming().senderUid == request.auth.uid &&
+                       incoming().keys().hasAll(['roomId', 'roomTitle', 'senderUid', 'senderName', 'senderAvatarUrl', 'recipientUid', 'recipientName', 'giftId', 'giftName', 'giftEmoji', 'giftMediaUrl', 'giftMediaType', 'coinCost', 'quantity', 'isPublic', 'createdAt']) &&
+                       incoming().keys().hasOnly(['roomId', 'roomTitle', 'senderUid', 'senderName', 'senderAvatarUrl', 'recipientUid', 'recipientName', 'giftId', 'giftName', 'giftEmoji', 'giftMediaUrl', 'giftMediaType', 'coinCost', 'quantity', 'isPublic', 'createdAt']) &&
+                       isValidGiftEvent(incoming()) &&
+                       exists(/databases/$(database)/documents/rooms/$(incoming().roomId));
+
+      allow update, delete: if false;
+    }
+  }
+}

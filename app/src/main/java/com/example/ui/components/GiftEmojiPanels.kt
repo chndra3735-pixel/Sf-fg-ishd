@@ -1,0 +1,774 @@
+package com.example.ui.components
+
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.example.data.model.EmojiCatalogItem
+import com.example.data.model.GiftCatalogItem
+import com.example.data.model.RoomSeat
+import com.example.data.model.SwarCatalogDefaults
+import com.example.data.model.VoiceRoom
+import com.example.ui.theme.SwarCoral
+import com.example.ui.theme.SwarCyan
+import com.example.ui.theme.SwarGold
+import com.example.ui.theme.SwarMint
+import com.example.ui.theme.SwarViolet
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EmojiPanelSheet(
+  emojis: List<EmojiCatalogItem>,
+  isAdminUser: Boolean,
+  isUploading: Boolean,
+  onSelectEmoji: (EmojiCatalogItem) -> Unit,
+  onAddCustomEmoji: (label: String, category: String, symbol: String, imageUri: Uri?, onDone: () -> Unit) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val categories = SwarCatalogDefaults.emojiCategories
+  var selectedCategoryIdx by remember { mutableIntStateOf(0) }
+  var showAdminAddDialog by remember { mutableStateOf(false) }
+
+  val currentCategory = categories[selectedCategoryIdx]
+  val filteredEmojis = remember(emojis, currentCategory) {
+    emojis.filter { it.category == currentCategory }
+  }
+
+  ModalBottomSheet(
+    onDismissRequest = onDismiss,
+    containerColor = Color(0xFF1A1133),
+    contentColor = Color.White,
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(bottom = 16.dp),
+    ) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Column {
+          Text(
+            text = "इमोजी और रिएक्शन पैनल",
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+          )
+          Text(
+            text = "लाइव रूम में तुरंत इमोजी भेजें",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFFB5ACDA),
+          )
+        }
+
+        // Admin-only '+' Icon (strictly visible only for chndra3735@gmail.com)
+        if (isAdminUser) {
+          IconButton(
+            onClick = { showAdminAddDialog = true },
+            modifier = Modifier
+              .size(48.dp)
+              .clip(CircleShape)
+              .background(Brush.linearGradient(listOf(SwarCyan, SwarViolet)))
+              .testTag("admin_add_emoji_button"),
+          ) {
+            Icon(
+              imageVector = Icons.Filled.Add,
+              contentDescription = "नया इमोजी जोड़ें",
+              tint = Color.White,
+            )
+          }
+        }
+      }
+
+      ScrollableTabRow(
+        selectedTabIndex = selectedCategoryIdx,
+        containerColor = Color.Transparent,
+        contentColor = SwarCyan,
+        edgePadding = 12.dp,
+      ) {
+        categories.forEachIndexed { idx, cat ->
+          Tab(
+            selected = selectedCategoryIdx == idx,
+            onClick = { selectedCategoryIdx = idx },
+            text = {
+              Text(
+                text = cat,
+                fontWeight = if (selectedCategoryIdx == idx) FontWeight.Bold else FontWeight.Medium,
+                color = if (selectedCategoryIdx == idx) SwarCyan else Color(0xFFB5ACDA),
+              )
+            },
+          )
+        }
+      }
+
+      LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(260.dp),
+        contentPadding = PaddingValues(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        items(filteredEmojis, key = { it.id.ifBlank { "${it.category}_${it.label}" } }) { item ->
+          Surface(
+            onClick = {
+              onSelectEmoji(item)
+              onDismiss()
+            },
+            color = Color(0xFF281C4C),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp)),
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 4.dp),
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.Center,
+            ) {
+              if (item.imageUrl.isNotBlank()) {
+                AsyncImage(
+                  model = item.imageUrl,
+                  contentDescription = item.label,
+                  modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                  contentScale = ContentScale.Crop,
+                )
+              } else {
+                Text(
+                  text = item.symbol.ifBlank { "😊" },
+                  fontSize = 30.sp,
+                )
+              }
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(
+                text = item.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (showAdminAddDialog && isAdminUser) {
+    AddEmojiAdminDialog(
+      defaultCategory = currentCategory,
+      isUploading = isUploading,
+      onDismiss = { showAdminAddDialog = false },
+      onSubmit = { label, category, symbol, imageUri ->
+        onAddCustomEmoji(label, category, symbol, imageUri) {
+          showAdminAddDialog = false
+        }
+      },
+    )
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GiftPanelSheet(
+  room: VoiceRoom,
+  seats: List<RoomSeat>,
+  gifts: List<GiftCatalogItem>,
+  userCoins: Long,
+  isAdminUser: Boolean,
+  isUploading: Boolean,
+  onClaimBonusCoins: () -> Unit,
+  onSendGift: (gift: GiftCatalogItem, recipientUid: String, recipientName: String, quantity: Int) -> Unit,
+  onAddCustomGift: (
+    name: String,
+    category: String,
+    emoji: String,
+    coinCost: Long,
+    thumbnailUri: Uri?,
+    videoUri: Uri?,
+    onDone: () -> Unit,
+  ) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val categories = SwarCatalogDefaults.giftCategories
+  var selectedCategoryIdx by remember { mutableIntStateOf(0) }
+  val currentCategory = categories[selectedCategoryIdx]
+  val filteredGifts = remember(gifts, currentCategory) {
+    gifts.filter { it.category == currentCategory }
+  }
+
+  // Recipient options: Host + seated guests + All Members
+  val recipients = remember(room.id, seats) {
+    buildList {
+      add(room.ownerId to "होस्ट • ${room.ownerName}")
+      seats
+        .filter { it.occupantUid.isNotBlank() && it.occupantUid != room.ownerId }
+        .distinctBy { it.occupantUid }
+        .forEach { seat ->
+          add(seat.occupantUid to seat.occupantName)
+        }
+      add("all" to "सभी सदस्य")
+    }
+  }
+  var selectedRecipient by remember(recipients) { mutableStateOf(recipients.first()) }
+  var selectedGift by remember(filteredGifts) { mutableStateOf(filteredGifts.firstOrNull() ?: gifts.firstOrNull()) }
+  var selectedQuantity by remember { mutableIntStateOf(1) }
+  var showAdminAddGiftDialog by remember { mutableStateOf(false) }
+
+  ModalBottomSheet(
+    onDismissRequest = onDismiss,
+    containerColor = Color(0xFF170E2E),
+    contentColor = Color.White,
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(bottom = 16.dp),
+    ) {
+      // Header + Coins + Admin-only '+' Button
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "शाही गिफ्ट पैनल",
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+          )
+          Text(
+            text = "भेजा गया गिफ्ट रूम और ग्लोबल पट्टी में चलेगा",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFFB5ACDA),
+          )
+        }
+
+        CoinBalancePill(coins = userCoins, onAddCoinsClick = onClaimBonusCoins)
+
+        // Admin-only '+' Icon (strictly visible only for chndra3735@gmail.com)
+        if (isAdminUser) {
+          Spacer(modifier = Modifier.width(8.dp))
+          IconButton(
+            onClick = { showAdminAddGiftDialog = true },
+            modifier = Modifier
+              .size(48.dp)
+              .clip(CircleShape)
+              .background(Brush.linearGradient(listOf(SwarCoral, SwarViolet)))
+              .testTag("admin_add_gift_button"),
+          ) {
+            Icon(
+              imageVector = Icons.Filled.Add,
+              contentDescription = "नया गिफ्ट या वीडियो जोड़ें",
+              tint = Color.White,
+            )
+          }
+        }
+      }
+
+      // Recipient Chips
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .horizontalScroll(rememberScrollState())
+          .padding(horizontal = 14.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = "किसे भेजें:",
+          style = MaterialTheme.typography.labelMedium,
+          color = Color(0xFFD7CFF6),
+        )
+        recipients.forEach { recipient ->
+          val isSelected = selectedRecipient.first == recipient.first
+          FilterChip(
+            selected = isSelected,
+            onClick = { selectedRecipient = recipient },
+            label = { Text(recipient.second, maxLines = 1) },
+            colors = FilterChipDefaults.filterChipColors(
+              selectedContainerColor = SwarCoral,
+              selectedLabelColor = Color.White,
+              labelColor = Color(0xFFD0C9EC),
+            ),
+          )
+        }
+      }
+
+      // 4 Gift Categories
+      ScrollableTabRow(
+        selectedTabIndex = selectedCategoryIdx,
+        containerColor = Color.Transparent,
+        contentColor = SwarGold,
+        edgePadding = 12.dp,
+      ) {
+        categories.forEachIndexed { idx, cat ->
+          Tab(
+            selected = selectedCategoryIdx == idx,
+            onClick = { selectedCategoryIdx = idx },
+            text = {
+              Text(
+                text = cat,
+                fontWeight = if (selectedCategoryIdx == idx) FontWeight.Bold else FontWeight.Medium,
+                color = if (selectedCategoryIdx == idx) SwarGold else Color(0xFFB5ACDA),
+              )
+            },
+          )
+        }
+      }
+
+      // Gifts Grid
+      LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(240.dp),
+        contentPadding = PaddingValues(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        items(filteredGifts, key = { it.id.ifBlank { "${it.category}_${it.name}" } }) { gift ->
+          val isPicked = selectedGift?.id == gift.id
+          val borderColor = if (isPicked) SwarGold else Color(0x33FFFFFF)
+          Surface(
+            onClick = { selectedGift = gift },
+            color = if (isPicked) Color(0xFF352263) else Color(0xFF231642),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.border(if (isPicked) 2.dp else 1.dp, borderColor, RoundedCornerShape(14.dp)),
+          ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+              if (gift.mediaType == "video") {
+                Surface(
+                  color = SwarCoral,
+                  shape = RoundedCornerShape(bottomStart = 8.dp, topEnd = 14.dp),
+                  modifier = Modifier.align(Alignment.TopEnd),
+                ) {
+                  Text(
+                    text = "VIDEO",
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                  )
+                }
+              }
+
+              Column(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(vertical = 10.dp, horizontal = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+              ) {
+                if (gift.thumbnailUrl.isNotBlank()) {
+                  AsyncImage(
+                    model = gift.thumbnailUrl,
+                    contentDescription = gift.name,
+                    modifier = Modifier
+                      .size(38.dp)
+                      .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop,
+                  )
+                } else {
+                  Text(text = gift.emoji.ifBlank { "🎁" }, fontSize = 30.sp)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                  text = gift.name,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = Color.White,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                  CoinEmblem(sizeDp = 12)
+                  Text(
+                    text = "${gift.coinCost}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SwarGold,
+                    fontWeight = FontWeight.Bold,
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Bottom Send Bar: Quantity x1/x5/x10 + Send Button
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          listOf(1, 5, 10).forEach { qty ->
+            val active = selectedQuantity == qty
+            Surface(
+              onClick = { selectedQuantity = qty },
+              color = if (active) SwarGold else Color(0xFF2B1D52),
+              shape = RoundedCornerShape(12.dp),
+            ) {
+              Text(
+                text = "x$qty",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (active) Color(0xFF3A2000) else Color.White,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+              )
+            }
+          }
+        }
+
+        val activeGift = selectedGift
+        val totalCost = (activeGift?.coinCost ?: 0L) * selectedQuantity
+        Button(
+          onClick = {
+            if (activeGift != null) {
+              onSendGift(activeGift, selectedRecipient.first, selectedRecipient.second, selectedQuantity)
+              onDismiss()
+            }
+          },
+          enabled = activeGift != null,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = SwarCoral,
+            contentColor = Color.White,
+          ),
+          shape = RoundedCornerShape(22.dp),
+          modifier = Modifier
+            .height(48.dp)
+            .testTag("send_gift_button"),
+        ) {
+          CoinEmblem(sizeDp = 16)
+          Spacer(modifier = Modifier.width(6.dp))
+          Text(
+            text = "भेजें ($totalCost)",
+            fontWeight = FontWeight.Bold,
+          )
+        }
+      }
+    }
+  }
+
+  if (showAdminAddGiftDialog && isAdminUser) {
+    AddGiftAdminDialog(
+      defaultCategory = currentCategory,
+      isUploading = isUploading,
+      onDismiss = { showAdminAddGiftDialog = false },
+      onSubmit = { name, category, emoji, cost, thumbUri, videoUri ->
+        onAddCustomGift(name, category, emoji, cost, thumbUri, videoUri) {
+          showAdminAddGiftDialog = false
+        }
+      },
+    )
+  }
+}
+
+@Composable
+private fun AddEmojiAdminDialog(
+  defaultCategory: String,
+  isUploading: Boolean,
+  onDismiss: () -> Unit,
+  onSubmit: (label: String, category: String, symbol: String, imageUri: Uri?) -> Unit,
+) {
+  var label by remember { mutableStateOf("") }
+  var symbol by remember { mutableStateOf("✨") }
+  var category by remember { mutableStateOf(defaultCategory) }
+  var pickedImageUri by remember { mutableStateOf<Uri?>(null) }
+
+  val imagePicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri -> pickedImageUri = uri },
+  )
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("नया इमोजी जोड़ें (एडमिन)") },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        OutlinedTextField(
+          value = label,
+          onValueChange = { label = it.take(30) },
+          label = { Text("इमोजी का नाम") },
+          placeholder = { Text("उदा. रॉयल धमाका") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+          value = symbol,
+          onValueChange = { symbol = it.take(16) },
+          label = { Text("इमोजी चिह्न (उदा. 🎉 🔥)") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Text("श्रेणी चुनें", style = MaterialTheme.typography.labelLarge)
+        Row(
+          modifier = Modifier.horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          SwarCatalogDefaults.emojiCategories.forEach { cat ->
+            FilterChip(
+              selected = category == cat,
+              onClick = { category = cat },
+              label = { Text(cat) },
+            )
+          }
+        }
+        OutlinedButton(
+          onClick = {
+            imagePicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(if (pickedImageUri == null) "कस्टम स्टिकर / इमेज चुनें (वैकल्पिक)" else "इमेज चयनित ✓")
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = {
+          onSubmit(
+            label.ifBlank { "नया इमोजी" },
+            category,
+            symbol,
+            pickedImageUri,
+          )
+        },
+        enabled = !isUploading && (symbol.isNotBlank() || pickedImageUri != null),
+      ) {
+        Text(if (isUploading) "अपलोड हो रहा है..." else "सेव करें")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("रद्द करें") }
+    },
+  )
+}
+
+@Composable
+private fun AddGiftAdminDialog(
+  defaultCategory: String,
+  isUploading: Boolean,
+  onDismiss: () -> Unit,
+  onSubmit: (
+    name: String,
+    category: String,
+    emoji: String,
+    coinCost: Long,
+    thumbnailUri: Uri?,
+    videoUri: Uri?,
+  ) -> Unit,
+) {
+  var name by remember { mutableStateOf("") }
+  var emoji by remember { mutableStateOf("🎁") }
+  var coinCostText by remember { mutableStateOf("500") }
+  var category by remember { mutableStateOf(defaultCategory) }
+  var thumbnailUri by remember { mutableStateOf<Uri?>(null) }
+  var videoUri by remember { mutableStateOf<Uri?>(null) }
+
+  val thumbPicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri -> thumbnailUri = uri },
+  )
+  val videoPicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri -> videoUri = uri },
+  )
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("नया गिफ्ट / वीडियो गिफ्ट जोड़ें (एडमिन)") },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        OutlinedTextField(
+          value = name,
+          onValueChange = { name = it.take(40) },
+          label = { Text("गिफ्ट का नाम") },
+          placeholder = { Text("उदा. शाही एंट्री वीडियो") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedTextField(
+            value = emoji,
+            onValueChange = { emoji = it.take(8) },
+            label = { Text("आइकन") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+          )
+          OutlinedTextField(
+            value = coinCostText,
+            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
+            label = { Text("कॉइंस कीमत") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = Modifier.weight(1.4f),
+          )
+        }
+        Text("गिफ्ट श्रेणी चुनें", style = MaterialTheme.typography.labelLarge)
+        Row(
+          modifier = Modifier.horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          SwarCatalogDefaults.giftCategories.forEach { cat ->
+            FilterChip(
+              selected = category == cat,
+              onClick = { category = cat },
+              label = { Text(cat) },
+            )
+          }
+        }
+        OutlinedButton(
+          onClick = {
+            thumbPicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(if (thumbnailUri == null) "गिफ्ट इमेज / थंबनेल चुनें (वैकल्पिक)" else "थंबनेल चयनित ✓")
+        }
+        OutlinedButton(
+          onClick = {
+            videoPicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+            )
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(if (videoUri == null) "फुल-स्क्रीन वीडियो गिफ्ट अपलोड करें (Supabase)" else "वीडियो गिफ्ट चयनित ✓")
+        }
+        if (videoUri != null) {
+          Surface(
+            color = SwarMint.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(8.dp),
+          ) {
+            Text(
+              text = "कोई भी यूज़र यह गिफ्ट भेजेगा तो रूम में फुल-स्क्रीन वीडियो प्ले होगा!",
+              style = MaterialTheme.typography.bodySmall,
+              color = SwarMint,
+              modifier = Modifier.padding(8.dp),
+            )
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = {
+          val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: 100L
+          onSubmit(
+            name.ifBlank { "स्पेशल गिफ्ट" },
+            category,
+            emoji.ifBlank { "🎁" },
+            parsedCost,
+            thumbnailUri,
+            videoUri,
+          )
+        },
+        enabled = !isUploading,
+      ) {
+        Text(if (isUploading) "अपलोड हो रहा है..." else "पब्लिश करें")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("रद्द करें") }
+    },
+  )
+}

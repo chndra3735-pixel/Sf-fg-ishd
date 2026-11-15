@@ -1,0 +1,229 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public social profile for a SwarRoom user (no PII stored; DP stored in Supabase Storage).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the user." },
+        "displayName": { "type": "string", "description": "Display name shown in rooms and chats." },
+        "handle": { "type": "string", "description": "Short social handle." },
+        "avatarUrl": { "type": "string", "description": "Supabase Storage or profile avatar URL." },
+        "bio": { "type": "string", "description": "Short user bio." },
+        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "clubTag": { "type": "string", "description": "Club badge tag such as UP55." },
+        "coins": { "type": "integer", "description": "Virtual social coin balance." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
+      },
+      "required": ["userId", "displayName", "handle", "avatarUrl", "bio", "gender", "clubTag", "coins", "createdAt", "updatedAt"]
+    },
+    "VoiceRoom": {
+      "title": "VoiceRoom",
+      "description": "Live voice chat room metadata; cover image stored in Supabase Storage.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "description": "Host Firebase Auth UID." },
+        "ownerName": { "type": "string", "description": "Host display name." },
+        "ownerAvatarUrl": { "type": "string", "description": "Host DP URL." },
+        "title": { "type": "string", "description": "Voice room title." },
+        "roomCode": { "type": "string", "description": "Display room ID code." },
+        "category": { "type": "string", "description": "Room category label." },
+        "coverUrl": { "type": "string", "description": "Supabase Storage cover image URL." },
+        "backgroundTheme": { "type": "string", "enum": ["stadium", "aurora", "neon", "sunset"] },
+        "clubTag": { "type": "string", "description": "Room club badge." },
+        "welcomeNotice": { "type": "string", "description": "Room welcome announcement." },
+        "seatCount": { "type": "integer", "description": "Total voice seats (8, 12, or 20)." },
+        "listenerCount": { "type": "integer", "description": "Active listeners count." },
+        "isLive": { "type": "boolean" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "ownerName", "ownerAvatarUrl", "title", "roomCode", "category", "coverUrl", "backgroundTheme", "clubTag", "welcomeNotice", "seatCount", "listenerCount", "isLive", "isPublic", "createdAt", "updatedAt"]
+    },
+    "RoomSeat": {
+      "title": "RoomSeat",
+      "description": "Voice seat state inside a voice chat room.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "roomOwnerId": { "type": "string" },
+        "isRoomPublic": { "type": "boolean" },
+        "seatIndex": { "type": "integer" },
+        "occupantUid": { "type": "string" },
+        "occupantName": { "type": "string" },
+        "occupantAvatarUrl": { "type": "string" },
+        "isLocked": { "type": "boolean" },
+        "isMuted": { "type": "boolean" },
+        "isSpeaking": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "roomOwnerId", "isRoomPublic", "seatIndex", "occupantUid", "occupantName", "occupantAvatarUrl", "isLocked", "isMuted", "isSpeaking", "updatedAt"]
+    },
+    "RoomMessage": {
+      "title": "RoomMessage",
+      "description": "Real-time text, join, or emoji message inside a voice room.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "roomOwnerId": { "type": "string" },
+        "isRoomPublic": { "type": "boolean" },
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderAvatarUrl": { "type": "string" },
+        "text": { "type": "string" },
+        "messageType": { "type": "string", "enum": ["text", "join", "gift", "emoji"] },
+        "badgeTag": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "roomOwnerId", "isRoomPublic", "senderUid", "senderName", "senderAvatarUrl", "text", "messageType", "badgeTag", "createdAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "1-on-1 real-time direct messaging thread.",
+      "type": "object",
+      "properties": {
+        "participantUids": { "type": "array" },
+        "participantNames": { "type": "object" },
+        "participantAvatars": { "type": "object" },
+        "lastMessage": { "type": "string" },
+        "lastSenderUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participantUids", "participantNames", "participantAvatars", "lastMessage", "lastSenderUid", "createdAt", "updatedAt"]
+    },
+    "DirectMessage": {
+      "title": "DirectMessage",
+      "description": "Real-time text message inside a 1-on-1 conversation.",
+      "type": "object",
+      "properties": {
+        "conversationId": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["conversationId", "participantUids", "senderUid", "senderName", "text", "createdAt"]
+    },
+    "MomentPost": {
+      "title": "MomentPost",
+      "description": "Community video or photo moment post whose media file is stored in Supabase Storage.",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorAvatarUrl": { "type": "string" },
+        "caption": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["video", "image"] },
+        "isPublic": { "type": "boolean" },
+        "likesCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorUid", "authorName", "authorAvatarUrl", "caption", "mediaUrl", "mediaType", "isPublic", "likesCount", "createdAt", "updatedAt"]
+    },
+    "EmojiCatalogItem": {
+      "title": "EmojiCatalogItem",
+      "description": "Custom emoji added by admin Gmail for all users across categories.",
+      "type": "object",
+      "properties": {
+        "createdByUid": { "type": "string" },
+        "label": { "type": "string" },
+        "category": { "type": "string" },
+        "symbol": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["createdByUid", "label", "category", "symbol", "imageUrl", "isActive", "createdAt"]
+    },
+    "GiftCatalogItem": {
+      "title": "GiftCatalogItem",
+      "description": "Virtual or video gift added by admin Gmail for all users; media stored in Supabase Storage.",
+      "type": "object",
+      "properties": {
+        "createdByUid": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "emoji": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["emoji", "image", "video"] },
+        "coinCost": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["createdByUid", "name", "category", "emoji", "thumbnailUrl", "mediaUrl", "mediaType", "coinCost", "isActive", "createdAt"]
+    },
+    "GiftEvent": {
+      "title": "GiftEvent",
+      "description": "Real-time gift broadcast driving full-screen room video playback and cross-room marquee banners.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "roomTitle": { "type": "string" },
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderAvatarUrl": { "type": "string" },
+        "recipientUid": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "giftId": { "type": "string" },
+        "giftName": { "type": "string" },
+        "giftEmoji": { "type": "string" },
+        "giftMediaUrl": { "type": "string" },
+        "giftMediaType": { "type": "string", "enum": ["emoji", "image", "video"] },
+        "coinCost": { "type": "integer" },
+        "quantity": { "type": "integer" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "roomTitle", "senderUid", "senderName", "senderAvatarUrl", "recipientUid", "recipientName", "giftId", "giftName", "giftEmoji", "giftMediaUrl", "giftMediaType", "coinCost", "quantity", "isPublic", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public social profiles for SwarRoom users."
+    },
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/VoiceRoom" },
+      "description": "Live voice chat rooms."
+    },
+    "/rooms/{roomId}/seats/{seatId}": {
+      "schema": { "$ref": "#/entities/RoomSeat" },
+      "description": "Voice seats in a live room."
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/RoomMessage" },
+      "description": "Real-time text messages inside a voice room."
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "1-on-1 real-time direct messaging conversations."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/DirectMessage" },
+      "description": "Messages in a 1-on-1 direct conversation."
+    },
+    "/moments/{momentId}": {
+      "schema": { "$ref": "#/entities/MomentPost" },
+      "description": "Community video & DP moments stored in Supabase Storage."
+    },
+    "/emoji_catalog/{emojiId}": {
+      "schema": { "$ref": "#/entities/EmojiCatalogItem" },
+      "description": "Admin-managed custom emojis visible to all users."
+    },
+    "/gift_catalog/{giftId}": {
+      "schema": { "$ref": "#/entities/GiftCatalogItem" },
+      "description": "Admin-managed gifts and video gifts visible to all users."
+    },
+    "/gift_events/{eventId}": {
+      "schema": { "$ref": "#/entities/GiftEvent" },
+      "description": "Real-time gift send broadcasts for full-screen playback and cross-room marquee banner."
+    }
+  }
+}
