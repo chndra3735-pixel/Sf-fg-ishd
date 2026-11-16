@@ -95,6 +95,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -110,6 +111,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -279,6 +281,13 @@ fun VoiceRoomScreen(
   val seatedUids = remember(seatedMembers) { seatedMembers.map { it.occupantUid }.toSet() }
   val totalSeatCount = if (seats.isNotEmpty()) seats.size else room.seatCount.toInt()
   val isCurrentUserSeated = currentUserId in seatedUids
+  val hostView = LocalView.current
+  DisposableEffect(hostView, isCurrentUserSeated) {
+    hostView.keepScreenOn = isCurrentUserSeated
+    onDispose {
+      hostView.keepScreenOn = false
+    }
+  }
   val totalInRoom = maxOf(
     room.listenerCount,
     seatedMembers.size.toLong() + if (isCurrentUserSeated) 0L else 1L,

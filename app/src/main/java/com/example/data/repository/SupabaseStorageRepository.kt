@@ -136,9 +136,14 @@ class SupabaseStorageRepository(
     withContext(Dispatchers.IO) {
       runCatching {
         if (!isConfigured()) return@runCatching 0
-        val objectPaths = publicUrls.mapNotNull(::extractObjectPathFromPublicUrl).distinct()
-        if (objectPaths.isEmpty()) return@runCatching 0
+        val urlToPath = publicUrls
+          .map { it.trim() }
+          .filter { it.isNotBlank() }
+          .distinct()
+          .mapNotNull { url -> extractObjectPathFromPublicUrl(url)?.let { path -> url to path } }
+        if (urlToPath.isEmpty()) return@runCatching 0
 
+        val objectPaths = urlToPath.map { it.second }.distinct()
         val deleteEndpoint = "$supabaseUrl/storage/v1/object/$bucketName"
         val jsonBody = org.json.JSONObject()
           .put("prefixes", org.json.JSONArray(objectPaths))
@@ -155,26 +160,48 @@ class SupabaseStorageRepository(
           requestBuilder.addHeader("Authorization", "Bearer $supabaseAnonKey")
         }
 
+        var deletedCount = 0
         try {
           httpClient.newCall(requestBuilder.build()).execute().use { response ->
+            val respBody = response.body?.string().orEmpty()
             if (response.code == 404) {
-              return@runCatching objectPaths.size
-            }
-            if (!response.isSuccessful) {
-              val errorBody = response.body?.string().orEmpty()
-              Log.e(TAG, "Supabase delete failed (${response.code}): $errorBody")
-              val serverMessage = extractSupabaseErrorMessage(errorBody)
-              val friendlyReason = when {
-                serverMessage.contains("row-level security", ignoreCase = true) ||
-                  serverMessage.contains("Unauthorized", ignoreCase = true) ||
-                  response.code == 401 || response.code == 403 ->
-                  "Supabase बकेट '$bucketName' पर डिलीट (DELETE) की RLS पॉलिसी चालू नहीं है।"
-                serverMessage.isNotBlank() ->
-                  "Supabase डिलीट विफल (${response.code}): $serverMessage"
-                else ->
-                  "Supabase डिलीट विफल (${response.code}): बकेट '$bucketName' की DELETE पॉलिसी जांचें।"
+              deletedCount = objectPaths.size
+            } else if (response.isSuccessful) {
+              val arrLen = runCatching { org.json.JSONArray(respBody).length() }.getOrDefault(-1)
+              if (arrLen >= objectPaths.size) {
+                deletedCount = arrLen
+              } else {
+                // Batch DELETE under Postgres RLS returns 200 [] when DELETE policy is missing,
+                // or may delete partially. Fall back to single-object DELETE to verify exact status.
+                deletedCount = deleteObjectsIndividually(objectPaths)
+                if (deletedCount == 0 && urlToPath.any { stillExistsAtPublicUrl(it.first) }) {
+                  throw IllegalStateException(
+                    "Supabase बकेट '$bucketName' पर डिलीट (DELETE) की RLS पॉलिसी चालू नहीं है।"
+                  )
+                }
+                if (deletedCount == 0) {
+                  deletedCount = objectPaths.size
+                }
               }
-              throw IllegalStateException(friendlyReason)
+            } else {
+              Log.e(TAG, "Supabase batch delete failed (${response.code}): $respBody")
+              val fallbackCount = deleteObjectsIndividually(objectPaths)
+              if (fallbackCount > 0) {
+                deletedCount = fallbackCount
+              } else {
+                val serverMessage = extractSupabaseErrorMessage(respBody)
+                val friendlyReason = when {
+                  serverMessage.contains("row-level security", ignoreCase = true) ||
+                    serverMessage.contains("Unauthorized", ignoreCase = true) ||
+                    response.code == 401 || response.code == 403 ->
+                    "Supabase बकेट '$bucketName' पर डिलीट (DELETE) की RLS पॉलिसी चालू नहीं है।"
+                  serverMessage.isNotBlank() ->
+                    "Supabase डिलीट विफल (${response.code}): $serverMessage"
+                  else ->
+                    "Supabase डिलीट विफल (${response.code}): बकेट '$bucketName' की DELETE पॉलिसी जांचें।"
+                }
+                throw IllegalStateException(friendlyReason)
+              }
             }
           }
         } catch (e: UnknownHostException) {
@@ -185,9 +212,47 @@ class SupabaseStorageRepository(
           )
         }
 
-        objectPaths.size
+        deletedCount
       }
     }
+
+  private fun deleteObjectsIndividually(objectPaths: List<String>): Int {
+    var deleted = 0
+    for (path in objectPaths) {
+      val singleUrl = "$supabaseUrl/storage/v1/object/$bucketName/$path"
+      val req = Request.Builder()
+        .url(singleUrl)
+        .delete()
+        .addHeader("apikey", supabaseAnonKey)
+      if (supabaseAnonKey.startsWith("eyJ")) {
+        req.addHeader("Authorization", "Bearer $supabaseAnonKey")
+      }
+      runCatching {
+        httpClient.newCall(req.build()).execute().use { resp ->
+          val body = resp.body?.string().orEmpty()
+          if (resp.isSuccessful) {
+            if (body.isBlank() || !body.trim().startsWith("[") ||
+              runCatching { org.json.JSONArray(body).length() }.getOrDefault(1) > 0
+            ) {
+              deleted++
+            }
+          } else if (resp.code == 404) {
+            deleted++
+          } else {
+            Log.w(TAG, "Single delete failed (${resp.code}) for $path: $body")
+          }
+        }
+      }
+    }
+    return deleted
+  }
+
+  private fun stillExistsAtPublicUrl(publicUrl: String): Boolean {
+    return runCatching {
+      val headReq = Request.Builder().url(publicUrl).head().build()
+      httpClient.newCall(headReq).execute().use { resp -> resp.isSuccessful }
+    }.getOrDefault(false)
+  }
 
   private fun extractObjectPathFromPublicUrl(publicUrl: String): String? {
     val cleanUrl = publicUrl.trim()
@@ -196,7 +261,13 @@ class SupabaseStorageRepository(
     val markerIdx = cleanUrl.indexOf(marker)
     if (markerIdx < 0) return null
     val basePart = cleanUrl.substring(0, markerIdx).trimEnd('/')
-    if (!basePart.equals(supabaseUrl, ignoreCase = true)) return null
+    val configuredHost = runCatching { URI(supabaseUrl).host.orEmpty() }.getOrDefault("")
+    val urlHost = runCatching { URI(basePart).host.orEmpty() }.getOrDefault("")
+    if (!basePart.equals(supabaseUrl, ignoreCase = true) &&
+      (configuredHost.isBlank() || !urlHost.equals(configuredHost, ignoreCase = true))
+    ) {
+      return null
+    }
     val objectPath = cleanUrl.substring(markerIdx + marker.length)
       .substringBefore('?')
       .substringBefore('#')

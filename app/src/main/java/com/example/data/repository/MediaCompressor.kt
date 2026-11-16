@@ -554,6 +554,37 @@ object MediaCompressor {
     }
   }
 
+  suspend fun extractVideoThumbnailFile(context: Context, videoUri: Uri): File? = withContext(Dispatchers.IO) {
+    val retriever = MediaMetadataRetriever()
+    try {
+      retriever.setDataSource(context, videoUri)
+      val raw = retriever.getFrameAtTime(500_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        ?: retriever.getFrameAtTime(0L)
+        ?: return@withContext null
+      val scaled = scaleDownIfNeeded(raw, 512)
+      if (scaled !== raw) {
+        raw.recycle()
+      }
+      try {
+        val cacheDir = File(context.cacheDir, "swar_upload_tmp").apply { mkdirs() }
+        val outFile = File(cacheDir, "vthumb_${UUID.randomUUID().toString().take(8)}.jpg")
+        outFile.outputStream().use { out ->
+          scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
+        }
+        outFile.takeIf { it.length() > 0L }
+      } finally {
+        if (!scaled.isRecycled) {
+          scaled.recycle()
+        }
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "Video thumbnail extraction failed", t)
+      null
+    } finally {
+      runCatching { retriever.release() }
+    }
+  }
+
   private fun queryUriSizeBytes(context: Context, uri: Uri): Long {
     val resolver = context.contentResolver
     runCatching {

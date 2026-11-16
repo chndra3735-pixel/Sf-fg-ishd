@@ -13,6 +13,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -267,6 +269,8 @@ fun FullScreenGiftOverlay(
 ) {
   val context = LocalContext.current
   var videoFailed by remember(event.id) { mutableStateOf(false) }
+  var isVideoPrepared by remember(event.id) { mutableStateOf(false) }
+  var preparedDurationMs by remember(event.id) { mutableStateOf<Long?>(null) }
   val isVideoGift = event.giftMediaType == "video" && event.giftMediaUrl.isNotBlank() && !videoFailed
   var resolvedVideoUri by remember(event.id, event.giftMediaUrl) {
     mutableStateOf<Uri?>(if (event.giftMediaUrl.startsWith("http")) null else Uri.parse(event.giftMediaUrl))
@@ -281,8 +285,12 @@ fun FullScreenGiftOverlay(
     }
   }
 
-  LaunchedEffect(event.id, isVideoGift) {
-    val autoDismissMs = if (isVideoGift) 14_000L else 3_400L
+  LaunchedEffect(event.id, isVideoGift, preparedDurationMs) {
+    val autoDismissMs = if (isVideoGift) {
+      preparedDurationMs?.let { (it + 2_000L).coerceIn(4_000L, 90_000L) } ?: 35_000L
+    } else {
+      3_400L
+    }
     delay(autoDismissMs)
     onDismiss()
   }
@@ -295,11 +303,18 @@ fun FullScreenGiftOverlay(
     label = "giftScale",
   )
 
+  val blockTouchInteractionSource = remember { MutableInteractionSource() }
+
   Box(
     modifier = Modifier
       .fillMaxSize()
       .background(if (isVideoGift) Color.Black else Color(0xD90E0622))
-      .clickable(onClick = onDismiss)
+      // Consume touches without closing the room video when touched anywhere on screen
+      .clickable(
+        interactionSource = blockTouchInteractionSource,
+        indication = null,
+        onClick = { if (!isVideoGift) onDismiss() },
+      )
       .testTag("fullscreen_gift_overlay"),
   ) {
     if (isVideoGift) {
@@ -315,6 +330,11 @@ fun FullScreenGiftOverlay(
                 setOnPreparedListener { mp ->
                   mp.isLooping = false
                   mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
+                  isVideoPrepared = true
+                  val dur = mp.duration.toLong()
+                  if (dur > 0L) {
+                    preparedDurationMs = dur
+                  }
                   start()
                 }
                 setOnCompletionListener {
@@ -332,9 +352,16 @@ fun FullScreenGiftOverlay(
         }
       }
 
+      if (playbackUri == null || !isVideoPrepared) {
+        CircularProgressIndicator(
+          color = SwarGold,
+          modifier = Modifier.align(Alignment.Center),
+        )
+      }
+
       DisposableEffect(event.id) {
         onDispose {
-          videoViewRef?.stopPlayback()
+          runCatching { videoViewRef?.stopPlayback() }
         }
       }
     } else {
@@ -390,20 +417,20 @@ fun FullScreenGiftOverlay(
           fontWeight = FontWeight.ExtraBold,
         )
       }
-    }
 
-    // Top-right Skip button
-    IconButton(
-      onClick = onDismiss,
-      modifier = Modifier
-        .align(Alignment.TopEnd)
-        .statusBarsPadding()
-        .padding(16.dp)
-        .size(48.dp)
-        .clip(CircleShape)
-        .background(Color(0x88000000)),
-    ) {
-      Icon(Icons.Filled.Close, contentDescription = "गिफ्ट बंद करें", tint = Color.White)
+      // Skip button shown only for non-video celebrations so video playback never closes on touch
+      IconButton(
+        onClick = onDismiss,
+        modifier = Modifier
+          .align(Alignment.TopEnd)
+          .statusBarsPadding()
+          .padding(16.dp)
+          .size(48.dp)
+          .clip(CircleShape)
+          .background(Color(0x88000000)),
+      ) {
+        Icon(Icons.Filled.Close, contentDescription = "गिफ्ट बंद करें", tint = Color.White)
+      }
     }
 
     // Bottom Sender -> Recipient Celebration Card

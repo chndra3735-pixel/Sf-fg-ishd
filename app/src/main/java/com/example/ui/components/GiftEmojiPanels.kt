@@ -390,7 +390,12 @@ fun GiftPanelSheet(
     }
   }
   var selectedRecipient by remember(recipients) { mutableStateOf(recipients.first()) }
-  var selectedGift by remember(filteredGifts) { mutableStateOf(filteredGifts.firstOrNull() ?: gifts.firstOrNull()) }
+  var selectedGiftId by remember { mutableStateOf<String?>(null) }
+  val selectedGift = remember(selectedGiftId, filteredGifts, gifts) {
+    gifts.firstOrNull { it.id == selectedGiftId }
+      ?: filteredGifts.firstOrNull()
+      ?: gifts.firstOrNull()
+  }
   var selectedQuantity by remember { mutableIntStateOf(1) }
   var showAdminAddGiftDialog by remember { mutableStateOf(false) }
   var editingGift by remember { mutableStateOf<GiftCatalogItem?>(null) }
@@ -517,7 +522,7 @@ fun GiftPanelSheet(
       ) {
         items(filteredGifts, key = { it.id.ifBlank { "${it.category}_${it.name}" } }) { gift ->
           val isPicked = selectedGift?.id == gift.id
-          val isCustomGift = !gift.id.startsWith("def_") && gift.createdByUid.isNotBlank()
+          val isCustomGift = !gift.id.startsWith("def_")
           val borderColor = if (isPicked) SwarGold else Color(0x33FFFFFF)
           Surface(
             color = if (isPicked) Color(0xFF352263) else Color(0xFF231642),
@@ -526,7 +531,7 @@ fun GiftPanelSheet(
               .clip(RoundedCornerShape(14.dp))
               .border(if (isPicked) 2.dp else 1.dp, borderColor, RoundedCornerShape(14.dp))
               .combinedClickable(
-                onClick = { selectedGift = gift },
+                onClick = { selectedGiftId = gift.id },
                 onLongClick = {
                   if (isAdminUser) {
                     if (isCustomGift) editingGift = gift else deletingDefaultGift = gift
@@ -573,7 +578,7 @@ fun GiftPanelSheet(
               Column(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(vertical = 10.dp, horizontal = 4.dp),
+                  .padding(vertical = 8.dp, horizontal = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
               ) {
                 if (gift.thumbnailUrl.isNotBlank()) {
@@ -581,12 +586,25 @@ fun GiftPanelSheet(
                     model = gift.thumbnailUrl,
                     contentDescription = gift.name,
                     modifier = Modifier
-                      .size(38.dp)
-                      .clip(RoundedCornerShape(10.dp)),
+                      .size(46.dp)
+                      .clip(CircleShape)
+                      .border(
+                        width = if (isPicked) 2.dp else 1.dp,
+                        color = if (isPicked) SwarGold else Color(0x55FFFFFF),
+                        shape = CircleShape,
+                      ),
                     contentScale = ContentScale.Crop,
                   )
                 } else {
-                  Text(text = gift.emoji.ifBlank { "🎁" }, fontSize = 30.sp)
+                  Box(
+                    modifier = Modifier
+                      .size(46.dp)
+                      .clip(CircleShape)
+                      .background(Color(0x22FFFFFF)),
+                    contentAlignment = Alignment.Center,
+                  ) {
+                    Text(text = gift.emoji.ifBlank { "🎁" }, fontSize = 26.sp)
+                  }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -708,8 +726,8 @@ fun GiftPanelSheet(
       },
       onDelete = {
         onDeleteCustomGift(targetEditGift) {
-          if (selectedGift?.id == targetEditGift.id) {
-            selectedGift = null
+          if (selectedGiftId == targetEditGift.id) {
+            selectedGiftId = null
           }
           editingGift = null
         }
@@ -727,8 +745,8 @@ fun GiftPanelSheet(
         Button(
           onClick = {
             onDeleteCustomGift(targetDeleteDefaultGift) {
-              if (selectedGift?.id == targetDeleteDefaultGift.id) {
-                selectedGift = null
+              if (selectedGiftId == targetDeleteDefaultGift.id) {
+                selectedGiftId = null
               }
               deletingDefaultGift = null
             }
@@ -901,9 +919,9 @@ private fun AddGiftAdminDialog(
   ) -> Unit,
 ) {
   var name by remember { mutableStateOf("") }
-  var emoji by remember { mutableStateOf("🎁") }
   var coinCostText by remember { mutableStateOf("500") }
   var category by remember { mutableStateOf(defaultCategory) }
+  var emoji by remember { mutableStateOf("🎁") }
   var thumbnailUri by remember { mutableStateOf<Uri?>(null) }
   var videoUri by remember { mutableStateOf<Uri?>(null) }
 
@@ -915,12 +933,14 @@ private fun AddGiftAdminDialog(
   )
   val videoPicker = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia(),
-    onResult = { uri -> videoUri = uri },
+    onResult = { uri ->
+      if (uri != null) videoUri = uri
+    },
   )
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("नया गिफ्ट / वीडियो गिफ्ट जोड़ें (एडमिन)") },
+    title = { Text("गिफ्ट अपलोड (एडमिन)") },
     text = {
       Column(
         modifier = Modifier
@@ -928,36 +948,148 @@ private fun AddGiftAdminDialog(
           .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        // 1. सबसे ऊपर: नाम
         OutlinedTextField(
           value = name,
           onValueChange = { name = it.take(40) },
           label = { Text("गिफ्ट का नाम") },
           placeholder = { Text("उदा. शाही एंट्री वीडियो") },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("gift_name_input"),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          OutlinedTextField(
-            value = emoji,
-            onValueChange = { emoji = it.take(8) },
-            label = { Text("आइकन") },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-          )
-          OutlinedTextField(
-            value = coinCostText,
-            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
-            label = { Text("कॉइंस कीमत") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-            modifier = Modifier.weight(1.4f),
-          )
+
+        // 2. नाम के नीचे: कॉइंस
+        OutlinedTextField(
+          value = coinCostText,
+          onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
+          label = { Text("कॉइंस कीमत") },
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          singleLine = true,
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("gift_coins_input"),
+        )
+
+        // 3. कॉइंस के नीचे: गिफ्ट DP (प्रीव्यू सहित, ताकि गिफ्ट पैनल में दिखे)
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          OutlinedButton(
+            onClick = {
+              thumbPicker.launch(
+                arrayOf("image/*", "image/gif", "application/zip", "application/x-zip-compressed")
+              )
+            },
+            modifier = Modifier
+              .weight(1f)
+              .height(48.dp)
+              .testTag("gift_dp_picker_button"),
+          ) {
+            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = if (thumbnailUri == null) "गिफ्ट DP चुनें" else "गिफ्ट DP चयनित ✓",
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          if (thumbnailUri != null) {
+            AsyncImage(
+              model = thumbnailUri,
+              contentDescription = "गिफ्ट DP प्रीव्यू",
+              modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .border(1.5.dp, SwarGold, CircleShape),
+              contentScale = ContentScale.Crop,
+            )
+          }
         }
-        Text("गिफ्ट श्रेणी चुनें", style = MaterialTheme.typography.labelLarge)
+
+        // 4. डीपी के नीचे: वीडियो अपलोड बटन + ठीक बगल में सबमिट बटन
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          OutlinedButton(
+            onClick = {
+              videoPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+              )
+            },
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier
+              .weight(1.15f)
+              .height(48.dp)
+              .testTag("gift_video_picker_button"),
+          ) {
+            Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = if (videoUri == null) "वीडियो अपलोड" else "वीडियो ✓",
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          Button(
+            onClick = {
+              val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: 100L
+              onSubmit(
+                name.ifBlank { "स्पेशल गिफ्ट" },
+                category,
+                emoji.ifBlank { "🎁" },
+                parsedCost,
+                thumbnailUri,
+                videoUri,
+              )
+            },
+            enabled = !isUploading,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            colors = ButtonDefaults.buttonColors(
+              containerColor = SwarCoral,
+              contentColor = Color.White,
+            ),
+            modifier = Modifier
+              .weight(0.85f)
+              .height(48.dp)
+              .testTag("submit_gift_button"),
+          ) {
+            Text(
+              text = if (isUploading) "लोड..." else "सबमिट",
+              fontWeight = FontWeight.Bold,
+              maxLines = 1,
+            )
+          }
+        }
+
+        if (videoUri != null) {
+          Surface(
+            color = SwarMint.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(8.dp),
+          ) {
+            Text(
+              text = "वीडियो तैयार है — भेजने पर रूम में यही वीडियो प्ले होगा और टच से बंद नहीं होगा।",
+              style = MaterialTheme.typography.bodySmall,
+              color = SwarMint,
+              modifier = Modifier.padding(8.dp),
+            )
+          }
+        }
+
+        // श्रेणी चयन (टैब के लिए)
         Row(
           modifier = Modifier.horizontalScroll(rememberScrollState()),
           horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalAlignment = Alignment.CenterVertically,
         ) {
+          Text("श्रेणी:", style = MaterialTheme.typography.labelMedium)
           SwarCatalogDefaults.giftCategories.forEach { cat ->
             FilterChip(
               selected = category == cat,
@@ -966,63 +1098,9 @@ private fun AddGiftAdminDialog(
             )
           }
         }
-        OutlinedButton(
-          onClick = {
-            thumbPicker.launch(
-              arrayOf("image/*", "image/gif", "application/zip", "application/x-zip-compressed")
-            )
-          },
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(if (thumbnailUri == null) "गिफ्ट GIF / इमेज थंबनेल चुनें" else "थंबनेल चयनित ✓")
-        }
-        OutlinedButton(
-          onClick = {
-            videoPicker.launch(
-              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-            )
-          },
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(if (videoUri == null) "फुल-स्क्रीन वीडियो गिफ्ट अपलोड करें (Supabase)" else "वीडियो गिफ्ट चयनित ✓")
-        }
-        if (videoUri != null) {
-          Surface(
-            color = SwarMint.copy(alpha = 0.14f),
-            shape = RoundedCornerShape(8.dp),
-          ) {
-            Text(
-              text = "कोई भी यूज़र यह गिफ्ट भेजेगा तो रूम में फुल-स्क्रीन वीडियो प्ले होगा!",
-              style = MaterialTheme.typography.bodySmall,
-              color = SwarMint,
-              modifier = Modifier.padding(8.dp),
-            )
-          }
-        }
       }
     },
-    confirmButton = {
-      Button(
-        onClick = {
-          val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: 100L
-          onSubmit(
-            name.ifBlank { "स्पेशल गिफ्ट" },
-            category,
-            emoji.ifBlank { "🎁" },
-            parsedCost,
-            thumbnailUri,
-            videoUri,
-          )
-        },
-        enabled = !isUploading,
-      ) {
-        Text(if (isUploading) "अपलोड हो रहा है..." else "पब्लिश करें")
-      }
-    },
+    confirmButton = {},
     dismissButton = {
       TextButton(onClick = onDismiss) { Text("रद्द करें") }
     },
@@ -1353,7 +1431,7 @@ private fun EditGiftAdminDialog(
         ) {
           Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
           Spacer(modifier = Modifier.width(8.dp))
-          Text("गिफ्ट पैनल से डिलीट करें")
+          Text("गिफ्ट, DP और वीडियो डिलीट करें")
         }
       }
     },
@@ -1386,7 +1464,7 @@ private fun EditGiftAdminDialog(
     AlertDialog(
       onDismissRequest = { showDeleteConfirm = false },
       title = { Text("गिफ्ट डिलीट करें?") },
-      text = { Text("क्या आप '${existing.name}' को गिफ्ट पैनल से पूरी तरह हटाना चाहते हैं?") },
+      text = { Text("क्या आप '${existing.name}' को गिफ्ट पैनल और स्टोरेज (DP व वीडियो) से पूरी तरह डिलीट करना चाहते हैं?") },
       confirmButton = {
         Button(
           onClick = {

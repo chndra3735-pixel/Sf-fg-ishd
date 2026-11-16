@@ -1,10 +1,13 @@
 package com.example.ui.viewmodel
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.SeatCleanupService
+import com.example.SeatPresenceTracker
 import com.example.audio.VoiceAudioEngine
 import com.example.data.model.Conversation
 import com.example.data.model.DirectMessage
@@ -228,6 +231,21 @@ class SwarRoomViewModel(
   val isMonitorLoopbackOn: StateFlow<Boolean> = _isMonitorLoopbackOn.asStateFlow()
 
   init {
+    SeatPresenceTracker.registerAudioDisconnect { audioEngine.leaveRoomVoice() }
+    appContext?.let { ctx ->
+      val stale = SeatPresenceTracker.consumeActivePresence(ctx)
+      if (stale != null && stale.userId == currentUserId && stale.roomId.isNotBlank()) {
+        viewModelScope.launch {
+          if (_activeRoomId.value != stale.roomId) {
+            runCatching { repository.vacateUserSeatsInRoom(stale.roomId, stale.seatIndex) }
+            if (stale.listenerCounted) {
+              runCatching { repository.adjustListenerCount(stale.roomId, -1L) }
+            }
+          }
+        }
+      }
+    }
+
     viewModelScope.launch {
       repository.ensureUserProfile(initialDisplayName, initialAvatarUrl)
     }
@@ -286,8 +304,15 @@ class SwarRoomViewModel(
           .distinct()
           .forEach { uid -> loadUserProfile(uid) }
 
-        if (_activeRoomId.value != null) {
+        val activeId = _activeRoomId.value
+        if (activeId != null) {
           val mySeat = seats.firstOrNull { it.occupantUid == currentUserId }
+          SeatPresenceTracker.recordSeatState(
+            context = appContext,
+            userId = currentUserId,
+            roomId = activeId,
+            seatIndex = mySeat?.seatIndex?.toInt(),
+          )
           if (mySeat == null) {
             if (!_isMicMuted.value) _isMicMuted.value = true
             audioEngine.updateSeatPublishState(isSeated = false, isMuted = true)
@@ -414,6 +439,15 @@ class SwarRoomViewModel(
       audioEngine.leaveRoomVoice()
     }
     _activeRoomId.value = roomId
+    SeatPresenceTracker.recordEnteredRoom(
+      context = appContext,
+      userId = currentUserId,
+      roomId = roomId,
+      listenerCounted = incrementListenerCount,
+    )
+    appContext?.let { ctx ->
+      runCatching { ctx.startService(Intent(ctx, SeatCleanupService::class.java)) }
+    }
     audioEngine.setSpeakerphone(_isSpeakerOn.value)
     audioEngine.joinRoomVoice(
       roomId = roomId,
@@ -455,10 +489,15 @@ class SwarRoomViewModel(
     val roomId = _activeRoomId.value
     if (roomId == null) {
       _isRoomMinimized.value = false
+      SeatPresenceTracker.clearSession(appContext)
       onComplete?.invoke()
       return
     }
     val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
+    SeatPresenceTracker.clearSession(appContext)
+    appContext?.let { ctx ->
+      runCatching { ctx.stopService(Intent(ctx, SeatCleanupService::class.java)) }
+    }
     stopMicEngine()
     audioEngine.leaveRoomVoice()
     _isRoomMinimized.value = false
@@ -1024,6 +1063,27 @@ class SwarRoomViewModel(
             _events.tryEmit(err.message ?: "गिफ्ट वीडियो अपलोड विफल")
             return@launch
           }
+
+        // If no DP was explicitly selected for the video gift, extract a crisp first-frame DP automatically
+        if (thumbUrl.isBlank() && appContext != null) {
+          val thumbFile = MediaCompressor.extractVideoThumbnailFile(appContext, videoUri)
+          if (thumbFile != null) {
+            try {
+              _isUploadingMedia.value = true
+              supabaseStorage.uploadMediaFromUri(
+                uri = Uri.fromFile(thumbFile),
+                folder = "gifts",
+                uid = currentUserId,
+                isVideo = false,
+              ).onSuccess { generatedThumbUrl ->
+                thumbUrl = generatedThumbUrl
+              }
+            } finally {
+              _isUploadingMedia.value = false
+              runCatching { thumbFile.delete() }
+            }
+          }
+        }
       }
 
       val mediaType = when {
@@ -1270,24 +1330,42 @@ class SwarRoomViewModel(
     }
     viewModelScope.launch {
       _isUploadingMedia.value = true
-      repository.deleteGiftFromCatalog(gift.id)
-        .onSuccess {
-          _hiddenGiftIds.update { it + gift.id }
-          _isUploadingMedia.value = false
-          _events.tryEmit("गिफ्ट '${gift.name}' गिफ्ट पैनल से पूरी तरह डिलीट हो गया!")
-          onSuccess()
-          val mediaUrls = listOf(gift.thumbnailUrl, gift.mediaUrl).filter { it.isNotBlank() }.distinct()
-          if (mediaUrls.isNotEmpty()) {
-            viewModelScope.launch {
-              supabaseStorage.deleteMediaByPublicUrls(mediaUrls)
-                .onFailure { err -> Log.w(TAG, "Gift storage delete warning", err) }
+      try {
+        repository.deleteGiftFromCatalog(gift.id)
+          .onSuccess {
+            _hiddenGiftIds.update { prev ->
+              val updated = prev + gift.id
+              catalogHiddenPrefs?.edit()?.putStringSet(KEY_HIDDEN_GIFTS, updated)?.apply()
+              updated
             }
+            val mediaUrls = listOf(gift.thumbnailUrl, gift.mediaUrl)
+              .map { it.trim() }
+              .filter { it.isNotBlank() }
+              .distinct()
+            var storageMessage = "गिफ्ट '${gift.name}' गिफ्ट पैनल से डिलीट हो गया!"
+            if (mediaUrls.isNotEmpty()) {
+              supabaseStorage.deleteMediaByPublicUrls(mediaUrls)
+                .onSuccess { deletedCount ->
+                  storageMessage = if (deletedCount > 0) {
+                    "गिफ्ट '${gift.name}', DP और वीडियो स्टोरेज व गिफ्ट पैनल से पूरी तरह डिलीट हो गए!"
+                  } else {
+                    "गिफ्ट '${gift.name}' गिफ्ट पैनल से डिलीट हो गया!"
+                  }
+                }
+                .onFailure { err ->
+                  Log.w(TAG, "Gift storage delete warning", err)
+                  storageMessage = "गिफ्ट पैनल से हट गया, पर स्टोरेज डिलीट त्रुटि: ${err.message}"
+                }
+            }
+            _events.tryEmit(storageMessage)
+            onSuccess()
           }
-        }
-        .onFailure { err ->
-          _isUploadingMedia.value = false
-          _events.tryEmit(err.message ?: "गिफ्ट डिलीट करने में त्रुटि")
-        }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "गिफ्ट डिलीट करने में त्रुटि")
+          }
+      } finally {
+        _isUploadingMedia.value = false
+      }
     }
   }
 
@@ -1350,6 +1428,10 @@ class SwarRoomViewModel(
 
   override fun onCleared() {
     super.onCleared()
+    appContext?.let { ctx ->
+      SeatPresenceTracker.cleanupSynchronously(ctx, timeoutMs = 800L)
+    }
+    SeatPresenceTracker.registerAudioDisconnect(null)
     audioEngine.release()
   }
 

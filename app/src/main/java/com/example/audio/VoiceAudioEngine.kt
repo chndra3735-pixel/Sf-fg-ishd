@@ -372,7 +372,12 @@ class VoiceAudioEngine(private val appContext: Context) {
           val rawBody = resp.body?.string().orEmpty().trim()
           if (!resp.isSuccessful) {
             val serverErr = runCatching { JSONObject(rawBody).optString("error") }.getOrDefault("")
-            throw IllegalStateException(serverErr.ifBlank { "HTTP ${resp.code}" })
+            val reason = when (resp.code) {
+              404 -> "HTTP 404: Supabase Edge Function अभी Deploy नहीं है या URL नाम गलत है"
+              401, 403 -> "HTTP ${resp.code}: Edge Function पर JWT/API Key अनुमति जांचें"
+              else -> serverErr.ifBlank { "HTTP ${resp.code}" }
+            }
+            throw IllegalStateException(reason)
           }
           if (rawBody.startsWith("{")) {
             val json = JSONObject(rawBody)

@@ -1,10 +1,14 @@
 package com.example
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -133,8 +137,21 @@ private fun ensureFirebaseAuth(context: Context): FirebaseAuth? {
 }
 
 class MainActivity : ComponentActivity() {
+  private var isSeatServiceBound = false
+  private val seatServiceConnection = object : ServiceConnection {
+    override fun onServiceConnected(name: ComponentName?, service: IBinder?) {}
+    override fun onServiceDisconnected(name: ComponentName?) {
+      isSeatServiceBound = false
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    val cleanupIntent = Intent(this, SeatCleanupService::class.java)
+    isSeatServiceBound = runCatching {
+      bindService(cleanupIntent, seatServiceConnection, Context.BIND_AUTO_CREATE)
+    }.getOrDefault(false)
+
     Coil.setImageLoader {
       ImageLoader.Builder(applicationContext)
         .okHttpClient { SupabaseNetworkClient.sharedOkHttpClient }
@@ -153,6 +170,17 @@ class MainActivity : ComponentActivity() {
         SwarRoomAppRoot()
       }
     }
+  }
+
+  override fun onDestroy() {
+    if (!isChangingConfigurations) {
+      SeatPresenceTracker.cleanupSynchronously(applicationContext, timeoutMs = 900L)
+    }
+    if (isSeatServiceBound) {
+      runCatching { unbindService(seatServiceConnection) }
+      isSeatServiceBound = false
+    }
+    super.onDestroy()
   }
 }
 
