@@ -74,6 +74,7 @@ jobs:
           SECRET_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SECRET_SUPABASE_BUCKET: ${{ secrets.SUPABASE_BUCKET }}
           SECRET_AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
+          SECRET_AGORA_TOKEN_ENDPOINT: ${{ secrets.AGORA_TOKEN_ENDPOINT }}
           SECRET_GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           SECRET_GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
@@ -113,6 +114,18 @@ jobs:
           else
             echo "::warning::AGORA_APP_ID missing in GitHub Secrets! Live multi-user Agora voice audio will use placeholder until AGORA_APP_ID secret is added."
             echo "AGORA_CONFIGURED=false" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$SECRET_AGORA_TOKEN_ENDPOINT" ]; then
+            AGORA_TOK_URL=$(printf '%s' "$SECRET_AGORA_TOKEN_ENDPOINT" | grep -oE 'https://[^[:space:]'\''"]+' | head -n 1 || true)
+            if [ -n "$AGORA_TOK_URL" ]; then
+              grep -v '^AGORA_TOKEN_ENDPOINT=' .env > .env.tmp && mv .env.tmp .env
+              printf 'AGORA_TOKEN_ENDPOINT=%s\n' "$AGORA_TOK_URL" >> .env
+              echo "AGORA_TOKEN_CONFIGURED=true" >> "$GITHUB_ENV"
+            else
+              echo "AGORA_TOKEN_CONFIGURED=false" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "AGORA_TOKEN_CONFIGURED=false" >> "$GITHUB_ENV"
           fi
           if [ -n "$SECRET_GOOGLE_SERVICES_JSON" ]; then
             printf '%s\n' "$SECRET_GOOGLE_SERVICES_JSON" | sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' > app/google-services.json
@@ -213,7 +226,11 @@ jobs:
               echo "- **Supabase Storage**: Add \`SUPABASE_URL\`, \`SUPABASE_ANON_KEY\`, and \`SUPABASE_BUCKET\` secrets in GitHub for media uploads."
             fi
             if [ "${AGORA_CONFIGURED:-false}" = "true" ]; then
-              echo "- **Agora Voice SDK**: Configured via \`AGORA_APP_ID\` GitHub Secret."
+              if [ "${AGORA_TOKEN_CONFIGURED:-false}" = "true" ]; then
+                echo "- **Agora Voice SDK**: Configured in **Secured Token Mode** via \`AGORA_APP_ID\` + \`AGORA_TOKEN_ENDPOINT\`."
+              else
+                echo "- **Agora Voice SDK**: Configured via \`AGORA_APP_ID\` (Testing Mode)."
+              fi
             else
               echo "- **Agora Voice SDK**: Add \`AGORA_APP_ID\` secret in GitHub Actions Secrets for live multi-user room voice."
             fi

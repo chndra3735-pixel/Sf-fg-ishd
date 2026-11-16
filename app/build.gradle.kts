@@ -21,6 +21,29 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    val rawTokenEndpoint = run {
+      val envText = listOf(".env", ".env.example")
+        .map { rootProject.file(it) }
+        .firstNotNullOfOrNull { f ->
+          if (f.exists()) {
+            f.readLines().firstOrNull { it.trimStart().startsWith("AGORA_TOKEN_ENDPOINT=") }
+              ?.substringAfter("=")
+          } else {
+            null
+          }
+        }
+      (System.getenv("AGORA_TOKEN_ENDPOINT") ?: envText ?: "").trim()
+    }
+    val extractedTokenUrl = Regex("""https://[^\s'"]+""")
+      .find(rawTokenEndpoint)
+      ?.value
+      ?.trim()
+      ?: ""
+    val safeTokenEndpoint = extractedTokenUrl
+      .replace("\\", "\\\\")
+      .replace("\"", "\\\"")
+    buildConfigField("String", "AGORA_TOKEN_ENDPOINT", "\"$safeTokenEndpoint\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -77,6 +100,7 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  ignoreList.add("AGORA_TOKEN_ENDPOINT")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

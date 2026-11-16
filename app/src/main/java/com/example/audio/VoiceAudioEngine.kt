@@ -12,6 +12,7 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import com.example.BuildConfig
+import com.example.data.repository.SupabaseNetworkClient
 import io.agora.rtc2.ChannelMediaOptions
 import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
@@ -27,6 +28,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import kotlin.math.sqrt
 
 /**
@@ -43,14 +49,21 @@ class VoiceAudioEngine(private val appContext: Context) {
   private var noiseSuppressor: NoiseSuppressor? = null
 
   private val agoraAppId: String = BuildConfig.AGORA_APP_ID.trim()
+  private val agoraTokenEndpoint: String = BuildConfig.AGORA_TOKEN_ENDPOINT.trim()
 
   val isAgoraConfigured: Boolean
     get() = agoraAppId.isNotBlank() &&
       agoraAppId != "YOUR_AGORA_APP_ID" &&
       !agoraAppId.startsWith("your", ignoreCase = true)
 
+  val isTokenServerConfigured: Boolean
+    get() = agoraTokenEndpoint.startsWith("https://") &&
+      !agoraTokenEndpoint.contains("your-token-server.example.com", ignoreCase = true)
+
   private var rtcEngine: RtcEngine? = null
   private var activeChannelName: String? = null
+  private var tokenFetchJob: Job? = null
+  private var lastJoinedRole: String = "subscriber"
   private var currentSpeakerEnabled: Boolean = true
 
   @Volatile
@@ -110,10 +123,46 @@ class VoiceAudioEngine(private val appContext: Context) {
       Log.w(TAG, "Agora RTC error code=$err")
       val hint = when (err) {
         101 -> "अमान्य Agora App ID (Secrets जांचें)"
-        109, 110 -> "Agora टोकन आवश्यक/समाप्त (Testing Mode या AGORA_TEMP_TOKEN जांचें)"
+        109, 110 -> if (isTokenServerConfigured) {
+          "Agora टोकन अमान्य/समाप्त — टोकन सर्वर पर AGORA_APP_ID और AGORA_APP_CERTIFICATE जांचें"
+        } else {
+          "Agora प्रोजेक्ट 'Secured Mode (Token)' पर है — टोकन सर्वर (AGORA_TOKEN_ENDPOINT) जोड़ें या Testing Mode उपयोग करें"
+        }
         else -> "Agora त्रुटि कोड: $err"
       }
       _agoraStatusText.value = hint
+    }
+
+    override fun onTokenPrivilegeWillExpire(token: String?) {
+      val channel = activeChannelName ?: return
+      if (!isTokenServerConfigured) return
+      scope.launch {
+        val role = if (currentIsBroadcaster) "publisher" else "subscriber"
+        fetchAgoraToken(channel, role)
+          .onSuccess { fetched ->
+            rtcEngine?.renewToken(fetched.token)
+            lastJoinedRole = role
+          }
+          .onFailure { err ->
+            Log.w(TAG, "Token renew warning: ${err.message}")
+          }
+      }
+    }
+
+    override fun onRequestToken() {
+      val channel = activeChannelName ?: return
+      if (!isTokenServerConfigured) return
+      scope.launch {
+        val role = if (currentIsBroadcaster) "publisher" else "subscriber"
+        fetchAgoraToken(channel, role)
+          .onSuccess { fetched ->
+            rtcEngine?.renewToken(fetched.token)
+            lastJoinedRole = role
+          }
+          .onFailure { err ->
+            _agoraStatusText.value = "Agora टोकन नवीनीकरण विफल: ${err.message}"
+          }
+      }
     }
 
     override fun onAudioVolumeIndication(speakers: Array<out AudioVolumeInfo>?, totalVolume: Int) {
@@ -172,15 +221,55 @@ class VoiceAudioEngine(private val appContext: Context) {
       updateSeatPublishState(isSeated = isBroadcaster, isMuted = isMuted)
       return
     }
+    tokenFetchJob?.cancel()
     if (activeChannelName != null) {
       runCatching { engine.leaveChannel() }
     }
     activeChannelName = safeChannel
 
-    val options = buildMediaOptions(isBroadcaster = isBroadcaster, isMuted = isMuted)
-    val rc = engine.joinChannel(null, safeChannel, 0, options)
+    if (!isTokenServerConfigured) {
+      val options = buildMediaOptions(isBroadcaster = isBroadcaster, isMuted = isMuted)
+      val rc = engine.joinChannel(null, safeChannel, 0, options)
+      handleJoinResult(engine, rc, isBroadcaster, isMuted, "testing")
+      return
+    }
+
+    val requestedRole = if (isBroadcaster) "publisher" else "subscriber"
+    _agoraStatusText.value = "सुरक्षित Agora टोकन प्राप्त हो रहा है..."
+    tokenFetchJob = scope.launch {
+      fetchAgoraToken(safeChannel, requestedRole)
+        .onSuccess { fetched ->
+          if (activeChannelName != safeChannel) return@launch
+          val latestBroadcaster = currentIsBroadcaster
+          val latestMuted = currentBroadcasterMuted
+          lastJoinedRole = requestedRole
+          val options = buildMediaOptions(isBroadcaster = latestBroadcaster, isMuted = latestMuted)
+          val rc = engine.joinChannel(fetched.token, safeChannel, fetched.uid, options)
+          handleJoinResult(engine, rc, latestBroadcaster, latestMuted, requestedRole)
+        }
+        .onFailure { err ->
+          if (activeChannelName == safeChannel) {
+            _isAgoraConnected.value = false
+            _agoraStatusText.value = "टोकन सर्वर त्रुटि: ${err.message ?: "कनेक्शन विफल"}"
+          }
+        }
+    }
+  }
+
+  private fun handleJoinResult(
+    engine: RtcEngine,
+    rc: Int,
+    isBroadcaster: Boolean,
+    isMuted: Boolean,
+    role: String,
+  ) {
     if (rc == 0) {
-      _agoraStatusText.value = "Agora चैनल से जुड़ रहा है..."
+      lastJoinedRole = role
+      _agoraStatusText.value = if (isTokenServerConfigured) {
+        "सुरक्षित टोकन मोड से जुड़ रहा है..."
+      } else {
+        "Agora चैनल से जुड़ रहा है..."
+      }
       engine.muteLocalAudioStream(!isBroadcaster || isMuted)
       engine.enableLocalAudio(isBroadcaster && !isMuted)
       _isCapturing.value = isBroadcaster && !isMuted
@@ -199,23 +288,48 @@ class VoiceAudioEngine(private val appContext: Context) {
       _audioLevel.value = 0f
     }
 
-    if (isAgoraConfigured && activeChannelName != null) {
+    val channel = activeChannelName
+    if (isAgoraConfigured && channel != null) {
       val engine = rtcEngine ?: return
-      val options = buildMediaOptions(isBroadcaster = isSeated, isMuted = isMuted)
-      engine.setClientRole(
-        if (isSeated) Constants.CLIENT_ROLE_BROADCASTER else Constants.CLIENT_ROLE_AUDIENCE
-      )
-      engine.updateChannelMediaOptions(options)
-      engine.enableLocalAudio(effectivePublish)
-      engine.muteLocalAudioStream(!effectivePublish)
-      _isCapturing.value = effectivePublish
+      if (isTokenServerConfigured && isSeated && lastJoinedRole != "publisher") {
+        scope.launch {
+          fetchAgoraToken(channel, "publisher")
+            .onSuccess { fetched ->
+              if (activeChannelName == channel) {
+                engine.renewToken(fetched.token)
+                lastJoinedRole = "publisher"
+                applyRoleAndMediaOptions(engine, isSeated = true, isMuted = currentBroadcasterMuted)
+              }
+            }
+            .onFailure { err ->
+              _agoraStatusText.value = "स्पीकर टोकन अपडेट विफल: ${err.message}"
+            }
+        }
+        return
+      }
+      applyRoleAndMediaOptions(engine, isSeated = isSeated, isMuted = isMuted)
     } else if (!isAgoraConfigured) {
       if (effectivePublish) startCapture() else stopCapture()
     }
   }
 
+  private fun applyRoleAndMediaOptions(engine: RtcEngine, isSeated: Boolean, isMuted: Boolean) {
+    val effectivePublish = isSeated && !isMuted
+    val options = buildMediaOptions(isBroadcaster = isSeated, isMuted = isMuted)
+    engine.setClientRole(
+      if (isSeated) Constants.CLIENT_ROLE_BROADCASTER else Constants.CLIENT_ROLE_AUDIENCE
+    )
+    engine.updateChannelMediaOptions(options)
+    engine.enableLocalAudio(effectivePublish)
+    engine.muteLocalAudioStream(!effectivePublish)
+    _isCapturing.value = effectivePublish
+  }
+
   fun leaveRoomVoice() {
+    tokenFetchJob?.cancel()
+    tokenFetchJob = null
     activeChannelName = null
+    lastJoinedRole = "subscriber"
     currentIsBroadcaster = false
     currentBroadcasterMuted = true
     _isAgoraConnected.value = false
@@ -228,6 +342,57 @@ class VoiceAudioEngine(private val appContext: Context) {
     stopCapture()
     _agoraStatusText.value = if (isAgoraConfigured) "Agora लाइव वॉइस तैयार" else "Agora App ID आवश्यक है"
   }
+
+  private data class FetchedToken(val token: String, val uid: Int)
+
+  private suspend fun fetchAgoraToken(channelName: String, role: String): Result<FetchedToken> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val payload = JSONObject().apply {
+          put("channelName", channelName)
+          put("uid", 0)
+          put("role", role)
+        }.toString()
+        val requestBuilder = Request.Builder()
+          .url(agoraTokenEndpoint)
+          .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
+
+        val supaAnon = BuildConfig.SUPABASE_ANON_KEY.trim().let { raw ->
+          if (raw.startsWith("Sb_publishable_")) "sb_publishable_" + raw.removePrefix("Sb_publishable_") else raw
+        }
+        if (agoraTokenEndpoint.contains(".supabase.co", ignoreCase = true) &&
+          supaAnon.isNotBlank() &&
+          supaAnon != "your-supabase-anon-key"
+        ) {
+          requestBuilder.addHeader("apikey", supaAnon)
+          requestBuilder.addHeader("Authorization", "Bearer $supaAnon")
+        }
+
+        SupabaseNetworkClient.sharedOkHttpClient.newCall(requestBuilder.build()).execute().use { resp ->
+          val rawBody = resp.body?.string().orEmpty().trim()
+          if (!resp.isSuccessful) {
+            val serverErr = runCatching { JSONObject(rawBody).optString("error") }.getOrDefault("")
+            throw IllegalStateException(serverErr.ifBlank { "HTTP ${resp.code}" })
+          }
+          if (rawBody.startsWith("{")) {
+            val json = JSONObject(rawBody)
+            val token = json.optString("token").trim()
+            val uid = json.optInt("uid", 0)
+            if (token.isBlank()) {
+              val msg = json.optString("error").ifBlank { json.optString("message") }
+              throw IllegalStateException(
+                if (msg.isNotBlank()) "Edge Function ने टोकन नहीं भेजा ($msg) — agora-token कोड डिप्लॉय करें"
+                else "सर्वर से खाली टोकन मिला"
+              )
+            }
+            FetchedToken(token = token, uid = uid)
+          } else {
+            require(rawBody.isNotBlank()) { "सर्वर से खाली टोकन मिला" }
+            FetchedToken(token = rawBody, uid = 0)
+          }
+        }
+      }
+    }
 
   private fun buildMediaOptions(isBroadcaster: Boolean, isMuted: Boolean): ChannelMediaOptions {
     val publishMic = isBroadcaster && !isMuted
