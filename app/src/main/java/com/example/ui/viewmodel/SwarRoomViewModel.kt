@@ -71,6 +71,13 @@ class SwarRoomViewModel(
   private val _isUploadingMedia = MutableStateFlow(false)
   val isUploadingMedia: StateFlow<Boolean> = _isUploadingMedia.asStateFlow()
 
+  private val _giftUploadError = MutableStateFlow<String?>(null)
+  val giftUploadError: StateFlow<String?> = _giftUploadError.asStateFlow()
+
+  fun clearGiftUploadError() {
+    _giftUploadError.value = null
+  }
+
   val isSupabaseConfigured: Boolean
     get() = supabaseStorage.isConfigured()
 
@@ -1025,9 +1032,12 @@ class SwarRoomViewModel(
     onSuccess: () -> Unit,
   ) {
     if (!isAdminUser) {
-      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही नया गिफ्ट जोड़ा जा सकता है।")
+      val msg = "केवल एडमिन Gmail (chndra3735@gmail.com) से ही नया गिफ्ट जोड़ा जा सकता है।"
+      _giftUploadError.value = msg
+      _events.tryEmit(msg)
       return
     }
+    _giftUploadError.value = null
     viewModelScope.launch {
       var thumbUrl = ""
       var videoUrl = ""
@@ -1043,7 +1053,9 @@ class SwarRoomViewModel(
         _isUploadingMedia.value = false
         upload.onSuccess { thumbUrl = it }
           .onFailure { err ->
-            _events.tryEmit(err.message ?: "गिफ्ट थंबनेल अपलोड विफल")
+            val msg = err.message ?: "गिफ्ट फोटो / थंबनेल अपलोड विफल"
+            _giftUploadError.value = msg
+            _events.tryEmit(msg)
             return@launch
           }
       }
@@ -1060,7 +1072,9 @@ class SwarRoomViewModel(
         _isUploadingMedia.value = false
         upload.onSuccess { videoUrl = it }
           .onFailure { err ->
-            _events.tryEmit(err.message ?: "गिफ्ट वीडियो अपलोड विफल")
+            val msg = err.message ?: "गिफ्ट वीडियो अपलोड विफल"
+            _giftUploadError.value = msg
+            _events.tryEmit(msg)
             return@launch
           }
 
@@ -1102,10 +1116,13 @@ class SwarRoomViewModel(
         mediaType = mediaType,
         coinCost = coinCost,
       ).onSuccess {
+        _giftUploadError.value = null
         _events.tryEmit("नया गिफ्ट सभी यूज़र्स के लिए लाइव हो गया! 🎁")
         onSuccess()
       }.onFailure { err ->
-        _events.tryEmit(err.message ?: "गिफ्ट जोड़ने में त्रुटि")
+        val msg = err.message ?: "गिफ्ट जोड़ने में त्रुटि"
+        _giftUploadError.value = msg
+        _events.tryEmit(msg)
       }
     }
   }
@@ -1222,13 +1239,18 @@ class SwarRoomViewModel(
     onSuccess: () -> Unit,
   ) {
     if (!isAdminUser) {
-      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही गिफ्ट अपडेट किया जा सकता है।")
+      val msg = "केवल एडमिन Gmail (chndra3735@gmail.com) से ही गिफ्ट अपडेट किया जा सकता है।"
+      _giftUploadError.value = msg
+      _events.tryEmit(msg)
       return
     }
     if (existing.id.isBlank() || existing.id.startsWith("def_")) {
-      _events.tryEmit("डिफ़ॉल्ट गिफ्ट बदला नहीं जा सकता।")
+      val msg = "डिफ़ॉल्ट गिफ्ट बदला नहीं जा सकता।"
+      _giftUploadError.value = msg
+      _events.tryEmit(msg)
       return
     }
+    _giftUploadError.value = null
     viewModelScope.launch {
       val oldThumbUrl = existing.thumbnailUrl
       val oldVideoUrl = if (existing.mediaType == "video") existing.mediaUrl else ""
@@ -1247,7 +1269,9 @@ class SwarRoomViewModel(
         _isUploadingMedia.value = false
         upload.onSuccess { finalThumbUrl = it }
           .onFailure { err ->
-            _events.tryEmit(err.message ?: "नया थंबनेल अपलोड विफल")
+            val msg = err.message ?: "नया थंबनेल अपलोड विफल"
+            _giftUploadError.value = msg
+            _events.tryEmit(msg)
             return@launch
           }
       }
@@ -1264,7 +1288,9 @@ class SwarRoomViewModel(
         _isUploadingMedia.value = false
         upload.onSuccess { finalVideoUrl = it }
           .onFailure { err ->
-            _events.tryEmit(err.message ?: "नया गिफ्ट वीडियो अपलोड विफल")
+            val msg = err.message ?: "नया गिफ्ट वीडियो अपलोड विफल"
+            _giftUploadError.value = msg
+            _events.tryEmit(msg)
             return@launch
           }
       }
@@ -1298,10 +1324,13 @@ class SwarRoomViewModel(
           supabaseStorage.deleteMediaByPublicUrls(obsoleteUrls)
             .onFailure { err -> Log.w(TAG, "Replaced gift media delete warning", err) }
         }
+        _giftUploadError.value = null
         _events.tryEmit("गिफ्ट सफलतापूर्वक अपडेट हो गया! 🎁")
         onSuccess()
       }.onFailure { err ->
-        _events.tryEmit(err.message ?: "गिफ्ट अपडेट करने में त्रुटि")
+        val msg = err.message ?: "गिफ्ट अपडेट करने में त्रुटि"
+        _giftUploadError.value = msg
+        _events.tryEmit(msg)
       }
     }
   }

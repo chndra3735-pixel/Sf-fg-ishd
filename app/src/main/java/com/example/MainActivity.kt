@@ -378,6 +378,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val blockedUserIds by viewModel.blockedUserIds.collectAsStateWithLifecycle()
   val isAgoraConnected by viewModel.isAgoraConnected.collectAsStateWithLifecycle()
   val agoraStatusText by viewModel.agoraStatusText.collectAsStateWithLifecycle()
+  val giftUploadError by viewModel.giftUploadError.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
@@ -493,6 +494,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         },
         isAgoraConnected = isAgoraConnected,
         agoraStatusText = agoraStatusText,
+        giftUploadError = giftUploadError,
+        onClearGiftUploadError = { viewModel.clearGiftUploadError() },
       )
       SnackbarHost(
         hostState = snackbarHostState,

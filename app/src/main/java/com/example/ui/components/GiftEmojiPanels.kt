@@ -368,6 +368,8 @@ fun GiftPanelSheet(
   ) -> Unit,
   onDeleteCustomGift: (gift: GiftCatalogItem, onDone: () -> Unit) -> Unit,
   onDismiss: () -> Unit,
+  giftUploadError: String? = null,
+  onClearGiftUploadError: () -> Unit = {},
 ) {
   val categories = SwarCatalogDefaults.giftCategories
   var selectedCategoryIdx by remember { mutableIntStateOf(0) }
@@ -443,7 +445,10 @@ fun GiftPanelSheet(
         if (isAdminUser) {
           Spacer(modifier = Modifier.width(8.dp))
           IconButton(
-            onClick = { showAdminAddGiftDialog = true },
+            onClick = {
+              onClearGiftUploadError()
+              showAdminAddGiftDialog = true
+            },
             modifier = Modifier
               .size(48.dp)
               .clip(CircleShape)
@@ -694,8 +699,13 @@ fun GiftPanelSheet(
     AddGiftAdminDialog(
       defaultCategory = currentCategory,
       isUploading = isUploading,
-      onDismiss = { showAdminAddGiftDialog = false },
+      uploadError = giftUploadError,
+      onDismiss = {
+        onClearGiftUploadError()
+        showAdminAddGiftDialog = false
+      },
       onSubmit = { name, category, emoji, cost, thumbUri, videoUri ->
+        onClearGiftUploadError()
         onAddCustomGift(name, category, emoji, cost, thumbUri, videoUri) {
           showAdminAddGiftDialog = false
         }
@@ -708,7 +718,11 @@ fun GiftPanelSheet(
     EditGiftAdminDialog(
       existing = targetEditGift,
       isBusy = isUploading,
-      onDismiss = { editingGift = null },
+      uploadError = giftUploadError,
+      onDismiss = {
+        onClearGiftUploadError()
+        editingGift = null
+      },
       onUpdate = { name, category, emoji, cost, newThumbUri, newVideoUri, removeExistingThumb, removeExistingVideo ->
         onUpdateCustomGift(
           targetEditGift,
@@ -908,6 +922,7 @@ private fun AddEmojiAdminDialog(
 private fun AddGiftAdminDialog(
   defaultCategory: String,
   isUploading: Boolean,
+  uploadError: String? = null,
   onDismiss: () -> Unit,
   onSubmit: (
     name: String,
@@ -926,7 +941,7 @@ private fun AddGiftAdminDialog(
   var videoUri by remember { mutableStateOf<Uri?>(null) }
 
   val thumbPicker = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.OpenDocument(),
+    contract = ActivityResultContracts.PickVisualMedia(),
     onResult = { uri ->
       if (uri != null) thumbnailUri = uri
     },
@@ -948,6 +963,24 @@ private fun AddGiftAdminDialog(
           .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        if (!uploadError.isNullOrBlank()) {
+          Surface(
+            color = Color(0x33FF3B30),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .border(1.dp, Color(0xFFFF5252), RoundedCornerShape(10.dp)),
+          ) {
+            Text(
+              text = uploadError,
+              style = MaterialTheme.typography.bodySmall,
+              color = Color(0xFFFF8A80),
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.padding(10.dp),
+            )
+          }
+        }
+
         // 1. सबसे ऊपर: नाम
         OutlinedTextField(
           value = name,
@@ -981,7 +1014,7 @@ private fun AddGiftAdminDialog(
           OutlinedButton(
             onClick = {
               thumbPicker.launch(
-                arrayOf("image/*", "image/gif", "application/zip", "application/x-zip-compressed")
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
               )
             },
             modifier = Modifier
@@ -1273,6 +1306,7 @@ private fun EditEmojiAdminDialog(
 private fun EditGiftAdminDialog(
   existing: GiftCatalogItem,
   isBusy: Boolean,
+  uploadError: String? = null,
   onDismiss: () -> Unit,
   onUpdate: (
     name: String,
@@ -1304,7 +1338,7 @@ private fun EditGiftAdminDialog(
   val hasExistingVideo = existing.mediaType == "video" && existing.mediaUrl.isNotBlank()
 
   val thumbPicker = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.OpenDocument(),
+    contract = ActivityResultContracts.PickVisualMedia(),
     onResult = { uri ->
       if (uri != null) {
         newThumbUri = uri
@@ -1332,6 +1366,23 @@ private fun EditGiftAdminDialog(
           .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        if (!uploadError.isNullOrBlank()) {
+          Surface(
+            color = Color(0x33FF3B30),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .border(1.dp, Color(0xFFFF5252), RoundedCornerShape(10.dp)),
+          ) {
+            Text(
+              text = uploadError,
+              style = MaterialTheme.typography.bodySmall,
+              color = Color(0xFFFF8A80),
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.padding(10.dp),
+            )
+          }
+        }
         OutlinedTextField(
           value = name,
           onValueChange = { name = it.take(40) },
@@ -1372,7 +1423,7 @@ private fun EditGiftAdminDialog(
         OutlinedButton(
           onClick = {
             thumbPicker.launch(
-              arrayOf("image/*", "image/gif", "application/zip", "application/x-zip-compressed")
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
             )
           },
           modifier = Modifier.fillMaxWidth(),

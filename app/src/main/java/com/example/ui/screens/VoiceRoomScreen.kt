@@ -220,6 +220,8 @@ fun VoiceRoomScreen(
   },
   isAgoraConnected: Boolean = false,
   agoraStatusText: String = "",
+  giftUploadError: String? = null,
+  onClearGiftUploadError: () -> Unit = {},
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -1364,6 +1366,8 @@ fun VoiceRoomScreen(
       onUpdateCustomGift = onUpdateCustomGift,
       onDeleteCustomGift = onDeleteCustomGift,
       onDismiss = { showGiftPanel = false },
+      giftUploadError = giftUploadError,
+      onClearGiftUploadError = onClearGiftUploadError,
     )
   }
 

@@ -77,6 +77,7 @@ class SupabaseStorageRepository(
           .post(requestBody)
           .addHeader("apikey", supabaseAnonKey)
           .addHeader("Content-Type", prepared.mimeType)
+          .addHeader("x-upsert", "true")
 
         // Legacy anon/service JWT keys (eyJ...) require Authorization: Bearer, while newer
         // sb_publishable_* keys must only be sent in the apikey header.
