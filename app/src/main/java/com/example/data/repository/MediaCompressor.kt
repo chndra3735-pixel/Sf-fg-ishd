@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.media.MediaMetadataRetriever
@@ -89,142 +90,179 @@ object MediaCompressor {
     val mime = resolver.getType(uri).orEmpty().lowercase(Locale.ROOT)
     val displayName = queryUriDisplayName(context, uri).lowercase(Locale.ROOT)
 
-    val header = ByteArray(12)
-    val headerLen = resolver.openInputStream(uri)?.use { stream ->
-      readFullyUpTo(stream, header)
-    } ?: throw IllegalStateException("चयनित फ़ाइल पढ़ी नहीं जा सकी।")
-
-    if (isGifHeader(header, headerLen) || mime == "image/gif" || displayName.endsWith(".gif")) {
-      val cacheDir = File(context.cacheDir, "swar_upload_tmp").apply { mkdirs() }
-      val outFile = File(cacheDir, "gif_${UUID.randomUUID().toString().take(8)}.gif")
-      val copied = copyUriToTempFile(context, uri, outFile)
-        ?: throw IllegalStateException("GIF फ़ाइल पढ़ी नहीं जा सकी।")
-      val finalSize = copied.length()
-      if (finalSize <= 0L) {
-        copied.delete()
-        throw IllegalStateException("चयनित GIF फ़ाइल खाली है।")
+    val cacheDir = File(context.cacheDir, "swar_upload_tmp").apply { mkdirs() }
+    val sourceTempFile = File(cacheDir, "src_${UUID.randomUUID().toString().take(8)}.tmp")
+    val copiedSource = copyUriToTempFile(context, uri, sourceTempFile)
+      ?: run {
+        sourceTempFile.delete()
+        throw IllegalStateException("चयनित फ़ोटो पढ़ी नहीं जा सकी।")
       }
-      if (finalSize > MAX_GIF_UPLOAD_BYTES) {
-        copied.delete()
-        throw IllegalStateException("GIF फ़ाइल बहुत बड़ी है (${formatMb(finalSize)})। कृपया 10 MB से छोटी GIF चुनें।")
-      }
-      Log.i(TAG, "GIF preserved ($folder): ${finalSize / 1024}KB")
-      return PreparedMedia(
-        file = copied,
-        mimeType = "image/gif",
-        extension = "gif",
-        originalBytes = if (originalBytes > 0L) originalBytes else finalSize,
-        finalBytes = finalSize,
-      )
+
+    val copiedBytes = copiedSource.length()
+    if (copiedBytes <= 0L) {
+      copiedSource.delete()
+      throw IllegalStateException("चयनित फ़ाइल खाली है या पढ़ी नहीं जा सकी।")
     }
 
-    if (isZipHeader(header, headerLen) || mime.contains("zip") || displayName.endsWith(".zip")) {
-      val extracted = extractZipEntriesSync(context, uri, maxCount = 1)
-      if (extracted.isEmpty()) {
-        throw IllegalStateException("इस ZIP फ़ाइल में कोई मान्य GIF या इमेज (.gif, .png, .jpg, .webp) नहीं मिली।")
-      }
-      val first = extracted.first()
-      return try {
-        prepareImage(context, first.tempUri, folder)
-      } finally {
-        runCatching { first.tempFile.delete() }
-      }
-    }
-
-    val maxDimension = when (folder) {
-      "emojis" -> 512
-      "dp", "gifts" -> 720
-      else -> 1280
-    }
-    val targetBytes = when (folder) {
-      "emojis" -> 160 * 1024L
-      "dp", "gifts" -> 260 * 1024L
-      else -> 520 * 1024L
-    }
-
-    val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { stream ->
-      BitmapFactory.decodeStream(stream, null, boundsOpts)
-    } ?: throw IllegalStateException("चयनित फ़ोटो पढ़ी नहीं जा सकी।")
-
-    if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) {
-      throw IllegalStateException("अमान्य इमेज फ़ाइल चुनी गई है। कृपया GIF, PNG, JPG या ZIP चुनें।")
-    }
-
-    val orientation = runCatching {
-      resolver.openInputStream(uri)?.use { stream ->
-        ExifInterface(stream).getAttributeInt(
-          ExifInterface.TAG_ORIENTATION,
-          ExifInterface.ORIENTATION_NORMAL,
-        )
-      } ?: ExifInterface.ORIENTATION_NORMAL
-    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
-
-    val sampleSize = computeInSampleSize(boundsOpts.outWidth, boundsOpts.outHeight, maxDimension)
-    val decodeOpts = BitmapFactory.Options().apply {
-      inSampleSize = sampleSize
-      inPreferredConfig = Bitmap.Config.ARGB_8888
-    }
-
-    var decoded = resolver.openInputStream(uri)?.use { stream ->
-      BitmapFactory.decodeStream(stream, null, decodeOpts)
-    } ?: throw IllegalStateException("फ़ोटो डिकोड नहीं हो सकी।")
-
+    var keepSourceAsResult = false
     try {
-      val oriented = applyExifTransform(decoded, orientation)
-      if (oriented !== decoded) {
-        decoded.recycle()
-        decoded = oriented
-      }
+      val header = ByteArray(12)
+      val headerLen = copiedSource.inputStream().use { readFullyUpTo(it, header) }
 
-      val scaled = scaleDownIfNeeded(decoded, maxDimension)
-      if (scaled !== decoded) {
-        decoded.recycle()
-        decoded = scaled
-      }
-
-      val keepTransparency = decoded.hasAlpha() && (folder == "emojis" || folder == "gifts")
-      val format = if (keepTransparency) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-          Bitmap.CompressFormat.WEBP_LOSSY
+      if (isGifHeader(header, headerLen) || mime == "image/gif" || displayName.endsWith(".gif")) {
+        if (copiedBytes > MAX_GIF_UPLOAD_BYTES) {
+          throw IllegalStateException("GIF फ़ाइल बहुत बड़ी है (${formatMb(copiedBytes)})। कृपया 10 MB से छोटी GIF चुनें।")
+        }
+        val gifFile = File(cacheDir, "gif_${UUID.randomUUID().toString().take(8)}.gif")
+        if (!copiedSource.renameTo(gifFile)) {
+          copiedSource.copyTo(gifFile, overwrite = true)
         } else {
-          @Suppress("DEPRECATION")
-          Bitmap.CompressFormat.WEBP
+          keepSourceAsResult = true
         }
-      } else {
-        Bitmap.CompressFormat.JPEG
-      }
-      val ext = if (keepTransparency) "webp" else "jpg"
-      val mimeType = if (keepTransparency) "image/webp" else "image/jpeg"
-
-      val cacheDir = File(context.cacheDir, "swar_upload_tmp").apply { mkdirs() }
-      val outFile = File(cacheDir, "img_${UUID.randomUUID().toString().take(8)}.$ext")
-
-      var quality = 84
-      var bestBytes: ByteArray
-      while (true) {
-        val baos = ByteArrayOutputStream()
-        decoded.compress(format, quality, baos)
-        bestBytes = baos.toByteArray()
-        if (bestBytes.size <= targetBytes || quality <= 48) {
-          break
-        }
-        quality -= 10
+        val finalSize = gifFile.length()
+        Log.i(TAG, "GIF preserved ($folder): ${finalSize / 1024}KB")
+        return PreparedMedia(
+          file = gifFile,
+          mimeType = "image/gif",
+          extension = "gif",
+          originalBytes = if (originalBytes > 0L) originalBytes else finalSize,
+          finalBytes = finalSize,
+        )
       }
 
-      outFile.writeBytes(bestBytes)
-      val finalSize = outFile.length()
-      Log.i(TAG, "Image compressed ($folder): ${originalBytes / 1024}KB -> ${finalSize / 1024}KB (q=$quality)")
-      return PreparedMedia(
-        file = outFile,
-        mimeType = mimeType,
-        extension = ext,
-        originalBytes = originalBytes,
-        finalBytes = finalSize,
-      )
+      if (isZipHeader(header, headerLen) || mime.contains("zip") || displayName.endsWith(".zip")) {
+        val extracted = extractZipEntriesSync(context, Uri.fromFile(copiedSource), maxCount = 1)
+        if (extracted.isEmpty()) {
+          throw IllegalStateException("इस ZIP फ़ाइल में कोई मान्य GIF या इमेज (.gif, .png, .jpg, .webp) नहीं मिली।")
+        }
+        val first = extracted.first()
+        return try {
+          prepareImage(context, first.tempUri, folder)
+        } finally {
+          runCatching { first.tempFile.delete() }
+        }
+      }
+
+      val maxDimension = when (folder) {
+        "emojis" -> 512
+        "dp", "gifts" -> 720
+        else -> 1280
+      }
+      val targetBytes = when (folder) {
+        "emojis" -> 160 * 1024L
+        "dp", "gifts" -> 260 * 1024L
+        else -> 520 * 1024L
+      }
+
+      // Note: BitmapFactory.decodeFile with inJustDecodeBounds=true intentionally returns null
+      // and populates boundsOpts.outWidth / boundsOpts.outHeight instead.
+      val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      BitmapFactory.decodeFile(copiedSource.absolutePath, boundsOpts)
+
+      var decoded: Bitmap? = null
+      var exifAlreadyApplied = false
+
+      if (boundsOpts.outWidth > 0 && boundsOpts.outHeight > 0) {
+        val sampleSize = computeInSampleSize(boundsOpts.outWidth, boundsOpts.outHeight, maxDimension)
+        val decodeOpts = BitmapFactory.Options().apply {
+          inSampleSize = sampleSize
+          inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        decoded = BitmapFactory.decodeFile(copiedSource.absolutePath, decodeOpts)
+      }
+
+      if (decoded == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        decoded = runCatching {
+          ImageDecoder.decodeBitmap(ImageDecoder.createSource(copiedSource)) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val w = info.size.width
+            val h = info.size.height
+            val longest = max(w, h)
+            if (longest > maxDimension && longest > 0) {
+              val ratio = maxDimension.toFloat() / longest.toFloat()
+              decoder.setTargetSize(max(1, (w * ratio).toInt()), max(1, (h * ratio).toInt()))
+            }
+          }
+        }.onFailure { err ->
+          Log.w(TAG, "ImageDecoder fallback failed: ${err.message}", err)
+        }.getOrNull()
+        if (decoded != null) {
+          exifAlreadyApplied = true
+        }
+      }
+
+      var currentBitmap = decoded
+        ?: throw IllegalStateException("अमान्य इमेज फ़ाइल चुनी गई है। कृपया GIF, PNG, JPG या WEBP चुनें।")
+
+      try {
+        if (!exifAlreadyApplied) {
+          val orientation = runCatching {
+            ExifInterface(copiedSource.absolutePath).getAttributeInt(
+              ExifInterface.TAG_ORIENTATION,
+              ExifInterface.ORIENTATION_NORMAL,
+            )
+          }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+
+          val oriented = applyExifTransform(currentBitmap, orientation)
+          if (oriented !== currentBitmap) {
+            currentBitmap.recycle()
+            currentBitmap = oriented
+          }
+        }
+
+        val scaled = scaleDownIfNeeded(currentBitmap, maxDimension)
+        if (scaled !== currentBitmap) {
+          currentBitmap.recycle()
+          currentBitmap = scaled
+        }
+
+        val keepTransparency = currentBitmap.hasAlpha() && (folder == "emojis" || folder == "gifts")
+        val format = if (keepTransparency) {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+          } else {
+            @Suppress("DEPRECATION")
+            Bitmap.CompressFormat.WEBP
+          }
+        } else {
+          Bitmap.CompressFormat.JPEG
+        }
+        val ext = if (keepTransparency) "webp" else "jpg"
+        val mimeType = if (keepTransparency) "image/webp" else "image/jpeg"
+
+        val outFile = File(cacheDir, "img_${UUID.randomUUID().toString().take(8)}.$ext")
+
+        var quality = 84
+        var bestBytes: ByteArray
+        while (true) {
+          val baos = ByteArrayOutputStream()
+          currentBitmap.compress(format, quality, baos)
+          bestBytes = baos.toByteArray()
+          if (bestBytes.size <= targetBytes || quality <= 48) {
+            break
+          }
+          quality -= 10
+        }
+
+        outFile.writeBytes(bestBytes)
+        val finalSize = outFile.length()
+        val effectiveOriginal = if (originalBytes > 0L) originalBytes else copiedBytes
+        Log.i(TAG, "Image compressed ($folder): ${effectiveOriginal / 1024}KB -> ${finalSize / 1024}KB (q=$quality)")
+        return PreparedMedia(
+          file = outFile,
+          mimeType = mimeType,
+          extension = ext,
+          originalBytes = effectiveOriginal,
+          finalBytes = finalSize,
+        )
+      } finally {
+        if (!currentBitmap.isRecycled) {
+          currentBitmap.recycle()
+        }
+      }
     } finally {
-      if (!decoded.isRecycled) {
-        decoded.recycle()
+      if (!keepSourceAsResult) {
+        runCatching { copiedSource.delete() }
       }
     }
   }
