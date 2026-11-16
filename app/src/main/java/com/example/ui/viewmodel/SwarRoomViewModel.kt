@@ -17,6 +17,7 @@ import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
+import com.example.data.repository.MediaCompressor
 import com.example.data.repository.SupabaseStorageRepository
 import com.example.data.repository.SwarRoomRepository
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -118,17 +119,43 @@ class SwarRoomViewModel(
       .catch { error -> emit(UiState.Error(unwrapFirestoreMessage(error, "संदेश लोड नहीं हो सके"))) }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), UiState.Loading)
 
+  private val catalogHiddenPrefs by lazy {
+    appContext?.applicationContext?.getSharedPreferences("swarroom_catalog_hidden_$currentUserId", Context.MODE_PRIVATE)
+  }
+
+  private val _hiddenEmojiIds = MutableStateFlow(
+    appContext?.applicationContext
+      ?.getSharedPreferences("swarroom_catalog_hidden_$currentUserId", Context.MODE_PRIVATE)
+      ?.getStringSet(KEY_HIDDEN_EMOJIS, emptySet())
+      ?.toSet()
+      ?: emptySet()
+  )
+
+  private val _hiddenGiftIds = MutableStateFlow(
+    appContext?.applicationContext
+      ?.getSharedPreferences("swarroom_catalog_hidden_$currentUserId", Context.MODE_PRIVATE)
+      ?.getStringSet(KEY_HIDDEN_GIFTS, emptySet())
+      ?.toSet()
+      ?: emptySet()
+  )
+
   // --- Emoji & Gift Catalogs (built-in 4 categories + admin-uploaded Firestore items) ---
   val emojiCatalog: StateFlow<List<EmojiCatalogItem>> =
-    repository.observeEmojiCatalog()
-      .map { remote -> remote.reversed() + SwarCatalogDefaults.builtInEmojis }
-      .catch { emit(SwarCatalogDefaults.builtInEmojis) }
+    combine(
+      repository.observeEmojiCatalog().catch { emit(emptyList()) },
+      _hiddenEmojiIds,
+    ) { remote, hiddenIds ->
+      (remote.reversed() + SwarCatalogDefaults.builtInEmojis).filterNot { it.id in hiddenIds }
+    }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SwarCatalogDefaults.builtInEmojis)
 
   val giftCatalog: StateFlow<List<GiftCatalogItem>> =
-    repository.observeGiftCatalog()
-      .map { remote -> remote.reversed() + SwarCatalogDefaults.builtInGifts }
-      .catch { emit(SwarCatalogDefaults.builtInGifts) }
+    combine(
+      repository.observeGiftCatalog().catch { emit(emptyList()) },
+      _hiddenGiftIds,
+    ) { remote, hiddenIds ->
+      (remote.reversed() + SwarCatalogDefaults.builtInGifts).filterNot { it.id in hiddenIds }
+    }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SwarCatalogDefaults.builtInGifts)
 
   // --- Global Gift Marquee & Full-Screen Gift Playback ---
@@ -858,6 +885,67 @@ class SwarRoomViewModel(
       return
     }
     viewModelScope.launch {
+      val context = appContext
+      if (imageUri != null && context != null && runCatching { MediaCompressor.isZipArchive(context, imageUri) }.getOrDefault(false)) {
+        _isUploadingMedia.value = true
+        try {
+          val entries = MediaCompressor.extractZipEntries(context, imageUri, maxCount = 20)
+          if (entries.isEmpty()) {
+            _events.tryEmit("इस ZIP फ़ाइल में कोई मान्य GIF या इमेज (.gif, .png, .jpg, .webp) नहीं मिली।")
+            return@launch
+          }
+          var addedCount = 0
+          var lastError: String? = null
+          try {
+            entries.forEachIndexed { index, entry ->
+              val upload = supabaseStorage.uploadMediaFromUri(
+                uri = entry.tempUri,
+                folder = "emojis",
+                uid = currentUserId,
+                isVideo = false,
+              )
+              upload.onSuccess { url ->
+                val resolvedLabel = if (entries.size == 1 && label.isNotBlank()) {
+                  label
+                } else {
+                  entry.label.ifBlank { "${label.ifBlank { "स्टिकर" }} ${index + 1}" }
+                }
+                repository.addEmojiToCatalog(
+                  label = resolvedLabel,
+                  category = category,
+                  symbol = symbol,
+                  imageUrl = url,
+                ).onSuccess {
+                  addedCount++
+                }.onFailure { err ->
+                  lastError = err.message
+                }
+              }.onFailure { err ->
+                lastError = err.message
+              }
+            }
+          } finally {
+            entries.forEach { runCatching { it.tempFile.delete() } }
+          }
+          if (addedCount > 0) {
+            _events.tryEmit(
+              if (addedCount == 1) "नया इमोजी सभी यूज़र्स के लिए जोड़ दिया गया! 🎉"
+              else "$addedCount इमोजी ZIP से सफलतापूर्वक जोड़ दिए गए! 🎉"
+            )
+            onSuccess()
+          } else {
+            _events.tryEmit(lastError ?: "ZIP इमोजी अपलोड विफल")
+          }
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          _events.tryEmit(e.message ?: "ZIP फ़ाइल प्रोसेस करने में त्रुटि")
+        } finally {
+          _isUploadingMedia.value = false
+        }
+        return@launch
+      }
+
       var uploadedImageUrl = ""
       if (imageUri != null) {
         _isUploadingMedia.value = true
@@ -1024,35 +1112,40 @@ class SwarRoomViewModel(
       _events.tryEmit("केवल एडमिन ही इमोजी डिलीट कर सकते हैं।")
       return
     }
-    if (item.id.isBlank() || item.id.startsWith("def_")) {
-      _events.tryEmit("डिफ़ॉल्ट इमोजी डिलीट नहीं किया जा सकता।")
+    if (item.id.isBlank()) {
+      _events.tryEmit("अमान्य इमोजी चयनित है।")
+      return
+    }
+    if (item.id.startsWith("def_")) {
+      _hiddenEmojiIds.update { prev ->
+        val updated = prev + item.id
+        catalogHiddenPrefs?.edit()?.putStringSet(KEY_HIDDEN_EMOJIS, updated)?.apply()
+        updated
+      }
+      _events.tryEmit("इमोजी '${item.label}' पैनल से हटा दिया गया!")
+      onSuccess()
       return
     }
     viewModelScope.launch {
       _isUploadingMedia.value = true
       repository.deleteEmojiFromCatalog(item.id)
         .onSuccess {
+          _hiddenEmojiIds.update { it + item.id }
+          _isUploadingMedia.value = false
+          _events.tryEmit("इमोजी पैनल से पूरी तरह डिलीट हो गया!")
+          onSuccess()
           val oldImageUrl = item.imageUrl
           if (oldImageUrl.isNotBlank()) {
-            supabaseStorage.deleteMediaByPublicUrl(oldImageUrl)
-              .onSuccess { deleted ->
-                _events.tryEmit(
-                  if (deleted) "इमोजी ऐप और Supabase Storage दोनों से डिलीट हो गया!"
-                  else "इमोजी ऐप से डिलीट हो गया!"
-                )
-              }
-              .onFailure { err ->
-                _events.tryEmit("ऐप से इमोजी हटाया गया, पर Supabase फ़ाइल डिलीट नहीं हुई: ${err.message}")
-              }
-          } else {
-            _events.tryEmit("इमोजी पूरी तरह डिलीट हो गया!")
+            viewModelScope.launch {
+              supabaseStorage.deleteMediaByPublicUrl(oldImageUrl)
+                .onFailure { err -> Log.w(TAG, "Emoji storage delete warning", err) }
+            }
           }
-          onSuccess()
         }
         .onFailure { err ->
+          _isUploadingMedia.value = false
           _events.tryEmit(err.message ?: "इमोजी डिलीट करने में त्रुटि")
         }
-      _isUploadingMedia.value = false
     }
   }
 
@@ -1161,35 +1254,40 @@ class SwarRoomViewModel(
       _events.tryEmit("केवल एडमिन ही गिफ्ट डिलीट कर सकते हैं।")
       return
     }
-    if (gift.id.isBlank() || gift.id.startsWith("def_")) {
-      _events.tryEmit("डिफ़ॉल्ट गिफ्ट डिलीट नहीं किया जा सकता।")
+    if (gift.id.isBlank()) {
+      _events.tryEmit("अमान्य गिफ्ट चयनित है।")
+      return
+    }
+    if (gift.id.startsWith("def_")) {
+      _hiddenGiftIds.update { prev ->
+        val updated = prev + gift.id
+        catalogHiddenPrefs?.edit()?.putStringSet(KEY_HIDDEN_GIFTS, updated)?.apply()
+        updated
+      }
+      _events.tryEmit("गिफ्ट '${gift.name}' गिफ्ट पैनल से हटा दिया गया!")
+      onSuccess()
       return
     }
     viewModelScope.launch {
       _isUploadingMedia.value = true
       repository.deleteGiftFromCatalog(gift.id)
         .onSuccess {
+          _hiddenGiftIds.update { it + gift.id }
+          _isUploadingMedia.value = false
+          _events.tryEmit("गिफ्ट '${gift.name}' गिफ्ट पैनल से पूरी तरह डिलीट हो गया!")
+          onSuccess()
           val mediaUrls = listOf(gift.thumbnailUrl, gift.mediaUrl).filter { it.isNotBlank() }.distinct()
           if (mediaUrls.isNotEmpty()) {
-            supabaseStorage.deleteMediaByPublicUrls(mediaUrls)
-              .onSuccess { deletedCount ->
-                _events.tryEmit(
-                  if (deletedCount > 0) "गिफ्ट ऐप और Supabase Storage दोनों से पूरी तरह डिलीट हो गया!"
-                  else "गिफ्ट ऐप से पूरी तरह डिलीट हो गया!"
-                )
-              }
-              .onFailure { err ->
-                _events.tryEmit("ऐप से गिफ्ट हटाया गया, पर Supabase फ़ाइल डिलीट नहीं हुई: ${err.message}")
-              }
-          } else {
-            _events.tryEmit("गिफ्ट पूरी तरह डिलीट हो गया!")
+            viewModelScope.launch {
+              supabaseStorage.deleteMediaByPublicUrls(mediaUrls)
+                .onFailure { err -> Log.w(TAG, "Gift storage delete warning", err) }
+            }
           }
-          onSuccess()
         }
         .onFailure { err ->
+          _isUploadingMedia.value = false
           _events.tryEmit(err.message ?: "गिफ्ट डिलीट करने में त्रुटि")
         }
-      _isUploadingMedia.value = false
     }
   }
 
@@ -1260,5 +1358,7 @@ class SwarRoomViewModel(
     const val STOP_TIMEOUT_MS = 5000L
     const val ADMIN_EMAIL = "chndra3735@gmail.com"
     const val KEY_BLOCKED_UIDS = "blocked_uids"
+    const val KEY_HIDDEN_EMOJIS = "hidden_emojis"
+    const val KEY_HIDDEN_GIFTS = "hidden_gifts"
   }
 }

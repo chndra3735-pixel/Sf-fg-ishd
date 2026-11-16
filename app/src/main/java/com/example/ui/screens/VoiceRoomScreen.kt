@@ -2039,23 +2039,23 @@ private fun SeatEmojiReactionOverlay(
   reaction: ActiveSeatEmoji,
   dpSize: Dp,
 ) {
-  val scaleAnim = remember(reaction.messageId) { Animatable(0.35f) }
+  val scaleAnim = remember(reaction.messageId) { Animatable(0.72f) }
   LaunchedEffect(reaction.messageId) {
     scaleAnim.animateTo(
-      targetValue = 1.18f,
+      targetValue = 1.08f,
       animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
     )
     scaleAnim.animateTo(
       targetValue = 1.0f,
-      animationSpec = tween(220),
+      animationSpec = tween(180),
     )
   }
   Box(
     modifier = Modifier
       .size(dpSize)
-      .clip(CircleShape)
-      .background(Color(0x88120824))
       .scale(scaleAnim.value)
+      .clip(CircleShape)
+      .background(if (reaction.imageUrl.isNotBlank()) Color.Transparent else Color(0x99120824))
       .testTag("seat_emoji_overlay"),
     contentAlignment = Alignment.Center,
   ) {
@@ -2064,14 +2064,14 @@ private fun SeatEmojiReactionOverlay(
         model = reaction.imageUrl,
         contentDescription = "इमोजी रिएक्शन",
         modifier = Modifier
-          .size(dpSize * 0.78f)
+          .fillMaxSize()
           .clip(CircleShape),
-        contentScale = ContentScale.Fit,
+        contentScale = ContentScale.Crop,
       )
     } else {
       Text(
         text = reaction.symbol,
-        fontSize = if (dpSize >= 56.dp) 34.sp else 26.sp,
+        fontSize = if (dpSize >= 56.dp) 46.sp else 36.sp,
       )
     }
   }

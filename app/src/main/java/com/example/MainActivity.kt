@@ -3,6 +3,7 @@ package com.example
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -81,6 +82,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.Coil
 import coil.ImageLoader
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
 import com.example.audio.VoiceAudioEngine
 import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.SupabaseStorageRepository
@@ -135,6 +138,13 @@ class MainActivity : ComponentActivity() {
     Coil.setImageLoader {
       ImageLoader.Builder(applicationContext)
         .okHttpClient { SupabaseNetworkClient.sharedOkHttpClient }
+        .components {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            add(ImageDecoderDecoder.Factory())
+          } else {
+            add(GifDecoder.Factory())
+          }
+        }
         .build()
     }
     enableEdgeToEdge()

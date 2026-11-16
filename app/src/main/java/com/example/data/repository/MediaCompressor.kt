@@ -26,9 +26,13 @@ import androidx.media3.transformer.VideoEncoderSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
+import java.util.Locale
 import java.util.UUID
+import java.util.zip.ZipInputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.max
@@ -42,12 +46,22 @@ object MediaCompressor {
   private const val TAG = "MediaCompressor"
   private const val MAX_FINAL_UPLOAD_BYTES = 45L * 1024L * 1024L
 
+  private const val MAX_GIF_UPLOAD_BYTES = 10L * 1024L * 1024L
+  private const val MAX_ZIP_ARCHIVE_BYTES = 25L * 1024L * 1024L
+  private const val MAX_ZIP_ENTRY_BYTES = 10L * 1024L * 1024L
+
   data class PreparedMedia(
     val file: File,
     val mimeType: String,
     val extension: String,
     val originalBytes: Long,
     val finalBytes: Long,
+  )
+
+  data class ExtractedZipEntry(
+    val label: String,
+    val tempUri: Uri,
+    val tempFile: File,
   )
 
   suspend fun prepareForUpload(
@@ -72,6 +86,51 @@ object MediaCompressor {
   ): PreparedMedia {
     val resolver = context.contentResolver
     val originalBytes = queryUriSizeBytes(context, uri)
+    val mime = resolver.getType(uri).orEmpty().lowercase(Locale.ROOT)
+    val displayName = queryUriDisplayName(context, uri).lowercase(Locale.ROOT)
+
+    val header = ByteArray(12)
+    val headerLen = resolver.openInputStream(uri)?.use { stream ->
+      readFullyUpTo(stream, header)
+    } ?: throw IllegalStateException("चयनित फ़ाइल पढ़ी नहीं जा सकी।")
+
+    if (isGifHeader(header, headerLen) || mime == "image/gif" || displayName.endsWith(".gif")) {
+      val cacheDir = File(context.cacheDir, "swar_upload_tmp").apply { mkdirs() }
+      val outFile = File(cacheDir, "gif_${UUID.randomUUID().toString().take(8)}.gif")
+      val copied = copyUriToTempFile(context, uri, outFile)
+        ?: throw IllegalStateException("GIF फ़ाइल पढ़ी नहीं जा सकी।")
+      val finalSize = copied.length()
+      if (finalSize <= 0L) {
+        copied.delete()
+        throw IllegalStateException("चयनित GIF फ़ाइल खाली है।")
+      }
+      if (finalSize > MAX_GIF_UPLOAD_BYTES) {
+        copied.delete()
+        throw IllegalStateException("GIF फ़ाइल बहुत बड़ी है (${formatMb(finalSize)})। कृपया 10 MB से छोटी GIF चुनें।")
+      }
+      Log.i(TAG, "GIF preserved ($folder): ${finalSize / 1024}KB")
+      return PreparedMedia(
+        file = copied,
+        mimeType = "image/gif",
+        extension = "gif",
+        originalBytes = if (originalBytes > 0L) originalBytes else finalSize,
+        finalBytes = finalSize,
+      )
+    }
+
+    if (isZipHeader(header, headerLen) || mime.contains("zip") || displayName.endsWith(".zip")) {
+      val extracted = extractZipEntriesSync(context, uri, maxCount = 1)
+      if (extracted.isEmpty()) {
+        throw IllegalStateException("इस ZIP फ़ाइल में कोई मान्य GIF या इमेज (.gif, .png, .jpg, .webp) नहीं मिली।")
+      }
+      val first = extracted.first()
+      return try {
+        prepareImage(context, first.tempUri, folder)
+      } finally {
+        runCatching { first.tempFile.delete() }
+      }
+    }
+
     val maxDimension = when (folder) {
       "emojis" -> 512
       "dp", "gifts" -> 720
@@ -89,7 +148,7 @@ object MediaCompressor {
     } ?: throw IllegalStateException("चयनित फ़ोटो पढ़ी नहीं जा सकी।")
 
     if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) {
-      throw IllegalStateException("अमान्य इमेज फ़ाइल चुनी गई है।")
+      throw IllegalStateException("अमान्य इमेज फ़ाइल चुनी गई है। कृपया GIF, PNG, JPG या ZIP चुनें।")
     }
 
     val orientation = runCatching {
@@ -168,6 +227,147 @@ object MediaCompressor {
         decoded.recycle()
       }
     }
+  }
+
+  suspend fun isZipArchive(context: Context, uri: Uri): Boolean = withContext(Dispatchers.IO) {
+    val mime = context.contentResolver.getType(uri).orEmpty().lowercase(Locale.ROOT)
+    val name = queryUriDisplayName(context, uri).lowercase(Locale.ROOT)
+    if (mime.contains("zip") || name.endsWith(".zip")) return@withContext true
+    val header = ByteArray(4)
+    val len = runCatching {
+      context.contentResolver.openInputStream(uri)?.use { readFullyUpTo(it, header) } ?: 0
+    }.getOrDefault(0)
+    isZipHeader(header, len)
+  }
+
+  suspend fun extractZipEntries(
+    context: Context,
+    uri: Uri,
+    maxCount: Int = 20,
+  ): List<ExtractedZipEntry> = withContext(Dispatchers.IO) {
+    extractZipEntriesSync(context, uri, maxCount)
+  }
+
+  private fun extractZipEntriesSync(
+    context: Context,
+    uri: Uri,
+    maxCount: Int = 20,
+  ): List<ExtractedZipEntry> {
+    val size = queryUriSizeBytes(context, uri)
+    if (size > MAX_ZIP_ARCHIVE_BYTES) {
+      throw IllegalStateException("ZIP फ़ाइल बहुत बड़ी है (${formatMb(size)})। कृपया 25 MB से छोटी ZIP चुनें।")
+    }
+    val cacheDir = File(context.cacheDir, "swar_zip_tmp").apply { mkdirs() }
+    val gifResults = mutableListOf<ExtractedZipEntry>()
+    val otherResults = mutableListOf<ExtractedZipEntry>()
+
+    context.contentResolver.openInputStream(uri)?.use { raw ->
+      ZipInputStream(BufferedInputStream(raw)).use { zis ->
+        var entry = zis.nextEntry
+        var totalCollected = 0
+        while (entry != null && totalCollected < maxCount * 2) {
+          val rawName = entry.name.orEmpty()
+          val baseName = rawName.substringAfterLast('/').substringAfterLast('\\')
+          val lower = baseName.lowercase(Locale.ROOT)
+          val isIgnored = entry.isDirectory ||
+            rawName.contains("__MACOSX", ignoreCase = true) ||
+            baseName.startsWith(".")
+          val ext = when {
+            lower.endsWith(".gif") -> "gif"
+            lower.endsWith(".webp") -> "webp"
+            lower.endsWith(".png") -> "png"
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "jpg"
+            else -> ""
+          }
+          if (!isIgnored && ext.isNotEmpty()) {
+            val bytes = readEntryBounded(zis, MAX_ZIP_ENTRY_BYTES)
+            if (bytes != null && bytes.isNotEmpty()) {
+              val outFile = File(cacheDir, "zip_${UUID.randomUUID().toString().take(8)}.$ext")
+              outFile.writeBytes(bytes)
+              val cleanLabel = baseName.substringBeforeLast('.')
+                .replace('_', ' ')
+                .replace('-', ' ')
+                .trim()
+                .take(30)
+                .ifBlank { "स्टिकर ${totalCollected + 1}" }
+              val item = ExtractedZipEntry(
+                label = cleanLabel,
+                tempUri = Uri.fromFile(outFile),
+                tempFile = outFile,
+              )
+              if (ext == "gif") gifResults += item else otherResults += item
+              totalCollected++
+            }
+          }
+          zis.closeEntry()
+          entry = zis.nextEntry
+        }
+      }
+    } ?: throw IllegalStateException("ZIP फ़ाइल खोली नहीं जा सकी।")
+
+    val combined = (gifResults + otherResults)
+    val keep = combined.take(maxCount)
+    combined.drop(maxCount).forEach { runCatching { it.tempFile.delete() } }
+    return keep
+  }
+
+  fun queryUriDisplayName(context: Context, uri: Uri): String {
+    if (uri.scheme == "file") {
+      return uri.lastPathSegment.orEmpty()
+    }
+    runCatching {
+      context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+          val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+          if (idx >= 0 && !cursor.isNull(idx)) {
+            return cursor.getString(idx).orEmpty()
+          }
+        }
+      }
+    }
+    return uri.lastPathSegment.orEmpty()
+  }
+
+  private fun readFullyUpTo(input: InputStream, buf: ByteArray): Int {
+    var total = 0
+    while (total < buf.size) {
+      val read = input.read(buf, total, buf.size - total)
+      if (read <= 0) break
+      total += read
+    }
+    return total
+  }
+
+  private fun readEntryBounded(zis: ZipInputStream, maxBytes: Long): ByteArray? {
+    val out = ByteArrayOutputStream()
+    val buffer = ByteArray(8192)
+    var total = 0L
+    while (true) {
+      val count = zis.read(buffer)
+      if (count <= 0) break
+      total += count
+      if (total > maxBytes) return null
+      out.write(buffer, 0, count)
+    }
+    return out.toByteArray()
+  }
+
+  private fun isGifHeader(header: ByteArray, len: Int): Boolean {
+    if (len < 6) return false
+    return header[0] == 'G'.code.toByte() &&
+      header[1] == 'I'.code.toByte() &&
+      header[2] == 'F'.code.toByte() &&
+      header[3] == '8'.code.toByte() &&
+      (header[4] == '7'.code.toByte() || header[4] == '9'.code.toByte()) &&
+      header[5] == 'a'.code.toByte()
+  }
+
+  private fun isZipHeader(header: ByteArray, len: Int): Boolean {
+    if (len < 4) return false
+    return header[0] == 0x50.toByte() &&
+      header[1] == 0x4B.toByte() &&
+      (header[2] == 0x03.toByte() || header[2] == 0x05.toByte() || header[2] == 0x07.toByte()) &&
+      (header[3] == 0x04.toByte() || header[3] == 0x06.toByte() || header[3] == 0x08.toByte())
   }
 
   private suspend fun prepareVideo(
