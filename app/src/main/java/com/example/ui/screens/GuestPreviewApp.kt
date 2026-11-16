@@ -349,7 +349,6 @@ fun GuestPreviewSwarRoomApp(
               coinCost = totalCost,
               quantity = quantity.toLong(),
             )
-            latestMarqueeGift = evt
             activeFullScreenGift = evt
             msgSeq++
             val qtySuffix = if (quantity > 1) " x$quantity" else ""
@@ -370,7 +369,18 @@ fun GuestPreviewSwarRoomApp(
         },
         onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, onDone -> onDone() },
         onDeleteCustomGift = { _, onDone -> onDone() },
-        onDismissFullScreenGift = { activeFullScreenGift = null },
+        onDismissFullScreenGift = {
+          val finished = activeFullScreenGift
+          activeFullScreenGift = null
+          if (finished != null) {
+            latestMarqueeGift = finished
+          }
+        },
+        onClearMarqueeGift = { eventId ->
+          if (latestMarqueeGift?.id == eventId) {
+            latestMarqueeGift = null
+          }
+        },
         onClaimBonusCoins = { previewCoins += 500L },
         onUpdateRoomSettings = { newTitle, newTheme, newNotice ->
           previewRoom = activePreviewRoom.copy(

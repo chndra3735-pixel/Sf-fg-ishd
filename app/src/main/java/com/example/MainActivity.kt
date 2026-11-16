@@ -468,6 +468,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           viewModel.deleteCustomGift(gift, onDone)
         },
         onDismissFullScreenGift = { viewModel.dismissFullScreenGift() },
+        onClearMarqueeGift = { viewModel.clearMarqueeGift(it) },
         onClaimBonusCoins = { viewModel.claimDailyBonusCoins() },
         onUpdateRoomSettings = { title, theme, notice ->
           viewModel.updateRoomSettings(title, theme, notice)

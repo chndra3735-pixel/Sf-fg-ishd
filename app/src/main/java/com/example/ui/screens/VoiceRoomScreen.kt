@@ -196,6 +196,7 @@ fun VoiceRoomScreen(
   onUpdateCustomGift: (GiftCatalogItem, String, String, String, Long, Uri?, Uri?, Boolean, Boolean, () -> Unit) -> Unit,
   onDeleteCustomGift: (GiftCatalogItem, () -> Unit) -> Unit,
   onDismissFullScreenGift: () -> Unit,
+  onClearMarqueeGift: (String) -> Unit = {},
   onClaimBonusCoins: () -> Unit,
   onUpdateRoomSettings: (String, String, String) -> Unit,
   onStartDirectChat: (uid: String, name: String, avatar: String) -> Unit,
@@ -587,7 +588,10 @@ fun VoiceRoomScreen(
 
       // Cross-Room Right-to-Left Gift Announcement Strip
       if (latestMarqueeGift != null) {
-        CrossRoomGiftMarqueeStrip(event = latestMarqueeGift)
+        CrossRoomGiftMarqueeStrip(
+          event = latestMarqueeGift,
+          onFinished = { onClearMarqueeGift(latestMarqueeGift.id) },
+        )
       }
 
       // Top 2 Host / Co-Host Seats Centered Side-by-Side
@@ -1910,7 +1914,7 @@ private fun HostSeatBadge(
         if (speaking) {
           Box(
             modifier = Modifier
-              .size(72.dp)
+              .size(56.dp)
               .scale(pulse)
               .clip(CircleShape)
               .border(2.5.dp, SwarCyan, CircleShape)
@@ -1919,17 +1923,17 @@ private fun HostSeatBadge(
         UserAvatar(
           url = seat?.occupantAvatarUrl.orEmpty(),
           name = seat?.occupantName.orEmpty(),
-          size = 62.dp,
+          size = 48.dp,
           borderColor = if (speaking) SwarMint else SwarGold,
-          borderWidth = 2.dp,
+          borderWidth = 1.8.dp,
         )
         if (activeEmoji != null) {
-          SeatEmojiReactionOverlay(reaction = activeEmoji, dpSize = 62.dp)
+          SeatEmojiReactionOverlay(reaction = activeEmoji, dpSize = 48.dp)
         }
         Box(
           modifier = Modifier
             .align(Alignment.BottomEnd)
-            .size(22.dp)
+            .size(18.dp)
             .clip(CircleShape)
             .background(if (seat?.isMuted == true) SwarCoral else SwarCyan),
           contentAlignment = Alignment.Center,
@@ -1938,13 +1942,13 @@ private fun HostSeatBadge(
             imageVector = if (seat?.isMuted == true) Icons.Filled.MicOff else Icons.Filled.Mic,
             contentDescription = null,
             tint = Color.White,
-            modifier = Modifier.size(13.dp),
+            modifier = Modifier.size(11.dp),
           )
         }
       } else {
         Box(
           modifier = Modifier
-            .size(62.dp)
+            .size(48.dp)
             .clip(CircleShape)
             .background(Color(0x44FFFFFF))
             .border(1.5.dp, SwarGold.copy(alpha = 0.7f), CircleShape),
@@ -1954,19 +1958,19 @@ private fun HostSeatBadge(
             imageVector = if (isLocked) Icons.Filled.Lock else Icons.Filled.Chair,
             contentDescription = if (isLocked) "लॉक होस्ट सीट" else "खाली होस्ट सीट",
             tint = Color(0xEEFFFFFF),
-            modifier = Modifier.size(26.dp),
+            modifier = Modifier.size(22.dp),
           )
         }
       }
     }
-    Spacer(modifier = Modifier.height(4.dp))
+    Spacer(modifier = Modifier.height(3.dp))
     Text(
       text = when {
         isOccupied -> seat?.occupantName.orEmpty()
         isLocked -> "लॉक सीट"
         else -> emptyLabel
       },
-      style = MaterialTheme.typography.labelMedium,
+      style = MaterialTheme.typography.labelSmall,
       color = Color.White,
       fontWeight = FontWeight.SemiBold,
       maxLines = 1,

@@ -177,6 +177,7 @@ class SwarRoomViewModel(
 
   private val seenGiftEventIds = mutableSetOf<String>()
   private val pendingGiftQueue = ArrayDeque<GiftEvent>()
+  private var pendingMarqueeGift: GiftEvent? = null
   private var initialGiftSnapshotHandled = false
 
   // --- Active Voice Room ---
@@ -262,18 +263,17 @@ class SwarRoomViewModel(
       repository.observeGlobalGiftEvents()
         .catch { /* logged by repository */ }
         .collect { events ->
-          if (events.isNotEmpty()) {
-            _latestMarqueeGift.value = events.first()
-          }
           if (!initialGiftSnapshotHandled) {
             events.forEach { seenGiftEventIds.add(it.id) }
             initialGiftSnapshotHandled = true
           } else {
-            val newRoomEvents = events
-              .filter { it.id.isNotBlank() && seenGiftEventIds.add(it.id) }
-              .filter { it.roomId == _activeRoomId.value }
+            val freshEvents = events.filter { it.id.isNotBlank() && seenGiftEventIds.add(it.id) }
+            val activeId = _activeRoomId.value
+            val newRoomEvents = freshEvents
+              .filter { it.roomId == activeId }
               .reversed()
             newRoomEvents.forEach { enqueueFullScreenGift(it) }
+            freshEvents.firstOrNull()?.let { triggerOrQueueMarquee(it) }
           }
         }
     }
@@ -342,9 +342,29 @@ class SwarRoomViewModel(
     }
   }
 
+  private fun triggerOrQueueMarquee(event: GiftEvent) {
+    if (_activeFullScreenGift.value == null) {
+      _latestMarqueeGift.value = event
+    } else {
+      pendingMarqueeGift = event
+    }
+  }
+
+  fun clearMarqueeGift(eventId: String) {
+    if (_latestMarqueeGift.value?.id == eventId) {
+      _latestMarqueeGift.value = null
+    }
+  }
+
   fun dismissFullScreenGift() {
     val next = if (pendingGiftQueue.isNotEmpty()) pendingGiftQueue.removeFirst() else null
     _activeFullScreenGift.value = next
+    if (next == null) {
+      pendingMarqueeGift?.let { queued ->
+        _latestMarqueeGift.value = queued
+        pendingMarqueeGift = null
+      }
+    }
   }
 
   private fun currentProfileOrDefault(): UserProfile {
@@ -1424,8 +1444,8 @@ class SwarRoomViewModel(
       ).onSuccess { event ->
         // Snapshot observer also receives this event; mark & enqueue immediately if not yet seen for zero latency
         if (seenGiftEventIds.add(event.id)) {
-          _latestMarqueeGift.value = event
           enqueueFullScreenGift(event)
+          triggerOrQueueMarquee(event)
         }
       }.onFailure { err ->
         _events.tryEmit(err.message ?: "गिफ्ट भेजा नहीं जा सका")
