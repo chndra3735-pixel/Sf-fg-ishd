@@ -1,8 +1,11 @@
 package com.example.ui.components
 
+import android.graphics.SurfaceTexture
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
-import android.widget.VideoView
+import android.view.Surface
+import android.view.TextureView
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -318,33 +321,79 @@ fun FullScreenGiftOverlay(
       .testTag("fullscreen_gift_overlay"),
   ) {
     if (isVideoGift) {
-      var videoViewRef by remember(event.id) { mutableStateOf<VideoView?>(null) }
+      var mediaPlayerRef by remember(event.id) { mutableStateOf<MediaPlayer?>(null) }
+      var surfaceRef by remember(event.id) { mutableStateOf<Surface?>(null) }
       val playbackUri = resolvedVideoUri
 
       if (playbackUri != null) {
         key(playbackUri) {
           AndroidView(
             factory = { ctx ->
-              VideoView(ctx).apply {
-                setVideoURI(playbackUri)
-                setOnPreparedListener { mp ->
-                  mp.isLooping = false
-                  mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
-                  isVideoPrepared = true
-                  val dur = mp.duration.toLong()
-                  if (dur > 0L) {
-                    preparedDurationMs = dur
+              TextureView(ctx).apply {
+                isOpaque = true
+                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                  override fun onSurfaceTextureAvailable(
+                    surfaceTexture: SurfaceTexture,
+                    width: Int,
+                    height: Int,
+                  ) {
+                    val videoSurface = Surface(surfaceTexture)
+                    surfaceRef = videoSurface
+                    val player = MediaPlayer()
+                    mediaPlayerRef = player
+                    runCatching {
+                      player.setAudioAttributes(
+                        AudioAttributes.Builder()
+                          .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                          .setUsage(AudioAttributes.USAGE_MEDIA)
+                          .build()
+                      )
+                      player.setSurface(videoSurface)
+                      player.setDataSource(ctx, playbackUri)
+                      player.isLooping = false
+                      player.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT)
+                      player.setOnPreparedListener { mp ->
+                        isVideoPrepared = true
+                        val dur = mp.duration.toLong()
+                        if (dur > 0L) {
+                          preparedDurationMs = dur
+                        }
+                        mp.start()
+                      }
+                      player.setOnCompletionListener {
+                        onDismiss()
+                      }
+                      player.setOnErrorListener { _, _, _ ->
+                        videoFailed = true
+                        true
+                      }
+                      player.prepareAsync()
+                    }.onFailure {
+                      runCatching { player.release() }
+                      runCatching { videoSurface.release() }
+                      if (mediaPlayerRef === player) mediaPlayerRef = null
+                      if (surfaceRef === videoSurface) surfaceRef = null
+                      videoFailed = true
+                    }
                   }
-                  start()
+
+                  override fun onSurfaceTextureSizeChanged(
+                    surfaceTexture: SurfaceTexture,
+                    width: Int,
+                    height: Int,
+                  ) = Unit
+
+                  override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
+                    runCatching { mediaPlayerRef?.stop() }
+                    runCatching { mediaPlayerRef?.release() }
+                    mediaPlayerRef = null
+                    runCatching { surfaceRef?.release() }
+                    surfaceRef = null
+                    return true
+                  }
+
+                  override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) = Unit
                 }
-                setOnCompletionListener {
-                  onDismiss()
-                }
-                setOnErrorListener { _, _, _ ->
-                  videoFailed = true
-                  true
-                }
-                videoViewRef = this
               }
             },
             modifier = Modifier.fillMaxSize(),
@@ -359,9 +408,13 @@ fun FullScreenGiftOverlay(
         )
       }
 
-      DisposableEffect(event.id) {
+      DisposableEffect(event.id, playbackUri) {
         onDispose {
-          runCatching { videoViewRef?.stopPlayback() }
+          runCatching { mediaPlayerRef?.stop() }
+          runCatching { mediaPlayerRef?.release() }
+          mediaPlayerRef = null
+          runCatching { surfaceRef?.release() }
+          surfaceRef = null
         }
       }
     } else {
