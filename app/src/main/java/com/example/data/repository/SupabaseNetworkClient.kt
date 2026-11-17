@@ -133,16 +133,36 @@ object SupabaseNetworkClient {
   fun cacheRemoteMediaFile(cacheDir: java.io.File, remoteUrl: String): java.io.File? {
     return runCatching {
       val dir = java.io.File(cacheDir, "swar_media_cache").apply { mkdirs() }
-      val ext = remoteUrl.substringBefore('?').substringAfterLast('.', "mp4")
-        .take(5).ifBlank { "mp4" }
+      val rawExt = remoteUrl.substringBefore('?').substringBefore('#')
+        .substringAfterLast('/', "")
+        .substringAfterLast('.', "")
+        .lowercase()
+        .filter { it.isLetterOrDigit() }
+        .take(5)
+      val ext = if (rawExt in setOf("mp4", "m4v", "mov", "webm", "3gp", "mkv", "gif", "jpg", "jpeg", "png", "webp")) {
+        rawExt
+      } else {
+        "mp4"
+      }
       val key = remoteUrl.hashCode().toUInt().toString(16)
       val target = java.io.File(dir, "media_$key.$ext")
       if (target.exists() && target.length() > 0L) {
         return@runCatching target
       }
-      val request = Request.Builder().url(remoteUrl).get().build()
+      val request = Request.Builder()
+        .url(remoteUrl)
+        .header(
+          "User-Agent",
+          "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+        )
+        .get()
+        .build()
       sharedOkHttpClient.newCall(request).execute().use { response ->
         if (!response.isSuccessful) return@runCatching null
+        val contentType = response.header("Content-Type").orEmpty().lowercase()
+        if (contentType.startsWith("text/") || contentType.contains("html") || contentType.contains("mpegurl")) {
+          return@runCatching null
+        }
         val body = response.body ?: return@runCatching null
         val tmp = java.io.File(dir, "media_$key.tmp")
         body.byteStream().use { input ->

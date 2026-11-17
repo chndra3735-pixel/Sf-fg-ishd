@@ -23,12 +23,17 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -223,7 +228,29 @@ fun GuestPreviewSwarRoomApp(
   }
 
   val activePreviewRoom = previewRoom
-  if (activePreviewRoom != null && !isRoomMinimized) {
+  val inPreviewVoiceRoom = activePreviewRoom != null && !isRoomMinimized
+  LaunchedEffect(inPreviewVoiceRoom, context) {
+    val activity = context as? ComponentActivity ?: return@LaunchedEffect
+    if (inPreviewVoiceRoom) {
+      activity.enableEdgeToEdge(
+        statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+      )
+    } else {
+      activity.enableEdgeToEdge(
+        statusBarStyle = SystemBarStyle.light(
+          android.graphics.Color.TRANSPARENT,
+          android.graphics.Color.TRANSPARENT,
+        ),
+        navigationBarStyle = SystemBarStyle.light(
+          android.graphics.Color.TRANSPARENT,
+          android.graphics.Color.TRANSPARENT,
+        ),
+      )
+    }
+  }
+
+  if (inPreviewVoiceRoom && activePreviewRoom != null) {
     Box(modifier = Modifier.fillMaxSize()) {
       VoiceRoomScreen(
         room = activePreviewRoom,
@@ -363,11 +390,11 @@ fun GuestPreviewSwarRoomApp(
             )
           }
         },
-        onAddCustomGift = { _, _, _, _, _, _, onDone ->
+        onAddCustomGift = { _, _, _, _, _, _, _, onDone ->
           onDone()
           scope.launch { snackbarHostState.showSnackbar("क्लाउड पर अपलोड करने के लिए Google साइन इन करें।") }
         },
-        onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, onDone -> onDone() },
+        onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
         onDeleteCustomGift = { _, onDone -> onDone() },
         onDismissFullScreenGift = {
           val finished = activeFullScreenGift
@@ -457,13 +484,22 @@ fun GuestPreviewSwarRoomApp(
     return
   }
 
+  val navItemColors = NavigationBarItemDefaults.colors(
+    selectedIconColor = Color(0xFF008CE6),
+    selectedTextColor = Color(0xFF008CE6),
+    indicatorColor = Color(0xFFE1F3FF),
+    unselectedIconColor = Color(0xFF647087),
+    unselectedTextColor = Color(0xFF647087),
+  )
+
   Scaffold(
+    containerColor = Color.White,
     contentWindowInsets = WindowInsets.safeDrawing,
     snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     topBar = {
       Surface(
-        color = SwarDeepNight,
-        tonalElevation = 2.dp,
+        color = Color(0xFFE7F4FF),
+        tonalElevation = 0.dp,
         modifier = Modifier.fillMaxWidth(),
       ) {
         Row(
@@ -477,7 +513,7 @@ fun GuestPreviewSwarRoomApp(
             Text(
               text = "प्रीव्यू मोड — सभी स्क्रीन देखें",
               style = MaterialTheme.typography.labelLarge,
-              color = Color.White,
+              color = Color(0xFF132238),
               fontWeight = FontWeight.Bold,
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
@@ -485,7 +521,7 @@ fun GuestPreviewSwarRoomApp(
             Text(
               text = "क्लाउड रूम, चैट व अपलोड के लिए Google साइन इन करें",
               style = MaterialTheme.typography.labelSmall,
-              color = Color(0xFFC2BBE0),
+              color = Color(0xFF4F6482),
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
             )
@@ -495,14 +531,14 @@ fun GuestPreviewSwarRoomApp(
             onClick = ::triggerGoogleSignIn,
             enabled = !isSigningIn,
             colors = ButtonDefaults.textButtonColors(
-              containerColor = SwarCyan,
-              contentColor = SwarDeepNight,
+              containerColor = Color(0xFF009AE8),
+              contentColor = Color.White,
             ),
             shape = RoundedCornerShape(18.dp),
             modifier = Modifier.testTag("browse_mode_sign_in_button"),
           ) {
             if (isSigningIn) {
-              CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = SwarDeepNight)
+              CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
             } else {
               Icon(Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(16.dp))
               Spacer(modifier = Modifier.width(4.dp))
@@ -513,55 +549,65 @@ fun GuestPreviewSwarRoomApp(
       }
     },
     bottomBar = {
-      NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-        NavigationBarItem(
-          selected = currentTab == BrowseTab.ROOMS,
-          onClick = { currentTab = BrowseTab.ROOMS },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == BrowseTab.ROOMS) Icons.Filled.Home else Icons.Outlined.Home,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_rooms)) },
-          modifier = Modifier.testTag("nav_tab_rooms"),
-        )
-        NavigationBarItem(
-          selected = currentTab == BrowseTab.MOMENTS,
-          onClick = { currentTab = BrowseTab.MOMENTS },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == BrowseTab.MOMENTS) Icons.Filled.Explore else Icons.Outlined.Explore,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_moments)) },
-          modifier = Modifier.testTag("nav_tab_moments"),
-        )
-        NavigationBarItem(
-          selected = currentTab == BrowseTab.MESSAGES,
-          onClick = { currentTab = BrowseTab.MESSAGES },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == BrowseTab.MESSAGES) Icons.AutoMirrored.Filled.Chat else Icons.AutoMirrored.Outlined.Chat,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_messages)) },
-          modifier = Modifier.testTag("nav_tab_messages"),
-        )
-        NavigationBarItem(
-          selected = currentTab == BrowseTab.PROFILE,
-          onClick = { currentTab = BrowseTab.PROFILE },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == BrowseTab.PROFILE) Icons.Filled.Person else Icons.Outlined.Person,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_profile)) },
-          modifier = Modifier.testTag("nav_tab_profile"),
-        )
+      Column(modifier = Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = Color(0xFFE7EFF7), thickness = 1.dp)
+        NavigationBar(
+          containerColor = Color.White,
+          tonalElevation = 0.dp,
+        ) {
+          NavigationBarItem(
+            selected = currentTab == BrowseTab.ROOMS,
+            onClick = { currentTab = BrowseTab.ROOMS },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == BrowseTab.ROOMS) Icons.Filled.Home else Icons.Outlined.Home,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_rooms)) },
+            modifier = Modifier.testTag("nav_tab_rooms"),
+          )
+          NavigationBarItem(
+            selected = currentTab == BrowseTab.MOMENTS,
+            onClick = { currentTab = BrowseTab.MOMENTS },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == BrowseTab.MOMENTS) Icons.Filled.Explore else Icons.Outlined.Explore,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_moments)) },
+            modifier = Modifier.testTag("nav_tab_moments"),
+          )
+          NavigationBarItem(
+            selected = currentTab == BrowseTab.MESSAGES,
+            onClick = { currentTab = BrowseTab.MESSAGES },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == BrowseTab.MESSAGES) Icons.AutoMirrored.Filled.Chat else Icons.AutoMirrored.Outlined.Chat,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_messages)) },
+            modifier = Modifier.testTag("nav_tab_messages"),
+          )
+          NavigationBarItem(
+            selected = currentTab == BrowseTab.PROFILE,
+            onClick = { currentTab = BrowseTab.PROFILE },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == BrowseTab.PROFILE) Icons.Filled.Person else Icons.Outlined.Person,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_profile)) },
+            modifier = Modifier.testTag("nav_tab_profile"),
+          )
+        }
       }
     },
   ) { innerPadding ->
@@ -608,7 +654,7 @@ fun GuestPreviewSwarRoomApp(
           onSendDirectMessage = { _, _ -> },
         )
         BrowseTab.PROFILE -> ProfileScreen(
-          profileState = UiState.Success(guestProfile),
+          profileState = UiState.Success(guestProfile.copy(coins = previewCoins)),
           isUploadingMedia = false,
           isSupabaseConfigured = isSupabaseConfigured,
           onUploadAvatarDp = {
@@ -625,6 +671,8 @@ fun GuestPreviewSwarRoomApp(
           isSignedIn = false,
           isSigningIn = isSigningIn,
           onSignInClick = ::triggerGoogleSignIn,
+          onClaimBonusCoins = { previewCoins += 500L },
+          giftCatalog = SwarCatalogDefaults.builtInGifts,
         )
       }
 

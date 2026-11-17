@@ -34,7 +34,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -351,7 +351,8 @@ fun GiftPanelSheet(
     emoji: String,
     coinCost: Long,
     thumbnailUri: Uri?,
-    videoUri: Uri?,
+    dpLinkUrl: String,
+    videoLinkUrl: String,
     onDone: () -> Unit,
   ) -> Unit,
   onUpdateCustomGift: (
@@ -361,7 +362,8 @@ fun GiftPanelSheet(
     emoji: String,
     coinCost: Long,
     newThumbnailUri: Uri?,
-    newVideoUri: Uri?,
+    newDpLinkUrl: String,
+    newVideoLinkUrl: String,
     removeExistingThumbnail: Boolean,
     removeExistingVideo: Boolean,
     onDone: () -> Unit,
@@ -580,15 +582,18 @@ fun GiftPanelSheet(
                 }
               }
 
+              val dpModel = gift.thumbnailUrl.ifBlank {
+                if (gift.mediaType == "image") gift.mediaUrl else ""
+              }
               Column(
                 modifier = Modifier
                   .fillMaxWidth()
                   .padding(vertical = 8.dp, horizontal = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
               ) {
-                if (gift.thumbnailUrl.isNotBlank()) {
+                if (dpModel.isNotBlank()) {
                   AsyncImage(
-                    model = gift.thumbnailUrl,
+                    model = dpModel,
                     contentDescription = gift.name,
                     modifier = Modifier
                       .size(46.dp)
@@ -704,9 +709,9 @@ fun GiftPanelSheet(
         onClearGiftUploadError()
         showAdminAddGiftDialog = false
       },
-      onSubmit = { name, category, emoji, cost, thumbUri, videoUri ->
+      onSubmit = { name, category, emoji, cost, thumbUri, dpLinkUrl, videoLinkUrl ->
         onClearGiftUploadError()
-        onAddCustomGift(name, category, emoji, cost, thumbUri, videoUri) {
+        onAddCustomGift(name, category, emoji, cost, thumbUri, dpLinkUrl, videoLinkUrl) {
           showAdminAddGiftDialog = false
         }
       },
@@ -723,7 +728,7 @@ fun GiftPanelSheet(
         onClearGiftUploadError()
         editingGift = null
       },
-      onUpdate = { name, category, emoji, cost, newThumbUri, newVideoUri, removeExistingThumb, removeExistingVideo ->
+      onUpdate = { name, category, emoji, cost, newThumbUri, newDpLinkUrl, newVideoLinkUrl, removeExistingThumb, removeExistingVideo ->
         onUpdateCustomGift(
           targetEditGift,
           name,
@@ -731,7 +736,8 @@ fun GiftPanelSheet(
           emoji,
           cost,
           newThumbUri,
-          newVideoUri,
+          newDpLinkUrl,
+          newVideoLinkUrl,
           removeExistingThumb,
           removeExistingVideo,
         ) {
@@ -930,32 +936,30 @@ private fun AddGiftAdminDialog(
     emoji: String,
     coinCost: Long,
     thumbnailUri: Uri?,
-    videoUri: Uri?,
+    dpLinkUrl: String,
+    videoLinkUrl: String,
   ) -> Unit,
 ) {
+  var videoLinkUrl by remember { mutableStateOf("") }
+  var dpLinkUrl by remember { mutableStateOf("") }
+  var thumbnailUri by remember { mutableStateOf<Uri?>(null) }
   var name by remember { mutableStateOf("") }
   var coinCostText by remember { mutableStateOf("500") }
   var category by remember { mutableStateOf(defaultCategory) }
   var emoji by remember { mutableStateOf("🎁") }
-  var thumbnailUri by remember { mutableStateOf<Uri?>(null) }
-  var videoUri by remember { mutableStateOf<Uri?>(null) }
 
   val thumbPicker = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia(),
     onResult = { uri ->
-      if (uri != null) thumbnailUri = uri
-    },
-  )
-  val videoPicker = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.PickVisualMedia(),
-    onResult = { uri ->
-      if (uri != null) videoUri = uri
+      if (uri != null) {
+        thumbnailUri = uri
+      }
     },
   )
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("गिफ्ट अपलोड (एडमिन)") },
+    title = { Text("नया गिफ्ट जोड़ें (लिंक सेटअप)") },
     text = {
       Column(
         modifier = Modifier
@@ -981,31 +985,32 @@ private fun AddGiftAdminDialog(
           }
         }
 
-        // 1. सबसे ऊपर: नाम
+        // 1. सबसे पहले: गिफ्ट वीडियो लिंक (URL)
         OutlinedTextField(
-          value = name,
-          onValueChange = { name = it.take(40) },
-          label = { Text("गिफ्ट का नाम") },
-          placeholder = { Text("उदा. शाही एंट्री वीडियो") },
+          value = videoLinkUrl,
+          onValueChange = { videoLinkUrl = it.take(400) },
+          leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
+          label = { Text("1. गिफ्ट वीडियो लिंक (URL)") },
+          placeholder = { Text("https://... (.mp4 / .m3u8 / pin.it)") },
           singleLine = true,
           modifier = Modifier
             .fillMaxWidth()
-            .testTag("gift_name_input"),
+            .testTag("gift_video_link_input"),
         )
 
-        // 2. नाम के नीचे: कॉइंस
+        // 2. उसके नीचे: गिफ्ट की DP (फोटो लिंक या गैलरी से फोटो अपलोड — पैनल में दिखने के लिए)
         OutlinedTextField(
-          value = coinCostText,
-          onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
-          label = { Text("कॉइंस कीमत") },
-          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          value = dpLinkUrl,
+          onValueChange = { dpLinkUrl = it.take(400) },
+          leadingIcon = { Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, tint = SwarGold) },
+          label = { Text("2. गिफ्ट DP फोटो लिंक (URL - वैकल्पिक)") },
+          placeholder = { Text("https://... (.jpg / .png / pin.it)") },
           singleLine = true,
           modifier = Modifier
             .fillMaxWidth()
-            .testTag("gift_coins_input"),
+            .testTag("gift_dp_link_input"),
         )
 
-        // 3. कॉइंस के नीचे: गिफ्ट DP (प्रीव्यू सहित, ताकि गिफ्ट पैनल में दिखे)
         Row(
           modifier = Modifier.fillMaxWidth(),
           verticalAlignment = Alignment.CenterVertically,
@@ -1025,15 +1030,18 @@ private fun AddGiftAdminDialog(
             Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-              text = if (thumbnailUri == null) "गिफ्ट DP चुनें" else "गिफ्ट DP चयनित ✓",
+              text = if (thumbnailUri == null) "या DP फोटो अपलोड करें" else "DP फोटो चयनित ✓",
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
             )
           }
 
-          if (thumbnailUri != null) {
+          val dpPreviewModel: Any? = thumbnailUri ?: dpLinkUrl.trim().takeIf {
+            it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true)
+          }
+          if (dpPreviewModel != null) {
             AsyncImage(
-              model = thumbnailUri,
+              model = dpPreviewModel,
               contentDescription = "गिफ्ट DP प्रीव्यू",
               modifier = Modifier
                 .size(48.dp)
@@ -1044,79 +1052,32 @@ private fun AddGiftAdminDialog(
           }
         }
 
-        // 4. डीपी के नीचे: वीडियो अपलोड बटन + ठीक बगल में सबमिट बटन
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          OutlinedButton(
-            onClick = {
-              videoPicker.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-              )
-            },
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+        // 3. नाम और कॉइंस
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedTextField(
+            value = name,
+            onValueChange = { name = it.take(40) },
+            label = { Text("गिफ्ट का नाम") },
+            placeholder = { Text("शाही गिफ्ट") },
+            singleLine = true,
             modifier = Modifier
-              .weight(1.15f)
-              .height(48.dp)
-              .testTag("gift_video_picker_button"),
-          ) {
-            Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-              text = if (videoUri == null) "वीडियो अपलोड" else "वीडियो ✓",
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-            )
-          }
+              .weight(1.3f)
+              .testTag("gift_name_input"),
+          )
 
-          Button(
-            onClick = {
-              val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: 100L
-              onSubmit(
-                name.ifBlank { "स्पेशल गिफ्ट" },
-                category,
-                emoji.ifBlank { "🎁" },
-                parsedCost,
-                thumbnailUri,
-                videoUri,
-              )
-            },
-            enabled = !isUploading,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-            colors = ButtonDefaults.buttonColors(
-              containerColor = SwarCoral,
-              contentColor = Color.White,
-            ),
+          OutlinedTextField(
+            value = coinCostText,
+            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
+            label = { Text("कॉइंस") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
             modifier = Modifier
-              .weight(0.85f)
-              .height(48.dp)
-              .testTag("submit_gift_button"),
-          ) {
-            Text(
-              text = if (isUploading) "लोड..." else "सबमिट",
-              fontWeight = FontWeight.Bold,
-              maxLines = 1,
-            )
-          }
+              .weight(0.9f)
+              .testTag("gift_coins_input"),
+          )
         }
 
-        if (videoUri != null) {
-          Surface(
-            color = SwarMint.copy(alpha = 0.14f),
-            shape = RoundedCornerShape(8.dp),
-          ) {
-            Text(
-              text = "वीडियो तैयार है — भेजने पर रूम में यही वीडियो प्ले होगा और टच से बंद नहीं होगा।",
-              style = MaterialTheme.typography.bodySmall,
-              color = SwarMint,
-              modifier = Modifier.padding(8.dp),
-            )
-          }
-        }
-
-        // श्रेणी चयन (टैब के लिए)
+        // 4. श्रेणी चयन
         Row(
           modifier = Modifier.horizontalScroll(rememberScrollState()),
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1130,6 +1091,51 @@ private fun AddGiftAdminDialog(
               label = { Text(cat) },
             )
           }
+        }
+
+        if (videoLinkUrl.isNotBlank()) {
+          Surface(
+            color = SwarMint.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(8.dp),
+          ) {
+            Text(
+              text = "लिंक और DP सेव होते ही गिफ्ट पैनल में DP दिखेगी व भेजने पर यही वीडियो प्ले होगा।",
+              style = MaterialTheme.typography.bodySmall,
+              color = SwarMint,
+              modifier = Modifier.padding(8.dp),
+            )
+          }
+        }
+
+        Button(
+          onClick = {
+            val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: 100L
+            onSubmit(
+              name.ifBlank { "स्पेशल गिफ्ट" },
+              category,
+              emoji.ifBlank { "🎁" },
+              parsedCost,
+              thumbnailUri,
+              dpLinkUrl.trim(),
+              videoLinkUrl.trim(),
+            )
+          },
+          enabled = !isUploading &&
+            (videoLinkUrl.isNotBlank() || dpLinkUrl.isNotBlank() || thumbnailUri != null),
+          colors = ButtonDefaults.buttonColors(
+            containerColor = SwarCoral,
+            contentColor = Color.White,
+          ),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("submit_gift_button"),
+        ) {
+          Text(
+            text = if (isUploading) "सेव व लोड हो रहा है..." else "सबमिट करें",
+            fontWeight = FontWeight.Bold,
+          )
         }
       }
     },
@@ -1314,12 +1320,18 @@ private fun EditGiftAdminDialog(
     emoji: String,
     coinCost: Long,
     newThumbnailUri: Uri?,
-    newVideoUri: Uri?,
+    newDpLinkUrl: String,
+    newVideoLinkUrl: String,
     removeExistingThumbnail: Boolean,
     removeExistingVideo: Boolean,
   ) -> Unit,
   onDelete: () -> Unit,
 ) {
+  var videoLinkUrl by remember(existing.id) {
+    mutableStateOf(if (existing.mediaType == "video") existing.mediaUrl else "")
+  }
+  var dpLinkUrl by remember(existing.id) { mutableStateOf(existing.thumbnailUrl) }
+  var newThumbUri by remember(existing.id) { mutableStateOf<Uri?>(null) }
   var name by remember(existing.id) { mutableStateOf(existing.name) }
   var emoji by remember(existing.id) { mutableStateOf(existing.emoji.ifBlank { "🎁" }) }
   var coinCostText by remember(existing.id) { mutableStateOf(existing.coinCost.toString()) }
@@ -1329,8 +1341,6 @@ private fun EditGiftAdminDialog(
       else SwarCatalogDefaults.giftCategories.first()
     )
   }
-  var newThumbUri by remember(existing.id) { mutableStateOf<Uri?>(null) }
-  var newVideoUri by remember(existing.id) { mutableStateOf<Uri?>(null) }
   var removeExistingThumb by remember(existing.id) { mutableStateOf(false) }
   var removeExistingVideo by remember(existing.id) { mutableStateOf(false) }
   var showDeleteConfirm by remember(existing.id) { mutableStateOf(false) }
@@ -1343,15 +1353,6 @@ private fun EditGiftAdminDialog(
       if (uri != null) {
         newThumbUri = uri
         removeExistingThumb = false
-      }
-    },
-  )
-  val videoPicker = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.PickVisualMedia(),
-    onResult = { uri ->
-      if (uri != null) {
-        newVideoUri = uri
-        removeExistingVideo = false
       }
     },
   )
@@ -1383,6 +1384,95 @@ private fun EditGiftAdminDialog(
             )
           }
         }
+
+        // 1. गिफ्ट वीडियो लिंक (URL)
+        OutlinedTextField(
+          value = videoLinkUrl,
+          onValueChange = {
+            videoLinkUrl = it.take(400)
+            removeExistingVideo = it.isBlank()
+          },
+          leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
+          label = { Text("1. गिफ्ट वीडियो लिंक (URL)") },
+          placeholder = { Text("https://... (.mp4 / .m3u8 / pin.it)") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        if (hasExistingVideo && !removeExistingVideo) {
+          TextButton(
+            onClick = {
+              videoLinkUrl = ""
+              removeExistingVideo = true
+            },
+          ) {
+            Text("मौजूदा वीडियो लिंक हटाएं", color = SwarCoral)
+          }
+        }
+
+        // 2. गिफ्ट DP फोटो लिंक या गैलरी फोटो अपलोड
+        OutlinedTextField(
+          value = dpLinkUrl,
+          onValueChange = {
+            dpLinkUrl = it.take(400)
+            if (it.isNotBlank()) removeExistingThumb = false
+          },
+          leadingIcon = { Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, tint = SwarGold) },
+          label = { Text("2. गिफ्ट DP फोटो लिंक (URL)") },
+          placeholder = { Text("https://... (.jpg / .png / pin.it)") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          OutlinedButton(
+            onClick = {
+              thumbPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+              )
+            },
+            modifier = Modifier
+              .weight(1f)
+              .height(48.dp),
+          ) {
+            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = if (newThumbUri != null) "नई DP फोटो चयनित ✓" else "या गैलरी से DP बदलें",
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          val dpPreviewModel: Any? = newThumbUri ?: dpLinkUrl.trim().takeIf {
+            !removeExistingThumb && (it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true))
+          }
+          if (dpPreviewModel != null) {
+            AsyncImage(
+              model = dpPreviewModel,
+              contentDescription = "गिफ्ट DP प्रीव्यू",
+              modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .border(1.5.dp, SwarGold, CircleShape),
+              contentScale = ContentScale.Crop,
+            )
+          }
+        }
+        if (existing.thumbnailUrl.isNotBlank() && !removeExistingThumb && newThumbUri == null) {
+          TextButton(
+            onClick = {
+              dpLinkUrl = ""
+              removeExistingThumb = true
+            },
+          ) {
+            Text("मौजूदा DP फोटो हटाएं", color = SwarCoral)
+          }
+        }
+
         OutlinedTextField(
           value = name,
           onValueChange = { name = it.take(40) },
@@ -1420,53 +1510,6 @@ private fun EditGiftAdminDialog(
             )
           }
         }
-        OutlinedButton(
-          onClick = {
-            thumbPicker.launch(
-              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            )
-          },
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            when {
-              newThumbUri != null -> "नया थंबनेल चयनित ✓"
-              existing.thumbnailUrl.isNotBlank() && !removeExistingThumb -> "थंबनेल बदलें (मौजूदा सेव है)"
-              else -> "थंबनेल / GIF चुनें (वैकल्पिक)"
-            }
-          )
-        }
-        if (existing.thumbnailUrl.isNotBlank() && !removeExistingThumb && newThumbUri == null) {
-          TextButton(onClick = { removeExistingThumb = true }) {
-            Text("मौजूदा थंबनेल हटाएं", color = SwarCoral)
-          }
-        }
-
-        OutlinedButton(
-          onClick = {
-            videoPicker.launch(
-              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-            )
-          },
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            when {
-              newVideoUri != null -> "नया वीडियो गिफ्ट चयनित ✓"
-              hasExistingVideo && !removeExistingVideo -> "वीडियो गिफ्ट बदलें (मौजूदा सेव है)"
-              else -> "फुल-स्क्रीन वीडियो चुनें (वैकल्पिक)"
-            }
-          )
-        }
-        if (hasExistingVideo && !removeExistingVideo && newVideoUri == null) {
-          TextButton(onClick = { removeExistingVideo = true }) {
-            Text("मौजूदा वीडियो हटाएं", color = SwarCoral)
-          }
-        }
 
         Spacer(modifier = Modifier.height(4.dp))
         Button(
@@ -1482,7 +1525,7 @@ private fun EditGiftAdminDialog(
         ) {
           Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
           Spacer(modifier = Modifier.width(8.dp))
-          Text("गिफ्ट, DP और वीडियो डिलीट करें")
+          Text("गिफ्ट और DP डिलीट करें")
         }
       }
     },
@@ -1496,7 +1539,8 @@ private fun EditGiftAdminDialog(
             emoji.ifBlank { "🎁" },
             parsedCost,
             newThumbUri,
-            newVideoUri,
+            dpLinkUrl.trim(),
+            videoLinkUrl.trim(),
             removeExistingThumb,
             removeExistingVideo,
           )

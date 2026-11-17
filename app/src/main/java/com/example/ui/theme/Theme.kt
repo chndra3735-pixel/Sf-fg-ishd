@@ -1,6 +1,5 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -29,11 +28,11 @@ private val SwarDarkColorScheme = darkColorScheme(
 private val SwarLightColorScheme = lightColorScheme(
   primary = SwarCyanDark,
   onPrimary = Color.White,
-  primaryContainer = Color(0xFFD8F4FF),
+  primaryContainer = Color(0xFFDFF4FF),
   onPrimaryContainer = Color(0xFF00344C),
   secondary = SwarViolet,
   onSecondary = Color.White,
-  secondaryContainer = Color(0xFFEBE4FF),
+  secondaryContainer = Color(0xFFEDE7FF),
   onSecondaryContainer = Color(0xFF280B6B),
   tertiary = SwarCoral,
   onTertiary = Color.White,
@@ -47,7 +46,7 @@ private val SwarLightColorScheme = lightColorScheme(
 
 @Composable
 fun SwarRoomTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
+  darkTheme: Boolean = false,
   content: @Composable () -> Unit,
 ) {
   val colorScheme = if (darkTheme) SwarDarkColorScheme else SwarLightColorScheme

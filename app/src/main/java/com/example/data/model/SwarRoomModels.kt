@@ -183,6 +183,15 @@ object SwarCatalogDefaults {
   )
 
   val builtInGifts = listOf(
+    GiftCatalogItem(
+      id = "def_g0_pin_test",
+      name = "पिन वीडियो गिफ्ट",
+      category = "हॉट",
+      emoji = "🎬",
+      mediaUrl = "https://pin.it/5wrohsACd",
+      mediaType = "video",
+      coinCost = 10L,
+    ),
     GiftCatalogItem(id = "def_g1", name = "गोल्डन रोज़", category = "हॉट", emoji = "🌹", coinCost = 10L),
     GiftCatalogItem(id = "def_g2", name = "म्यूज़िक माइक", category = "हॉट", emoji = "🎤", coinCost = 50L),
     GiftCatalogItem(id = "def_g3", name = "शाही ताज", category = "हॉट", emoji = "👑", coinCost = 100L),

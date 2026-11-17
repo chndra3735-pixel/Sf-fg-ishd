@@ -87,6 +87,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.example.data.model.GiftEvent
 import com.example.data.repository.SupabaseNetworkClient
+import com.example.data.repository.VideoLinkResolution
+import com.example.data.repository.VideoLinkResolver
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarGold
@@ -425,22 +427,42 @@ fun CrossRoomGiftMarqueeStrip(
 fun FullScreenGiftOverlay(
   event: GiftEvent,
   onDismiss: () -> Unit,
+  onPlaybackMessage: (String) -> Unit = {},
 ) {
   val context = LocalContext.current
   var videoFailed by remember(event.id) { mutableStateOf(false) }
   var isVideoPrepared by remember(event.id) { mutableStateOf(false) }
   var preparedDurationMs by remember(event.id) { mutableStateOf<Long?>(null) }
+  var fallbackThumbUrl by remember(event.id) { mutableStateOf("") }
   val isVideoGift = event.giftMediaType == "video" && event.giftMediaUrl.isNotBlank() && !videoFailed
   var resolvedVideoUri by remember(event.id, event.giftMediaUrl) {
     mutableStateOf<Uri?>(if (event.giftMediaUrl.startsWith("http")) null else Uri.parse(event.giftMediaUrl))
   }
 
-  LaunchedEffect(event.id, event.giftMediaUrl, isVideoGift) {
-    if (isVideoGift && event.giftMediaUrl.startsWith("http")) {
-      val cached = withContext(Dispatchers.IO) {
-        SupabaseNetworkClient.cacheRemoteMediaFile(context.cacheDir, event.giftMediaUrl)
+  LaunchedEffect(event.id, event.giftMediaUrl) {
+    if (event.giftMediaType == "video" && event.giftMediaUrl.startsWith("http")) {
+      when (val resolution = withContext(Dispatchers.IO) { VideoLinkResolver.resolvePlayableVideo(event.giftMediaUrl) }) {
+        is VideoLinkResolution.Success -> {
+          if (resolution.thumbnailUrl.isNotBlank()) {
+            fallbackThumbUrl = resolution.thumbnailUrl
+          }
+          if (resolution.isHlsStream) {
+            resolvedVideoUri = Uri.parse(resolution.playableUrl)
+          } else {
+            val cached = withContext(Dispatchers.IO) {
+              SupabaseNetworkClient.cacheRemoteMediaFile(context.cacheDir, resolution.playableUrl)
+            }
+            resolvedVideoUri = cached?.let { Uri.fromFile(it) } ?: Uri.parse(resolution.playableUrl)
+          }
+        }
+        is VideoLinkResolution.Failure -> {
+          if (resolution.fallbackImageUrl.isNotBlank()) {
+            fallbackThumbUrl = resolution.fallbackImageUrl
+          }
+          videoFailed = true
+          onPlaybackMessage(resolution.reasonHindi)
+        }
       }
-      resolvedVideoUri = cached?.let { Uri.fromFile(it) } ?: Uri.parse(event.giftMediaUrl)
     }
   }
 
@@ -481,12 +503,35 @@ fun FullScreenGiftOverlay(
       var surfaceRef by remember(event.id) { mutableStateOf<Surface?>(null) }
       val playbackUri = resolvedVideoUri
 
+      fun applyFitTransform(textureView: TextureView, videoW: Int, videoH: Int) {
+        val viewW = textureView.width.toFloat()
+        val viewH = textureView.height.toFloat()
+        if (viewW <= 0f || viewH <= 0f || videoW <= 0 || videoH <= 0) return
+        val videoAspect = videoW.toFloat() / videoH.toFloat()
+        val viewAspect = viewW / viewH
+        val scaleX: Float
+        val scaleY: Float
+        if (videoAspect > viewAspect) {
+          scaleX = 1f
+          scaleY = viewAspect / videoAspect
+        } else {
+          scaleX = videoAspect / viewAspect
+          scaleY = 1f
+        }
+        val matrix = android.graphics.Matrix().apply {
+          setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+        }
+        textureView.setTransform(matrix)
+      }
+
       if (playbackUri != null) {
         key(playbackUri) {
           AndroidView(
             factory = { ctx ->
               TextureView(ctx).apply {
                 isOpaque = true
+                var currentVideoWidth = 0
+                var currentVideoHeight = 0
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                   override fun onSurfaceTextureAvailable(
                     surfaceTexture: SurfaceTexture,
@@ -508,8 +553,16 @@ fun FullScreenGiftOverlay(
                       player.setDataSource(ctx, playbackUri)
                       player.isLooping = false
                       player.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT)
+                      player.setOnVideoSizeChangedListener { _, vw, vh ->
+                        currentVideoWidth = vw
+                        currentVideoHeight = vh
+                        post { applyFitTransform(this@apply, vw, vh) }
+                      }
                       player.setOnPreparedListener { mp ->
                         isVideoPrepared = true
+                        currentVideoWidth = mp.videoWidth
+                        currentVideoHeight = mp.videoHeight
+                        post { applyFitTransform(this@apply, mp.videoWidth, mp.videoHeight) }
                         val dur = mp.duration.toLong()
                         if (dur > 0L) {
                           preparedDurationMs = dur
@@ -519,17 +572,19 @@ fun FullScreenGiftOverlay(
                       player.setOnCompletionListener {
                         onDismiss()
                       }
-                      player.setOnErrorListener { _, _, _ ->
+                      player.setOnErrorListener { _, what, extra ->
                         videoFailed = true
+                        onPlaybackMessage("यह वीडियो लिंक प्ले नहीं हो सका (कोड: $what/$extra)।")
                         true
                       }
                       player.prepareAsync()
-                    }.onFailure {
+                    }.onFailure { err ->
                       runCatching { player.release() }
                       runCatching { videoSurface.release() }
                       if (mediaPlayerRef === player) mediaPlayerRef = null
                       if (surfaceRef === videoSurface) surfaceRef = null
                       videoFailed = true
+                      onPlaybackMessage("वीडियो चलाने में त्रुटि: ${err.message ?: "असमर्थित लिंक"}")
                     }
                   }
 
@@ -537,7 +592,9 @@ fun FullScreenGiftOverlay(
                     surfaceTexture: SurfaceTexture,
                     width: Int,
                     height: Int,
-                  ) = Unit
+                  ) {
+                    applyFitTransform(this@apply, currentVideoWidth, currentVideoHeight)
+                  }
 
                   override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
                     runCatching { mediaPlayerRef?.stop() }
@@ -600,9 +657,14 @@ fun FullScreenGiftOverlay(
           .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
       ) {
-        if (event.giftMediaUrl.isNotBlank() && event.giftMediaType == "image") {
+        val fallbackImageModel = when {
+          event.giftMediaUrl.isNotBlank() && event.giftMediaType == "image" -> event.giftMediaUrl
+          fallbackThumbUrl.isNotBlank() -> fallbackThumbUrl
+          else -> ""
+        }
+        if (fallbackImageModel.isNotBlank()) {
           AsyncImage(
-            model = event.giftMediaUrl,
+            model = fallbackImageModel,
             contentDescription = event.giftName,
             modifier = Modifier
               .size(210.dp)

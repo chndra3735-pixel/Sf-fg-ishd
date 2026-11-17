@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -10,6 +11,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,22 +29,29 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Backpack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.MilitaryTech
+import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -61,18 +70,35 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.model.GiftCatalogItem
+import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
-import com.example.ui.components.CoinEmblem
+import com.example.ui.components.FamilyCrestEmblem
+import com.example.ui.components.GoldenWingedLevelBadge
+import com.example.ui.components.LanguageSelectionDialog
+import com.example.ui.components.LevelDetailsDialog
+import com.example.ui.components.ProfileFeatureInfoDialog
+import com.example.ui.components.ProfileMenuRow
+import com.example.ui.components.StoreGradientCard
 import com.example.ui.components.SupabaseConfigNoticeCard
+import com.example.ui.components.SwarStoreDialog
 import com.example.ui.components.UserAvatar
+import com.example.ui.components.WalletGradientCard
+import com.example.ui.components.WalletOverviewDialog
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarDeepNight
-import com.example.ui.theme.SwarGold
-import com.example.ui.theme.SwarViolet
 import com.example.ui.viewmodel.UiState
+
+private data class ProfileInfoPayload(
+  val title: String,
+  val highlight: String,
+  val description: String,
+)
 
 @Composable
 fun ProfileScreen(
@@ -85,8 +111,17 @@ fun ProfileScreen(
   isSignedIn: Boolean = true,
   isSigningIn: Boolean = false,
   onSignInClick: (() -> Unit)? = null,
+  onClaimBonusCoins: (() -> Unit)? = null,
+  giftCatalog: List<GiftCatalogItem> = SwarCatalogDefaults.builtInGifts,
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
+  var showWalletDialog by remember { mutableStateOf(false) }
+  var showStoreDialog by remember { mutableStateOf(false) }
+  var showLevelDialog by remember { mutableStateOf(false) }
+  var showLanguageDialog by remember { mutableStateOf(false) }
+  var selectedLanguage by remember { mutableStateOf("हिंदी (डिफ़ॉल्ट)") }
+  var activeFeatureInfo by remember { mutableStateOf<ProfileInfoPayload?>(null) }
+
   val context = LocalContext.current
 
   val dpPicker = rememberLauncherForActivityResult(
@@ -95,267 +130,424 @@ fun ProfileScreen(
   )
 
   val profile = (profileState as? UiState.Success)?.data
+  val displayName = profile?.displayName.orEmpty().ifBlank { "Swar User" }
   val numericId = remember(profile?.userId) {
     SwarUserIdentity.numericIdForUid(profile?.userId.orEmpty())
   }
   val levelInfo = remember(profile?.coins) {
     SwarUserIdentity.levelForProfile(profile)
   }
+  val coins = profile?.coins ?: 1500L
+  val clubTag = profile?.clubTag.orEmpty().ifBlank { "SWAR" }
+
+  val copyIdAction = {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    cm?.setPrimaryClip(ClipData.newPlainText("SwarRoom ID", numericId))
+    Toast.makeText(context, "ID कॉपी हो गई: $numericId", Toast.LENGTH_SHORT).show()
+  }
 
   Column(
     modifier = Modifier
       .fillMaxSize()
-      .background(MaterialTheme.colorScheme.background)
+      .background(
+        Brush.verticalGradient(
+          colors = listOf(
+            Color(0xFFD6F0FC),
+            Color(0xFFECF8FD),
+            Color(0xFFF6F7FB),
+            Color(0xFFF6F7FB),
+          )
+        )
+      )
       .verticalScroll(rememberScrollState())
-      .padding(16.dp),
+      .padding(horizontal = 16.dp, vertical = 14.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    // Hero Profile Banner
-    Card(
-      shape = RoundedCornerShape(24.dp),
-      colors = CardDefaults.cardColors(containerColor = SwarDeepNight),
-      modifier = Modifier.fillMaxWidth(),
+    // Top Header: Large Circular Avatar + Flag-Accented Name + ID Pill + Edit/Switch Action
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(top = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
     ) {
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .background(
-            Brush.linearGradient(listOf(SwarDeepNight, Color(0xFF28194E)))
-          )
-          .padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-      ) {
-        Box(contentAlignment = Alignment.BottomEnd) {
-          UserAvatar(
-            url = profile?.avatarUrl.orEmpty(),
-            name = profile?.displayName.orEmpty().ifBlank { "Swar User" },
-            size = 92.dp,
-            borderColor = SwarCyan,
-            borderWidth = 2.5.dp,
-          )
-          Surface(
-            onClick = {
-              dpPicker.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-              )
-            },
-            shape = CircleShape,
-            color = SwarCyan,
-            modifier = Modifier
-              .size(34.dp)
-              .testTag("change_dp_button"),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              if (isUploadingMedia) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = SwarDeepNight)
-              } else {
-                Icon(
-                  imageVector = Icons.Filled.CameraAlt,
-                  contentDescription = "DP बदलें",
-                  tint = SwarDeepNight,
-                  modifier = Modifier.size(18.dp),
-                )
-              }
-            }
-          }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-          text = profile?.displayName.orEmpty().ifBlank { "Swar User" },
-          style = MaterialTheme.typography.titleLarge,
+      Box(contentAlignment = Alignment.BottomEnd) {
+        UserAvatar(
+          url = profile?.avatarUrl.orEmpty(),
+          name = displayName,
+          size = 76.dp,
+          borderColor = Color.White,
+          borderWidth = 2.dp,
+          modifier = Modifier.clickable {
+            dpPicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+          },
+        )
+        Surface(
+          onClick = {
+            dpPicker.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+          },
+          shape = CircleShape,
           color = Color.White,
-          fontWeight = FontWeight.Bold,
-        )
-        Text(
-          text = "@${profile?.handle.orEmpty().ifBlank { "swar_user" }} • ${profile?.clubTag.orEmpty().ifBlank { "SWAR" }}",
-          style = MaterialTheme.typography.bodySmall,
-          color = SwarCyan,
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-        // Unique 10-Digit ID Pill + Copy Icon
-        Surface(
-          color = Color(0x28FFFFFF),
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.border(1.dp, SwarCyan.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
-        ) {
-          Row(
-            modifier = Modifier.padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text(
-              text = "ID: $numericId",
-              style = MaterialTheme.typography.labelLarge,
-              color = Color.White,
-              fontWeight = FontWeight.Bold,
-              modifier = Modifier.testTag("profile_numeric_id"),
-            )
-            IconButton(
-              onClick = {
-                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                cm?.setPrimaryClip(ClipData.newPlainText("SwarRoom ID", numericId))
-                Toast.makeText(context, "ID कॉपी हो गई: $numericId", Toast.LENGTH_SHORT).show()
-              },
-              modifier = Modifier
-                .minimumInteractiveComponentSize()
-                .testTag("copy_own_id_button"),
-            ) {
-              Icon(
-                imageVector = Icons.Filled.ContentCopy,
-                contentDescription = "ID कॉपी करें",
-                tint = SwarCyan,
-                modifier = Modifier.size(18.dp),
-              )
-            }
-          }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-        // Level Badge & Progress Bar
-        Surface(
-          color = levelInfo.badgeColor.copy(alpha = 0.16f),
-          shape = RoundedCornerShape(14.dp),
+          shadowElevation = 2.dp,
           modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, levelInfo.badgeColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+            .size(26.dp)
+            .border(1.dp, Color(0xFFDDE3EE), CircleShape)
+            .testTag("change_dp_button"),
         ) {
-          Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween,
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-              ) {
-                Icon(
-                  imageVector = Icons.Filled.WorkspacePremium,
-                  contentDescription = null,
-                  tint = levelInfo.badgeColor,
-                  modifier = Modifier.size(18.dp),
-                )
-                Text(
-                  text = "Lv.${levelInfo.level} • ${levelInfo.title}",
-                  style = MaterialTheme.typography.labelLarge,
-                  color = levelInfo.badgeColor,
-                  fontWeight = FontWeight.Bold,
-                  modifier = Modifier.testTag("profile_level_badge"),
-                )
-              }
-              Text(
-                text = if (levelInfo.level >= 99) "मैक्स लेवल" else "अगले लेवल में ${levelInfo.nextLevelRemainingCoins} कॉइंस",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFFD0C9EC),
+          Box(contentAlignment = Alignment.Center) {
+            if (isUploadingMedia) {
+              CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = SwarCyan)
+            } else {
+              Icon(
+                imageVector = Icons.Filled.CameraAlt,
+                contentDescription = "DP बदलें",
+                tint = Color(0xFF283044),
+                modifier = Modifier.size(14.dp),
               )
-            }
-            LinearProgressIndicator(
-              progress = { levelInfo.progress },
-              modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(4.dp)),
-              color = levelInfo.badgeColor,
-              trackColor = Color(0x33FFFFFF),
-            )
-          }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-          text = profile?.bio.orEmpty().ifBlank { "SwarRoom पर लाइव बातचीत और संगीत!" },
-          style = MaterialTheme.typography.bodyMedium,
-          color = Color(0xFFCCC6E8),
-        )
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(12.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Surface(
-            color = Color(0x28FFFFFF),
-            shape = RoundedCornerShape(14.dp),
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              CoinEmblem(sizeDp = 16)
-              Text(
-                text = "${profile?.coins ?: 1500} कॉइंस",
-                style = MaterialTheme.typography.labelLarge,
-                color = SwarGold,
-                fontWeight = FontWeight.Bold,
-              )
-            }
-          }
-          Surface(
-            onClick = { showEditDialog = true },
-            color = SwarViolet,
-            shape = RoundedCornerShape(14.dp),
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Icon(Icons.Filled.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("प्रोफ़ाइल संपादित करें", style = MaterialTheme.typography.labelMedium, color = Color.White)
             }
           }
         }
       }
+
+      Spacer(modifier = Modifier.width(14.dp))
+
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+          Icon(
+            imageVector = Icons.Filled.Flag,
+            contentDescription = null,
+            tint = Color(0xFFE53935),
+            modifier = Modifier.size(17.dp),
+          )
+          Text(
+            text = displayName,
+            style = MaterialTheme.typography.titleLarge,
+            fontSize = 20.sp,
+            color = Color(0xFF171A23),
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+          )
+          Icon(
+            imageVector = Icons.Filled.Flag,
+            contentDescription = null,
+            tint = Color(0xFFE53935),
+            modifier = Modifier.size(17.dp),
+          )
+        }
+
+        Surface(
+          color = Color(0xFFE9EDF5),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = copyIdAction),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Text(
+              text = "ID:$numericId",
+              style = MaterialTheme.typography.labelMedium,
+              color = Color(0xFF70788B),
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.testTag("profile_numeric_id"),
+            )
+            Icon(
+              imageVector = Icons.Filled.ContentCopy,
+              contentDescription = "ID कॉपी करें",
+              tint = Color(0xFF70788B),
+              modifier = Modifier
+                .size(13.dp)
+                .testTag("copy_own_id_button"),
+            )
+          }
+        }
+      }
+
+      IconButton(
+        onClick = { showEditDialog = true },
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("edit_profile_switch_button"),
+      ) {
+        Icon(
+          imageVector = Icons.Filled.SwapHoriz,
+          contentDescription = "प्रोफ़ाइल संपादित करें",
+          tint = Color(0xFF788092),
+          modifier = Modifier.size(22.dp),
+        )
+      }
     }
 
-    // Supabase DP upload action button
-    OutlinedButton(
-      onClick = {
-        dpPicker.launch(
-          PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-        )
-      },
-      enabled = !isUploadingMedia,
-      shape = RoundedCornerShape(16.dp),
-      modifier = Modifier.fillMaxWidth().height(50.dp),
+    // Stats Row (अनुसरण करना | प्रशंसक) + Golden Winged Family/Club Crest on Right
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 8.dp, vertical = 2.dp),
+      verticalAlignment = Alignment.CenterVertically,
     ) {
-      Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(20.dp))
-      Spacer(modifier = Modifier.width(8.dp))
-      Text(
-        if (isUploadingMedia) "DP Supabase पर अपलोड हो रही है..."
-        else "प्रोफ़ाइल DP अपलोड / बदलें (Supabase Storage)"
+      Row(
+        modifier = Modifier.weight(1f),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          modifier = Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+              activeFeatureInfo = ProfileInfoPayload(
+                title = "अनुसरण (Following)",
+                highlight = "क्लब बैज: $clubTag",
+                description = "रूम में किसी भी सदस्य की प्रोफ़ाइल खोलकर आप उनसे जुड़ सकते हैं और निजी संदेश भेज सकते हैं।",
+              )
+            }
+            .padding(vertical = 6.dp),
+        ) {
+          Text(
+            text = "0",
+            style = MaterialTheme.typography.titleMedium,
+            color = Color(0xFF171A23),
+            fontWeight = FontWeight.ExtraBold,
+          )
+          Spacer(modifier = Modifier.height(2.dp))
+          Text(
+            text = "अनुसरण करना",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF8B92A5),
+          )
+        }
+
+        Box(
+          modifier = Modifier
+            .width(1.dp)
+            .height(24.dp)
+            .background(Color(0xFFDDE2EC))
+        )
+
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          modifier = Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+              activeFeatureInfo = ProfileInfoPayload(
+                title = "प्रशंसक (Fans)",
+                highlight = "स्तर: Lv.${levelInfo.level} • ${levelInfo.title}",
+                description = "रूम में होस्टिंग, बातचीत और गिफ्टिंग से आपके प्रशंसक और लोकप्रियता तेजी से बढ़ती है।",
+              )
+            }
+            .padding(vertical = 6.dp),
+        ) {
+          Text(
+            text = "0",
+            style = MaterialTheme.typography.titleMedium,
+            color = Color(0xFF171A23),
+            fontWeight = FontWeight.ExtraBold,
+          )
+          Spacer(modifier = Modifier.height(2.dp))
+          Text(
+            text = "प्रशंसक",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF8B92A5),
+          )
+        }
+      }
+
+      Spacer(modifier = Modifier.width(16.dp))
+
+      FamilyCrestEmblem(
+        clubTag = clubTag,
+        onClick = { showEditDialog = true },
       )
     }
 
-    SupabaseConfigNoticeCard(isConfigured = isSupabaseConfigured)
+    // Two Vibrant Side-by-Side Feature Cards: वॉलेट (Wallet) & स्टोर (Store)
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      WalletGradientCard(
+        coins = coins,
+        onClick = { showWalletDialog = true },
+        modifier = Modifier.weight(1f),
+      )
+      StoreGradientCard(
+        onClick = { showStoreDialog = true },
+        modifier = Modifier.weight(1f),
+      )
+    }
 
-    // Backend summary card
-    Card(
+    // Main Pure-White Rounded Menu List Card (Matching Reference Screenshot Rows)
+    Surface(
       shape = RoundedCornerShape(18.dp),
-      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+      color = Color.White,
+      shadowElevation = 1.dp,
       modifier = Modifier.fillMaxWidth(),
     ) {
-      Column(
-        modifier = Modifier.padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        Text("हाइब्रिड क्लाउड आर्किटेक्चर", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        Text(
-          "• Supabase Storage: प्रोफ़ाइल DP, रूम कवर और वीडियो मोमेंट्स",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+      Column(modifier = Modifier.fillMaxWidth()) {
+        ProfileMenuRow(
+          title = "सिक्के प्राप्त करने के लिए आमंत्रित करें",
+          icon = Icons.Filled.MonetizationOn,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFFFFA726),
+          onClick = {
+            val inviteText = "SwarRoom पर मेरे लाइव वॉइस रूम से जुड़ें! मेरी ID: $numericId"
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("SwarRoom Invite", inviteText))
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+              type = "text/plain"
+              putExtra(Intent.EXTRA_TEXT, inviteText)
+            }
+            runCatching {
+              context.startActivity(Intent.createChooser(shareIntent, "दोस्तों को आमंत्रित करें"))
+            }.onFailure {
+              Toast.makeText(context, "आमंत्रण कॉपी हो गया!", Toast.LENGTH_SHORT).show()
+            }
+          },
         )
-        Text(
-          "• Firebase Auth & Firestore: Google साइन-इन, लाइव सीटें, रीयल-टाइम रूम चैट और निजी संदेश",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "लव हाउस",
+          icon = Icons.Filled.Home,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFF7B6BFF),
+          onClick = {
+            activeFeatureInfo = ProfileInfoPayload(
+              title = "लव हाउस (क्लब परिवार)",
+              highlight = "आपका क्लब: $clubTag",
+              description = "अपने दोस्तों और रूम मेंबर्स के साथ एक खास क्लब टैग साझा करें और लाइव रूम में एक साथ चमकें।",
+            )
+          },
+        )
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "सीपी स्तर",
+          icon = Icons.Filled.Favorite,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFFFF4081),
+          onClick = {
+            activeFeatureInfo = ProfileInfoPayload(
+              title = "सीपी स्तर",
+              highlight = "कॉइंस बैलेंस: $coins",
+              description = "वॉइस रूम में साथ बैठकर और एक-दूसरे को शाही गिफ्ट भेजकर अपना सीपी स्तर बढ़ाएं।",
+            )
+          },
+        )
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "बैगपैक",
+          icon = Icons.Filled.Backpack,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFF29B6F6),
+          onClick = { showStoreDialog = true },
+        )
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "पदक",
+          icon = Icons.Filled.MilitaryTech,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFFFF9800),
+          onClick = {
+            activeFeatureInfo = ProfileInfoPayload(
+              title = "उपलब्धि पदक",
+              highlight = "वर्तमान पदक स्तर: Lv.${levelInfo.level}",
+              description = "उपाधि '${levelInfo.title}' सक्रिय है! अधिक कॉइंस और लाइव रूम गतिविधि से नए गोल्डन पदक अनलॉक होते हैं।",
+            )
+          },
+        )
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "स्तर",
+          icon = Icons.Filled.Shield,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFF4CD964),
+          trailingContent = {
+            GoldenWingedLevelBadge(level = levelInfo.level)
+          },
+          onClick = { showLevelDialog = true },
+        )
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "SVIP",
+          icon = Icons.Filled.Diamond,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFF8E54E9),
+          onClick = {
+            activeFeatureInfo = ProfileInfoPayload(
+              title = "SVIP विशेषाधिकार",
+              highlight = "अकाउंट आईडी: $numericId",
+              description = "रूम में रॉयल एंट्री, खास क्लब बैज ($clubTag) और प्रीमियम गिफ्ट अनुभव के साथ अलग पहचान पाएं।",
+            )
+          },
+        )
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "शिष्टजन",
+          icon = Icons.Filled.WorkspacePremium,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFFFFB300),
+          showNewBadge = true,
+          onClick = {
+            activeFeatureInfo = ProfileInfoPayload(
+              title = "शिष्टजन (रॉयल मेंबरशिप)",
+              highlight = "उपाधि: ${levelInfo.title}",
+              description = "रॉयल वॉइस स्टेज पर विशेष सम्मान, चमकदार गिफ्ट अनाउंसमेंट रिबन और प्राथमिकता सीट पहचान।",
+            )
+          },
         )
       }
+    }
+
+    // Second Pure-White Card: भाषा, प्रोफ़ाइल संपादन, और खाता क्रिया
+    Surface(
+      shape = RoundedCornerShape(18.dp),
+      color = Color.White,
+      shadowElevation = 1.dp,
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(modifier = Modifier.fillMaxWidth()) {
+        ProfileMenuRow(
+          title = "भाषा",
+          icon = Icons.Filled.Language,
+          iconTint = Color(0xFF1E2230),
+          iconBgColor = Color(0xFFEDF1F7),
+          trailingText = selectedLanguage,
+          onClick = { showLanguageDialog = true },
+        )
+        MenuHairlineDivider()
+        ProfileMenuRow(
+          title = "प्रोफ़ाइल संपादित करें",
+          icon = Icons.Filled.Edit,
+          iconTint = Color(0xFF4C3585),
+          iconBgColor = Color(0xFFEEE9FF),
+          onClick = { showEditDialog = true },
+        )
+      }
+    }
+
+    if (!isSupabaseConfigured) {
+      SupabaseConfigNoticeCard(isConfigured = false)
     }
 
     if (isSignedIn) {
@@ -402,6 +594,62 @@ fun ProfileScreen(
       },
     )
   }
+
+  if (showWalletDialog) {
+    WalletOverviewDialog(
+      coins = coins,
+      levelInfo = levelInfo,
+      canClaimBonus = onClaimBonusCoins != null,
+      onClaimBonusCoins = { onClaimBonusCoins?.invoke() },
+      onDismiss = { showWalletDialog = false },
+    )
+  }
+
+  if (showStoreDialog) {
+    SwarStoreDialog(
+      coins = coins,
+      gifts = giftCatalog,
+      onDismiss = { showStoreDialog = false },
+    )
+  }
+
+  if (showLevelDialog) {
+    LevelDetailsDialog(
+      levelInfo = levelInfo,
+      coins = coins,
+      onDismiss = { showLevelDialog = false },
+    )
+  }
+
+  if (showLanguageDialog) {
+    LanguageSelectionDialog(
+      currentLanguage = selectedLanguage,
+      onSelect = {
+        selectedLanguage = it
+        showLanguageDialog = false
+      },
+      onDismiss = { showLanguageDialog = false },
+    )
+  }
+
+  val featureInfo = activeFeatureInfo
+  if (featureInfo != null) {
+    ProfileFeatureInfoDialog(
+      title = featureInfo.title,
+      highlightBadge = featureInfo.highlight,
+      description = featureInfo.description,
+      onDismiss = { activeFeatureInfo = null },
+    )
+  }
+}
+
+@Composable
+private fun MenuHairlineDivider() {
+  HorizontalDivider(
+    modifier = Modifier.padding(start = 60.dp, end = 16.dp),
+    thickness = 0.6.dp,
+    color = Color(0xFFF0F2F7),
+  )
 }
 
 @Composable
@@ -438,7 +686,7 @@ private fun EditProfileDialog(
         OutlinedTextField(
           value = clubTag,
           onValueChange = { clubTag = it.take(16) },
-          label = { Text("क्लब बैज") },
+          label = { Text("क्लब / परिवार बैज") },
           singleLine = true,
           modifier = Modifier.fillMaxWidth(),
         )

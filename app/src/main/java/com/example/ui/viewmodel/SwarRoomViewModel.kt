@@ -1048,7 +1048,8 @@ class SwarRoomViewModel(
     emoji: String,
     coinCost: Long,
     thumbnailUri: Uri?,
-    videoUri: Uri?,
+    dpLinkUrl: String = "",
+    videoLinkUrl: String = "",
     onSuccess: () -> Unit,
   ) {
     if (!isAdminUser) {
@@ -1078,43 +1079,51 @@ class SwarRoomViewModel(
             _events.tryEmit(msg)
             return@launch
           }
+      } else if (dpLinkUrl.trim().isNotBlank()) {
+        val cleanDpLink = dpLinkUrl.trim()
+        _isUploadingMedia.value = true
+        val resolvedDp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+          com.example.data.repository.VideoLinkResolver.resolveImageUrl(cleanDpLink)
+        }
+        _isUploadingMedia.value = false
+        resolvedDp.onSuccess { resolvedUrl ->
+          thumbUrl = resolvedUrl
+        }.onFailure { err ->
+          val msg = err.message ?: "गिफ्ट DP लिंक पढ़ा नहीं जा सका।"
+          _giftUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
       }
 
-      if (videoUri != null) {
+      val cleanVideoLink = videoLinkUrl.trim()
+      if (cleanVideoLink.isNotBlank()) {
+        if (!cleanVideoLink.startsWith("http://", ignoreCase = true) &&
+          !cleanVideoLink.startsWith("https://", ignoreCase = true)
+        ) {
+          val msg = "कृपया https:// या http:// से शुरू होने वाला मान्य वीडियो लिंक दर्ज करें।"
+          _giftUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
         _isUploadingMedia.value = true
-        _events.tryEmit("गिफ्ट वीडियो कम MB में कम्प्रेश व अपलोड हो रहा है...")
-        val upload = supabaseStorage.uploadMediaFromUri(
-          uri = videoUri,
-          folder = "gifts",
-          uid = currentUserId,
-          isVideo = true,
-        )
+        val resolved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+          com.example.data.repository.VideoLinkResolver.resolvePlayableVideo(cleanVideoLink)
+        }
         _isUploadingMedia.value = false
-        upload.onSuccess { videoUrl = it }
-          .onFailure { err ->
-            val msg = err.message ?: "गिफ्ट वीडियो अपलोड विफल"
-            _giftUploadError.value = msg
-            _events.tryEmit(msg)
-            return@launch
+        when (resolved) {
+          is com.example.data.repository.VideoLinkResolution.Success -> {
+            videoUrl = resolved.playableUrl
+            if (thumbUrl.isBlank() && resolved.thumbnailUrl.isNotBlank()) {
+              thumbUrl = resolved.thumbnailUrl
+            }
           }
-
-        // If no DP was explicitly selected for the video gift, extract a crisp first-frame DP automatically
-        if (thumbUrl.isBlank() && appContext != null) {
-          val thumbFile = MediaCompressor.extractVideoThumbnailFile(appContext, videoUri)
-          if (thumbFile != null) {
-            try {
-              _isUploadingMedia.value = true
-              supabaseStorage.uploadMediaFromUri(
-                uri = Uri.fromFile(thumbFile),
-                folder = "gifts",
-                uid = currentUserId,
-                isVideo = false,
-              ).onSuccess { generatedThumbUrl ->
-                thumbUrl = generatedThumbUrl
-              }
-            } finally {
-              _isUploadingMedia.value = false
-              runCatching { thumbFile.delete() }
+          is com.example.data.repository.VideoLinkResolution.Failure -> {
+            // Save the original link so live playback can still retry/test on recipient devices,
+            // and keep any extracted fallback thumbnail for the Gift Panel DP!
+            videoUrl = cleanVideoLink
+            if (thumbUrl.isBlank() && resolved.fallbackImageUrl.isNotBlank()) {
+              thumbUrl = resolved.fallbackImageUrl
             }
           }
         }
@@ -1137,7 +1146,7 @@ class SwarRoomViewModel(
         coinCost = coinCost,
       ).onSuccess {
         _giftUploadError.value = null
-        _events.tryEmit("नया गिफ्ट सभी यूज़र्स के लिए लाइव हो गया! 🎁")
+        _events.tryEmit("नया गिफ्ट और DP सभी यूज़र्स के लिए लाइव हो गए! 🎁")
         onSuccess()
       }.onFailure { err ->
         val msg = err.message ?: "गिफ्ट जोड़ने में त्रुटि"
@@ -1253,7 +1262,8 @@ class SwarRoomViewModel(
     emoji: String,
     coinCost: Long,
     newThumbnailUri: Uri?,
-    newVideoUri: Uri?,
+    newDpLinkUrl: String = "",
+    newVideoLinkUrl: String = "",
     removeExistingThumbnail: Boolean,
     removeExistingVideo: Boolean,
     onSuccess: () -> Unit,
@@ -1294,25 +1304,54 @@ class SwarRoomViewModel(
             _events.tryEmit(msg)
             return@launch
           }
+      } else if (newDpLinkUrl.trim().isNotBlank() && newDpLinkUrl.trim() != oldThumbUrl) {
+        val cleanDpLink = newDpLinkUrl.trim()
+        _isUploadingMedia.value = true
+        val resolvedDp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+          com.example.data.repository.VideoLinkResolver.resolveImageUrl(cleanDpLink)
+        }
+        _isUploadingMedia.value = false
+        resolvedDp.onSuccess { resolvedUrl ->
+          finalThumbUrl = resolvedUrl
+        }.onFailure { err ->
+          val msg = err.message ?: "नया DP लिंक पढ़ा नहीं जा सका।"
+          _giftUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
       }
 
-      if (newVideoUri != null) {
+      val cleanVideoLink = newVideoLinkUrl.trim()
+      if (cleanVideoLink.isNotBlank() && cleanVideoLink != oldVideoUrl) {
+        if (!cleanVideoLink.startsWith("http://", ignoreCase = true) &&
+          !cleanVideoLink.startsWith("https://", ignoreCase = true)
+        ) {
+          val msg = "कृपया https:// या http:// से शुरू होने वाला मान्य वीडियो लिंक दर्ज करें।"
+          _giftUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
         _isUploadingMedia.value = true
-        _events.tryEmit("नया गिफ्ट वीडियो कम MB में कम्प्रेश व अपलोड हो रहा है...")
-        val upload = supabaseStorage.uploadMediaFromUri(
-          uri = newVideoUri,
-          folder = "gifts",
-          uid = currentUserId,
-          isVideo = true,
-        )
+        val resolved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+          com.example.data.repository.VideoLinkResolver.resolvePlayableVideo(cleanVideoLink)
+        }
         _isUploadingMedia.value = false
-        upload.onSuccess { finalVideoUrl = it }
-          .onFailure { err ->
-            val msg = err.message ?: "नया गिफ्ट वीडियो अपलोड विफल"
-            _giftUploadError.value = msg
-            _events.tryEmit(msg)
-            return@launch
+        when (resolved) {
+          is com.example.data.repository.VideoLinkResolution.Success -> {
+            finalVideoUrl = resolved.playableUrl
+            if (finalThumbUrl.isBlank() && resolved.thumbnailUrl.isNotBlank()) {
+              finalThumbUrl = resolved.thumbnailUrl
+            }
           }
+          is com.example.data.repository.VideoLinkResolution.Failure -> {
+            finalVideoUrl = cleanVideoLink
+            if (finalThumbUrl.isBlank() && resolved.fallbackImageUrl.isNotBlank()) {
+              finalThumbUrl = resolved.fallbackImageUrl
+            }
+          }
+        }
+      } else if (removeExistingVideo) {
+        finalVideoUrl = ""
       }
 
       val finalMediaType = when {

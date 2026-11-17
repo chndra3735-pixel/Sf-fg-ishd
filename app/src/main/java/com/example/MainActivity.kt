@@ -49,10 +49,12 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -166,8 +168,14 @@ class MainActivity : ComponentActivity() {
         .build()
     }
     enableEdgeToEdge(
-      statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
-      navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+      statusBarStyle = SystemBarStyle.light(
+        android.graphics.Color.TRANSPARENT,
+        android.graphics.Color.TRANSPARENT,
+      ),
+      navigationBarStyle = SystemBarStyle.light(
+        android.graphics.Color.TRANSPARENT,
+        android.graphics.Color.TRANSPARENT,
+      ),
     )
     setContent {
       SwarRoomTheme {
@@ -403,7 +411,29 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   }
 
   val currentRoom = activeRoom
-  if (currentRoom != null && !isRoomMinimized) {
+  val inVoiceRoom = currentRoom != null && !isRoomMinimized
+  LaunchedEffect(inVoiceRoom, context) {
+    val activity = context as? ComponentActivity ?: return@LaunchedEffect
+    if (inVoiceRoom) {
+      activity.enableEdgeToEdge(
+        statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+      )
+    } else {
+      activity.enableEdgeToEdge(
+        statusBarStyle = SystemBarStyle.light(
+          android.graphics.Color.TRANSPARENT,
+          android.graphics.Color.TRANSPARENT,
+        ),
+        navigationBarStyle = SystemBarStyle.light(
+          android.graphics.Color.TRANSPARENT,
+          android.graphics.Color.TRANSPARENT,
+        ),
+      )
+    }
+  }
+
+  if (inVoiceRoom && currentRoom != null) {
     Box(modifier = Modifier.fillMaxSize()) {
       val userProfile = (profileState as? UiState.Success)?.data
       val coins = userProfile?.coins ?: 1500L
@@ -447,10 +477,10 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onSendGift = { gift, recipientUid, recipientName, quantity ->
           viewModel.sendGift(gift, recipientUid, recipientName, quantity)
         },
-        onAddCustomGift = { name, category, emoji, coinCost, thumbUri, videoUri, onDone ->
-          viewModel.addCustomGift(name, category, emoji, coinCost, thumbUri, videoUri, onDone)
+        onAddCustomGift = { name, category, emoji, coinCost, thumbUri, dpLinkUrl, videoLinkUrl, onDone ->
+          viewModel.addCustomGift(name, category, emoji, coinCost, thumbUri, dpLinkUrl, videoLinkUrl, onDone)
         },
-        onUpdateCustomGift = { existing, name, category, emoji, coinCost, newThumbUri, newVideoUri, removeThumb, removeVideo, onDone ->
+        onUpdateCustomGift = { existing, name, category, emoji, coinCost, newThumbUri, newDpLinkUrl, newVideoLinkUrl, removeThumb, removeVideo, onDone ->
           viewModel.updateCustomGift(
             existing = existing,
             name = name,
@@ -458,7 +488,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
             emoji = emoji,
             coinCost = coinCost,
             newThumbnailUri = newThumbUri,
-            newVideoUri = newVideoUri,
+            newDpLinkUrl = newDpLinkUrl,
+            newVideoLinkUrl = newVideoLinkUrl,
             removeExistingThumbnail = removeThumb,
             removeExistingVideo = removeVideo,
             onSuccess = onDone,
@@ -512,59 +543,78 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
     return
   }
 
+  val navItemColors = NavigationBarItemDefaults.colors(
+    selectedIconColor = Color(0xFF008CE6),
+    selectedTextColor = Color(0xFF008CE6),
+    indicatorColor = Color(0xFFE1F3FF),
+    unselectedIconColor = Color(0xFF647087),
+    unselectedTextColor = Color(0xFF647087),
+  )
+
   Scaffold(
+    containerColor = Color.White,
     contentWindowInsets = WindowInsets.safeDrawing,
     snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     bottomBar = {
-      NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-        NavigationBarItem(
-          selected = currentTab == MainTab.ROOMS,
-          onClick = { currentTab = MainTab.ROOMS },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == MainTab.ROOMS) Icons.Filled.Home else Icons.Outlined.Home,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_rooms)) },
-          modifier = Modifier.testTag("nav_tab_rooms"),
-        )
-        NavigationBarItem(
-          selected = currentTab == MainTab.MOMENTS,
-          onClick = { currentTab = MainTab.MOMENTS },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == MainTab.MOMENTS) Icons.Filled.Explore else Icons.Outlined.Explore,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_moments)) },
-          modifier = Modifier.testTag("nav_tab_moments"),
-        )
-        NavigationBarItem(
-          selected = currentTab == MainTab.MESSAGES,
-          onClick = { currentTab = MainTab.MESSAGES },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == MainTab.MESSAGES) Icons.AutoMirrored.Filled.Chat else Icons.AutoMirrored.Outlined.Chat,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_messages)) },
-          modifier = Modifier.testTag("nav_tab_messages"),
-        )
-        NavigationBarItem(
-          selected = currentTab == MainTab.PROFILE,
-          onClick = { currentTab = MainTab.PROFILE },
-          icon = {
-            Icon(
-              imageVector = if (currentTab == MainTab.PROFILE) Icons.Filled.Person else Icons.Outlined.Person,
-              contentDescription = null,
-            )
-          },
-          label = { Text(stringResource(id = R.string.nav_profile)) },
-          modifier = Modifier.testTag("nav_tab_profile"),
-        )
+      Column(modifier = Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = Color(0xFFE7EFF7), thickness = 1.dp)
+        NavigationBar(
+          containerColor = Color.White,
+          tonalElevation = 0.dp,
+        ) {
+          NavigationBarItem(
+            selected = currentTab == MainTab.ROOMS,
+            onClick = { currentTab = MainTab.ROOMS },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == MainTab.ROOMS) Icons.Filled.Home else Icons.Outlined.Home,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_rooms)) },
+            modifier = Modifier.testTag("nav_tab_rooms"),
+          )
+          NavigationBarItem(
+            selected = currentTab == MainTab.MOMENTS,
+            onClick = { currentTab = MainTab.MOMENTS },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == MainTab.MOMENTS) Icons.Filled.Explore else Icons.Outlined.Explore,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_moments)) },
+            modifier = Modifier.testTag("nav_tab_moments"),
+          )
+          NavigationBarItem(
+            selected = currentTab == MainTab.MESSAGES,
+            onClick = { currentTab = MainTab.MESSAGES },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == MainTab.MESSAGES) Icons.AutoMirrored.Filled.Chat else Icons.AutoMirrored.Outlined.Chat,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_messages)) },
+            modifier = Modifier.testTag("nav_tab_messages"),
+          )
+          NavigationBarItem(
+            selected = currentTab == MainTab.PROFILE,
+            onClick = { currentTab = MainTab.PROFILE },
+            colors = navItemColors,
+            icon = {
+              Icon(
+                imageVector = if (currentTab == MainTab.PROFILE) Icons.Filled.Person else Icons.Outlined.Person,
+                contentDescription = null,
+              )
+            },
+            label = { Text(stringResource(id = R.string.nav_profile)) },
+            modifier = Modifier.testTag("nav_tab_profile"),
+          )
+        }
       }
     },
   ) { innerPadding ->
@@ -617,6 +667,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
               signOut(credentialManager, scope)
             }
           },
+          onClaimBonusCoins = { viewModel.claimDailyBonusCoins() },
+          giftCatalog = giftCatalog,
         )
       }
 

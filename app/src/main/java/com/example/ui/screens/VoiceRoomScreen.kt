@@ -192,8 +192,8 @@ fun VoiceRoomScreen(
   onUpdateCustomEmoji: (EmojiCatalogItem, String, String, String, Uri?, Boolean, () -> Unit) -> Unit,
   onDeleteCustomEmoji: (EmojiCatalogItem, () -> Unit) -> Unit,
   onSendGift: (GiftCatalogItem, String, String, Int) -> Unit,
-  onAddCustomGift: (String, String, String, Long, Uri?, Uri?, () -> Unit) -> Unit,
-  onUpdateCustomGift: (GiftCatalogItem, String, String, String, Long, Uri?, Uri?, Boolean, Boolean, () -> Unit) -> Unit,
+  onAddCustomGift: (String, String, String, Long, Uri?, String, String, () -> Unit) -> Unit,
+  onUpdateCustomGift: (GiftCatalogItem, String, String, String, Long, Uri?, String, String, Boolean, Boolean, () -> Unit) -> Unit,
   onDeleteCustomGift: (GiftCatalogItem, () -> Unit) -> Unit,
   onDismissFullScreenGift: () -> Unit,
   onClearMarqueeGift: (String) -> Unit = {},
@@ -822,6 +822,7 @@ fun VoiceRoomScreen(
       FullScreenGiftOverlay(
         event = activeFullScreenGift,
         onDismiss = onDismissFullScreenGift,
+        onPlaybackMessage = onShowToast,
       )
     }
   }
