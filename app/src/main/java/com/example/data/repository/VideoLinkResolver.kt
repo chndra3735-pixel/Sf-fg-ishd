@@ -9,12 +9,14 @@ sealed interface VideoLinkResolution {
     val playableUrl: String,
     val thumbnailUrl: String = "",
     val isHlsStream: Boolean = false,
+    val canonicalPageUrl: String = "",
   ) : VideoLinkResolution
 
   data class Failure(
     val reasonHindi: String,
     val fallbackImageUrl: String = "",
     val embedFallbackUrl: String = "",
+    val canonicalPageUrl: String = "",
   ) : VideoLinkResolution
 }
 
@@ -35,6 +37,10 @@ object VideoLinkResolver {
 
   private val resolvedCache = ConcurrentHashMap<String, CachedResolution>()
 
+  private val firstHttpUrlRegex = Regex(
+    """https?://[^\s<>"']+""",
+    RegexOption.IGNORE_CASE,
+  )
   private val directVideoExtRegex = Regex(
     """\.(mp4|m4v|mov|webm|3gp|mkv)(\?.*)?$""",
     RegexOption.IGNORE_CASE,
@@ -43,8 +49,12 @@ object VideoLinkResolver {
     """\.m3u8(\?.*)?$""",
     RegexOption.IGNORE_CASE,
   )
+  private val instagramHostRegex = Regex(
+    """https?://(?:www\.|m\.)?(?:instagram\.com|instagr\.am)/""",
+    RegexOption.IGNORE_CASE,
+  )
   private val instagramShortcodeRegex = Regex(
-    """https?://(?:www\.|m\.)?instagram\.com/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)""",
+    """https?://(?:www\.|m\.)?(?:instagram\.com|instagr\.am)/(?:(?!share/)[A-Za-z0-9._-]+/)?(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)""",
     RegexOption.IGNORE_CASE,
   )
   private val instagramVideoUrlRegex = Regex(
@@ -108,14 +118,52 @@ object VideoLinkResolver {
     RegexOption.IGNORE_CASE,
   )
 
+  fun extractFirstHttpUrl(rawInput: String): String {
+    val trimmed = rawInput.trim()
+    val match = firstHttpUrlRegex.find(trimmed)?.value ?: return trimmed
+    return match.trimEnd('.', ',', ';', ')', ']', '}')
+  }
+
+  fun isSocialOrPageVideoUrl(rawUrl: String): Boolean {
+    val cleanUrl = extractFirstHttpUrl(rawUrl)
+    if (!cleanUrl.startsWith("http://", ignoreCase = true) &&
+      !cleanUrl.startsWith("https://", ignoreCase = true)
+    ) {
+      return false
+    }
+    return !directVideoExtRegex.containsMatchIn(cleanUrl) && !hlsExtRegex.containsMatchIn(cleanUrl)
+  }
+
   fun instagramEmbedUrl(rawUrl: String): String? {
-    val shortcode = instagramShortcodeRegex.find(rawUrl.trim())?.groupValues?.getOrNull(1)
+    val cleanUrl = extractFirstHttpUrl(rawUrl)
+    val shortcode = instagramShortcodeRegex.find(cleanUrl)?.groupValues?.getOrNull(1)
       ?: return null
     return "https://www.instagram.com/reel/$shortcode/embed/"
   }
 
+  fun instagramCanonicalReelUrl(rawUrl: String): String? {
+    val cleanUrl = extractFirstHttpUrl(rawUrl)
+    val shortcode = instagramShortcodeRegex.find(cleanUrl)?.groupValues?.getOrNull(1)
+      ?: return null
+    return "https://www.instagram.com/reel/$shortcode/"
+  }
+
+  private fun followRedirectsForCanonicalUrl(rawUrl: String): String {
+    return runCatching {
+      val request = Request.Builder()
+        .url(rawUrl)
+        .get()
+        .header("User-Agent", BROWSER_USER_AGENT)
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .build()
+      SupabaseNetworkClient.sharedOkHttpClient.newCall(request).execute().use { response ->
+        response.request.url.toString()
+      }
+    }.getOrElse { rawUrl }
+  }
+
   fun resolvePlayableVideo(rawUrl: String): VideoLinkResolution {
-    val cleanUrl = rawUrl.trim()
+    val cleanUrl = extractFirstHttpUrl(rawUrl)
     if (cleanUrl.isBlank()) {
       return VideoLinkResolution.Failure("वीडियो लिंक खाली है।")
     }
@@ -126,10 +174,10 @@ object VideoLinkResolver {
     }
 
     if (directVideoExtRegex.containsMatchIn(cleanUrl)) {
-      return VideoLinkResolution.Success(playableUrl = cleanUrl)
+      return VideoLinkResolution.Success(playableUrl = cleanUrl, canonicalPageUrl = cleanUrl)
     }
     if (hlsExtRegex.containsMatchIn(cleanUrl)) {
-      return VideoLinkResolution.Success(playableUrl = cleanUrl, isHlsStream = true)
+      return VideoLinkResolution.Success(playableUrl = cleanUrl, isHlsStream = true, canonicalPageUrl = cleanUrl)
     }
 
     val now = System.currentTimeMillis()
@@ -139,8 +187,18 @@ object VideoLinkResolver {
       }
     }
 
-    val igShortcode = instagramShortcodeRegex.find(cleanUrl)?.groupValues?.getOrNull(1)
+    var effectiveUrl = cleanUrl
+    var igShortcode = instagramShortcodeRegex.find(cleanUrl)?.groupValues?.getOrNull(1)
+    if (igShortcode == null && instagramHostRegex.containsMatchIn(cleanUrl)) {
+      val redirectedUrl = followRedirectsForCanonicalUrl(cleanUrl)
+      val redirectedCode = instagramShortcodeRegex.find(redirectedUrl)?.groupValues?.getOrNull(1)
+      if (redirectedCode != null) {
+        igShortcode = redirectedCode
+        effectiveUrl = "https://www.instagram.com/reel/$redirectedCode/"
+      }
+    }
     val igEmbedUrl = igShortcode?.let { "https://www.instagram.com/reel/$it/embed/" }.orEmpty()
+    val canonicalUrl = igShortcode?.let { "https://www.instagram.com/reel/$it/" } ?: effectiveUrl
 
     val candidateRequests: List<Pair<String, Map<String, String>>> = buildList {
       if (igShortcode != null) {
@@ -161,17 +219,17 @@ object VideoLinkResolver {
           )
         )
         add(
-          cleanUrl to mapOf(
+          effectiveUrl to mapOf(
             "User-Agent" to "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
           )
         )
       }
-      add(cleanUrl to mapOf("User-Agent" to BROWSER_USER_AGENT))
+      add(effectiveUrl to mapOf("User-Agent" to BROWSER_USER_AGENT))
     }
 
     var lastFailure: VideoLinkResolution.Failure? = null
     for ((targetUrl, extraHeaders) in candidateRequests) {
-      val attempt = fetchAndExtract(targetUrl, igEmbedUrl, extraHeaders)
+      val attempt = fetchAndExtract(targetUrl, igEmbedUrl, canonicalUrl, extraHeaders)
       if (attempt is VideoLinkResolution.Success) {
         resolvedCache[cleanUrl] = CachedResolution(attempt, now + CACHE_TTL_MS)
         return attempt
@@ -186,12 +244,14 @@ object VideoLinkResolver {
     return lastFailure ?: VideoLinkResolution.Failure(
       reasonHindi = "लिंक से वीडियो लोड नहीं हो सका।",
       embedFallbackUrl = igEmbedUrl,
+      canonicalPageUrl = canonicalUrl,
     )
   }
 
   private fun fetchAndExtract(
     targetUrl: String,
     igEmbedUrl: String,
+    canonicalPageUrl: String,
     extraHeaders: Map<String, String> = emptyMap(),
   ): VideoLinkResolution {
     return runCatching {
@@ -213,35 +273,47 @@ object VideoLinkResolver {
 
       SupabaseNetworkClient.sharedOkHttpClient.newCall(request).execute().use { response ->
         val finalUrl = response.request.url.toString()
+        val resolvedEmbed = igEmbedUrl.ifBlank { instagramEmbedUrl(finalUrl).orEmpty() }
+        val resolvedCanonical = canonicalPageUrl.ifBlank { instagramCanonicalReelUrl(finalUrl) ?: finalUrl }
         val contentType = response.header("Content-Type").orEmpty().lowercase()
 
         if (!response.isSuccessful) {
           return@use VideoLinkResolution.Failure(
             reasonHindi = "वीडियो लिंक खोलने में सर्वर त्रुटि (HTTP ${response.code})।",
-            embedFallbackUrl = igEmbedUrl,
+            embedFallbackUrl = resolvedEmbed,
+            canonicalPageUrl = resolvedCanonical,
           )
         }
 
         if (contentType.startsWith("video/") || directVideoExtRegex.containsMatchIn(finalUrl)) {
-          return@use VideoLinkResolution.Success(playableUrl = finalUrl)
+          return@use VideoLinkResolution.Success(
+            playableUrl = finalUrl,
+            canonicalPageUrl = resolvedCanonical,
+          )
         }
         if (contentType.contains("mpegurl") || hlsExtRegex.containsMatchIn(finalUrl)) {
-          return@use VideoLinkResolution.Success(playableUrl = finalUrl, isHlsStream = true)
+          return@use VideoLinkResolution.Success(
+            playableUrl = finalUrl,
+            isHlsStream = true,
+            canonicalPageUrl = resolvedCanonical,
+          )
         }
 
         val htmlBody = response.body?.string().orEmpty()
         if (htmlBody.isBlank()) {
           return@use VideoLinkResolution.Failure(
             reasonHindi = "इस लिंक से कोई वीडियो डेटा प्राप्त नहीं हुआ।",
-            embedFallbackUrl = igEmbedUrl,
+            embedFallbackUrl = resolvedEmbed,
+            canonicalPageUrl = resolvedCanonical,
           )
         }
 
-        val extracted = extractMediaFromHtml(htmlBody, finalUrl)
-        if (extracted is VideoLinkResolution.Failure && igEmbedUrl.isNotBlank() && extracted.embedFallbackUrl.isBlank()) {
-          extracted.copy(embedFallbackUrl = igEmbedUrl)
-        } else {
-          extracted
+        when (val extracted = extractMediaFromHtml(htmlBody, finalUrl)) {
+          is VideoLinkResolution.Success -> extracted.copy(canonicalPageUrl = resolvedCanonical)
+          is VideoLinkResolution.Failure -> extracted.copy(
+            embedFallbackUrl = extracted.embedFallbackUrl.ifBlank { resolvedEmbed },
+            canonicalPageUrl = resolvedCanonical,
+          )
         }
       }
     }.getOrElse { error ->
@@ -249,6 +321,7 @@ object VideoLinkResolver {
       VideoLinkResolution.Failure(
         reasonHindi = "लिंक से वीडियो लोड नहीं हो सका (${error.message ?: "नेटवर्क त्रुटि"})।",
         embedFallbackUrl = igEmbedUrl,
+        canonicalPageUrl = canonicalPageUrl,
       )
     }
   }
@@ -378,7 +451,7 @@ object VideoLinkResolver {
   )
 
   fun resolveImageUrl(rawUrl: String): Result<String> {
-    val cleanUrl = rawUrl.trim()
+    val cleanUrl = extractFirstHttpUrl(rawUrl)
     if (cleanUrl.isBlank()) {
       return Result.failure(IllegalArgumentException("DP लिंक खाली है।"))
     }
@@ -392,27 +465,46 @@ object VideoLinkResolver {
     }
 
     return runCatching {
-      val request = Request.Builder()
-        .url(cleanUrl)
-        .get()
-        .header("User-Agent", BROWSER_USER_AGENT)
-        .header("Accept", "text/html,application/xhtml+xml,image/*,*/*;q=0.8")
-        .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
-        .build()
-
-      SupabaseNetworkClient.sharedOkHttpClient.newCall(request).execute().use { response ->
-        val finalUrl = response.request.url.toString()
-        val contentType = response.header("Content-Type").orEmpty().lowercase()
-        if (!response.isSuccessful) {
-          throw IllegalStateException("DP लिंक लोड नहीं हुआ (HTTP ${response.code})।")
-        }
-        if (contentType.startsWith("image/") || directImageExtRegex.containsMatchIn(finalUrl)) {
-          return@use finalUrl
-        }
-        val htmlBody = response.body?.string().orEmpty()
-        extractImageFromHtml(htmlBody)
-          ?: throw IllegalStateException("इस लिंक में DP फोटो नहीं मिली — सीधा फोटो लिंक (.jpg/.png) या गैलरी फोटो चुनें।")
+      val igCanonical = if (instagramHostRegex.containsMatchIn(cleanUrl)) {
+        instagramCanonicalReelUrl(cleanUrl) ?: followRedirectsForCanonicalUrl(cleanUrl)
+      } else {
+        cleanUrl
       }
+      val igCode = instagramShortcodeRegex.find(igCanonical)?.groupValues?.getOrNull(1)
+      val candidateRequests = buildList {
+        if (igCode != null) {
+          add("https://www.instagram.com/reel/$igCode/embed/captioned/" to BROWSER_USER_AGENT)
+          add(igCanonical to "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)")
+        }
+        add(cleanUrl to BROWSER_USER_AGENT)
+      }
+
+      for ((url, ua) in candidateRequests) {
+        val request = Request.Builder()
+          .url(url)
+          .get()
+          .header("User-Agent", ua)
+          .header("Accept", "text/html,application/xhtml+xml,image/*,*/*;q=0.8")
+          .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
+          .build()
+
+        val found = runCatching {
+          SupabaseNetworkClient.sharedOkHttpClient.newCall(request).execute().use { response ->
+            val finalUrl = response.request.url.toString()
+            val contentType = response.header("Content-Type").orEmpty().lowercase()
+            if (!response.isSuccessful) return@use null
+            if (contentType.startsWith("image/") || directImageExtRegex.containsMatchIn(finalUrl)) {
+              return@use finalUrl
+            }
+            val htmlBody = response.body?.string().orEmpty()
+            extractImageFromHtml(htmlBody)
+          }
+        }.getOrNull()
+        if (!found.isNullOrBlank()) {
+          return@runCatching found
+        }
+      }
+      throw IllegalStateException("इस लिंक में DP फोटो नहीं मिली — सीधा फोटो लिंक (.jpg/.png) या गैलरी फोटो चुनें।")
     }
   }
 

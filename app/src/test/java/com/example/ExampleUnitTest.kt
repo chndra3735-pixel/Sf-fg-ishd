@@ -129,4 +129,23 @@ class ExampleUnitTest {
     val ok = res as VideoLinkResolution.Success
     assertEquals("https://video-bom1-2.xx.fbcdn.net/v/t42.1790-2/clip.mp4?efg=123&oe=456", ok.playableUrl)
   }
+
+  @Test
+  fun videoLinkResolver_handlesShareTextProfileReelsAndSocialPageDetection() {
+    val pastedShareText = "ये मज़ेदार रील देखो 👉 https://www.instagram.com/creator_name/reel/Dfqs1NiPAe3/?igsh=abc123!"
+    val extracted = VideoLinkResolver.extractFirstHttpUrl(pastedShareText)
+    assertEquals("https://www.instagram.com/creator_name/reel/Dfqs1NiPAe3/?igsh=abc123!", extracted)
+    assertEquals(
+      "https://www.instagram.com/reel/Dfqs1NiPAe3/embed/",
+      VideoLinkResolver.instagramEmbedUrl(pastedShareText),
+    )
+    assertEquals(
+      "https://www.instagram.com/reel/Dfqs1NiPAe3/",
+      VideoLinkResolver.instagramCanonicalReelUrl(pastedShareText),
+    )
+    // /share/reel/<token> must not mistake "share" for a username
+    assertNull(VideoLinkResolver.instagramEmbedUrl("https://www.instagram.com/share/reel/BAcDef123/"))
+    assertTrue(VideoLinkResolver.isSocialOrPageVideoUrl(extracted))
+    assertFalse(VideoLinkResolver.isSocialOrPageVideoUrl("https://cdn.example.com/gifts/dragon.mp4?token=1"))
+  }
 }

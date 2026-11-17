@@ -106,6 +106,7 @@ import com.example.ui.theme.SwarViolet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 @Composable
@@ -446,27 +447,41 @@ fun FullScreenGiftOverlay(
   var preparedDurationMs by remember(event.id) { mutableStateOf<Long?>(null) }
   var fallbackThumbUrl by remember(event.id) { mutableStateOf("") }
   var embedFallbackUrl by remember(event.id) { mutableStateOf<String?>(null) }
-  val directInstagramEmbed = remember(event.giftMediaUrl) {
-    VideoLinkResolver.instagramEmbedUrl(event.giftMediaUrl)
+  val cleanGiftUrl = remember(event.giftMediaUrl) {
+    VideoLinkResolver.extractFirstHttpUrl(event.giftMediaUrl)
+  }
+  val directInstagramEmbed = remember(cleanGiftUrl) {
+    VideoLinkResolver.instagramEmbedUrl(cleanGiftUrl)
+  }
+  var resolvedEmbedUrl by remember(event.id, cleanGiftUrl) {
+    mutableStateOf(directInstagramEmbed)
   }
   val isEmbedMode = embedFallbackUrl != null
-  val isVideoGift = event.giftMediaType == "video" && event.giftMediaUrl.isNotBlank() && !videoFailed && !isEmbedMode
-  var resolvedVideoUri by remember(event.id, event.giftMediaUrl) {
-    mutableStateOf<Uri?>(if (event.giftMediaUrl.startsWith("http")) null else Uri.parse(event.giftMediaUrl))
+  val isVideoGift = event.giftMediaType == "video" && cleanGiftUrl.isNotBlank() && !videoFailed && !isEmbedMode
+  var resolvedVideoUri by remember(event.id, cleanGiftUrl) {
+    mutableStateOf<Uri?>(if (cleanGiftUrl.startsWith("http", ignoreCase = true)) null else Uri.parse(cleanGiftUrl))
   }
 
-  LaunchedEffect(event.id, event.giftMediaUrl) {
-    if (event.giftMediaType == "video" && event.giftMediaUrl.startsWith("http")) {
-      when (val resolution = withContext(Dispatchers.IO) { VideoLinkResolver.resolvePlayableVideo(event.giftMediaUrl) }) {
+  LaunchedEffect(event.id, cleanGiftUrl) {
+    if (event.giftMediaType == "video" && cleanGiftUrl.startsWith("http", ignoreCase = true)) {
+      val resolution = withTimeoutOrNull(12_000L) {
+        withContext(Dispatchers.IO) { VideoLinkResolver.resolvePlayableVideo(cleanGiftUrl) }
+      }
+      when (resolution) {
         is VideoLinkResolution.Success -> {
           if (resolution.thumbnailUrl.isNotBlank()) {
             fallbackThumbUrl = resolution.thumbnailUrl
           }
+          VideoLinkResolver.instagramEmbedUrl(resolution.canonicalPageUrl)?.let {
+            resolvedEmbedUrl = it
+          }
           if (resolution.isHlsStream) {
             resolvedVideoUri = Uri.parse(resolution.playableUrl)
           } else {
-            val cached = withContext(Dispatchers.IO) {
-              SupabaseNetworkClient.cacheRemoteMediaFile(context.cacheDir, resolution.playableUrl)
+            val cached = withTimeoutOrNull(8_000L) {
+              withContext(Dispatchers.IO) {
+                SupabaseNetworkClient.cacheRemoteMediaFile(context.cacheDir, resolution.playableUrl)
+              }
             }
             resolvedVideoUri = cached?.let { Uri.fromFile(it) } ?: Uri.parse(resolution.playableUrl)
           }
@@ -475,12 +490,24 @@ fun FullScreenGiftOverlay(
           if (resolution.fallbackImageUrl.isNotBlank()) {
             fallbackThumbUrl = resolution.fallbackImageUrl
           }
-          val embedUrl = resolution.embedFallbackUrl.ifBlank { directInstagramEmbed.orEmpty() }
+          val embedUrl = resolution.embedFallbackUrl.ifBlank {
+            resolvedEmbedUrl ?: VideoLinkResolver.instagramEmbedUrl(resolution.canonicalPageUrl).orEmpty()
+          }
           if (embedUrl.isNotBlank()) {
+            resolvedEmbedUrl = embedUrl
             embedFallbackUrl = embedUrl
           } else {
             videoFailed = true
             onPlaybackMessage(resolution.reasonHindi)
+          }
+        }
+        null -> {
+          val embedUrl = resolvedEmbedUrl.orEmpty()
+          if (embedUrl.isNotBlank()) {
+            embedFallbackUrl = embedUrl
+          } else {
+            videoFailed = true
+            onPlaybackMessage("वीडियो लिंक लोड होने में अधिक समय लग रहा है — कृपया पुनः प्रयास करें।")
           }
         }
       }
@@ -543,8 +570,20 @@ fun FullScreenGiftOverlay(
               setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
             }
             var embedTerminated = false
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+              override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (!embedTerminated && newProgress >= 75) {
+                  isEmbedLoaded = true
+                }
+              }
+            }
             webViewClient = object : WebViewClient() {
+              override fun onPageCommitVisible(view: WebView?, url: String?) {
+                if (!embedTerminated) {
+                  isEmbedLoaded = true
+                }
+              }
+
               override fun onPageFinished(view: WebView?, url: String?) {
                 if (embedTerminated) return
                 isEmbedLoaded = true
@@ -605,10 +644,18 @@ fun FullScreenGiftOverlay(
       )
 
       if (!isEmbedLoaded) {
-        CircularProgressIndicator(
-          color = SwarGold,
+        Column(
           modifier = Modifier.align(Alignment.Center),
-        )
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          CircularProgressIndicator(color = SwarGold)
+          Text(
+            text = "वीडियो लोड हो रहा है...",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+          )
+        }
       }
 
       IconButton(
@@ -692,7 +739,26 @@ fun FullScreenGiftOverlay(
                           .build()
                       )
                       player.setSurface(videoSurface)
-                      player.setDataSource(ctx, playbackUri)
+                      val scheme = playbackUri.scheme.orEmpty().lowercase()
+                      if (scheme == "http" || scheme == "https") {
+                        val uriText = playbackUri.toString()
+                        val headers = buildMap {
+                          put(
+                            "User-Agent",
+                            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+                          )
+                          if (uriText.contains("cdninstagram.com", ignoreCase = true) ||
+                            uriText.contains("fbcdn.net", ignoreCase = true)
+                          ) {
+                            put("Referer", "https://www.instagram.com/")
+                          } else if (uriText.contains("pinimg.com", ignoreCase = true)) {
+                            put("Referer", "https://www.pinterest.com/")
+                          }
+                        }
+                        player.setDataSource(ctx, playbackUri, headers)
+                      } else {
+                        player.setDataSource(ctx, playbackUri)
+                      }
                       player.isLooping = false
                       player.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT)
                       player.setOnVideoSizeChangedListener { _, vw, vh ->
@@ -715,8 +781,9 @@ fun FullScreenGiftOverlay(
                         onDismiss()
                       }
                       player.setOnErrorListener { _, what, extra ->
-                        if (!directInstagramEmbed.isNullOrBlank()) {
-                          embedFallbackUrl = directInstagramEmbed
+                        val fallbackEmbed = resolvedEmbedUrl
+                        if (!fallbackEmbed.isNullOrBlank()) {
+                          embedFallbackUrl = fallbackEmbed
                         } else {
                           videoFailed = true
                           onPlaybackMessage("यह वीडियो लिंक प्ले नहीं हो सका (कोड: $what/$extra)।")
@@ -729,8 +796,9 @@ fun FullScreenGiftOverlay(
                       runCatching { videoSurface.release() }
                       if (mediaPlayerRef === player) mediaPlayerRef = null
                       if (surfaceRef === videoSurface) surfaceRef = null
-                      if (!directInstagramEmbed.isNullOrBlank()) {
-                        embedFallbackUrl = directInstagramEmbed
+                      val fallbackEmbed = resolvedEmbedUrl
+                      if (!fallbackEmbed.isNullOrBlank()) {
+                        embedFallbackUrl = fallbackEmbed
                       } else {
                         videoFailed = true
                         onPlaybackMessage("वीडियो चलाने में त्रुटि: ${err.message ?: "असमर्थित लिंक"}")
@@ -765,10 +833,37 @@ fun FullScreenGiftOverlay(
       }
 
       if (playbackUri == null || !isVideoPrepared) {
-        CircularProgressIndicator(
-          color = SwarGold,
+        Column(
           modifier = Modifier.align(Alignment.Center),
-        )
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          CircularProgressIndicator(color = SwarGold)
+          Text(
+            text = "वीडियो लोड हो रहा है...",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+          )
+        }
+      }
+
+      // Watchdog: if MediaPlayer stalls preparing for >10s, fall back to Instagram embed or error cleanly
+      LaunchedEffect(event.id, playbackUri, isVideoPrepared) {
+        if (playbackUri != null && !isVideoPrepared) {
+          delay(10_000L)
+          if (!isVideoPrepared) {
+            runCatching { mediaPlayerRef?.stop() }
+            runCatching { mediaPlayerRef?.release() }
+            mediaPlayerRef = null
+            val fallbackEmbed = resolvedEmbedUrl
+            if (!fallbackEmbed.isNullOrBlank()) {
+              embedFallbackUrl = fallbackEmbed
+            } else {
+              videoFailed = true
+              onPlaybackMessage("वीडियो लोड होने में अधिक समय लगा — कृपया दूसरा लिंक उपयोग करें।")
+            }
+          }
+        }
       }
 
       DisposableEffect(event.id, playbackUri) {

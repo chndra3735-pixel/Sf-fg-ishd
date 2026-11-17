@@ -149,14 +149,21 @@ object SupabaseNetworkClient {
       if (target.exists() && target.length() > 0L) {
         return@runCatching target
       }
-      val request = Request.Builder()
+      val requestBuilder = Request.Builder()
         .url(remoteUrl)
         .header(
           "User-Agent",
           "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
         )
         .get()
-        .build()
+      if (remoteUrl.contains("cdninstagram.com", ignoreCase = true) ||
+        remoteUrl.contains("fbcdn.net", ignoreCase = true)
+      ) {
+        requestBuilder.header("Referer", "https://www.instagram.com/")
+      } else if (remoteUrl.contains("pinimg.com", ignoreCase = true)) {
+        requestBuilder.header("Referer", "https://www.pinterest.com/")
+      }
+      val request = requestBuilder.build()
       sharedOkHttpClient.newCall(request).execute().use { response ->
         if (!response.isSuccessful) return@runCatching null
         val contentType = response.header("Content-Type").orEmpty().lowercase()

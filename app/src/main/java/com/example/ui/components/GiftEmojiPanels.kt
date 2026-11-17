@@ -988,7 +988,7 @@ private fun AddGiftAdminDialog(
         // 1. सबसे पहले: गिफ्ट वीडियो लिंक (URL)
         OutlinedTextField(
           value = videoLinkUrl,
-          onValueChange = { videoLinkUrl = it.take(400) },
+          onValueChange = { videoLinkUrl = it.take(750) },
           leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
           label = { Text("1. गिफ्ट वीडियो लिंक (URL)") },
           placeholder = { Text("https://... (.mp4 / Reel / pin.it)") },
@@ -1001,7 +1001,7 @@ private fun AddGiftAdminDialog(
         // 2. उसके नीचे: गिफ्ट की DP (फोटो लिंक या गैलरी से फोटो अपलोड — पैनल में दिखने के लिए)
         OutlinedTextField(
           value = dpLinkUrl,
-          onValueChange = { dpLinkUrl = it.take(400) },
+          onValueChange = { dpLinkUrl = it.take(750) },
           leadingIcon = { Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, tint = SwarGold) },
           label = { Text("2. गिफ्ट DP फोटो लिंक (URL - वैकल्पिक)") },
           placeholder = { Text("https://... (.jpg / .png / pin.it)") },
@@ -1389,7 +1389,7 @@ private fun EditGiftAdminDialog(
         OutlinedTextField(
           value = videoLinkUrl,
           onValueChange = {
-            videoLinkUrl = it.take(400)
+            videoLinkUrl = it.take(750)
             removeExistingVideo = it.isBlank()
           },
           leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
@@ -1413,7 +1413,7 @@ private fun EditGiftAdminDialog(
         OutlinedTextField(
           value = dpLinkUrl,
           onValueChange = {
-            dpLinkUrl = it.take(400)
+            dpLinkUrl = it.take(750)
             if (it.isNotBlank()) removeExistingThumb = false
           },
           leadingIcon = { Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, tint = SwarGold) },

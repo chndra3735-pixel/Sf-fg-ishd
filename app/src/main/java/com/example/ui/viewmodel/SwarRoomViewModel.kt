@@ -1080,14 +1080,20 @@ class SwarRoomViewModel(
             return@launch
           }
       } else if (dpLinkUrl.trim().isNotBlank()) {
-        val cleanDpLink = dpLinkUrl.trim()
+        val cleanDpLink = com.example.data.repository.VideoLinkResolver.extractFirstHttpUrl(dpLinkUrl)
         _isUploadingMedia.value = true
         val resolvedDp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
           com.example.data.repository.VideoLinkResolver.resolveImageUrl(cleanDpLink)
         }
         _isUploadingMedia.value = false
         resolvedDp.onSuccess { resolvedUrl ->
-          thumbUrl = resolvedUrl
+          thumbUrl = resolvedUrl.takeIf { it.length <= 800 }.orEmpty()
+          if (thumbUrl.isBlank()) {
+            val msg = "DP फोटो लिंक बहुत लंबा है (800 अक्षरों से कम होना चाहिए) — कृपया गैलरी से DP चुनें।"
+            _giftUploadError.value = msg
+            _events.tryEmit(msg)
+            return@launch
+          }
         }.onFailure { err ->
           val msg = err.message ?: "गिफ्ट DP लिंक पढ़ा नहीं जा सका।"
           _giftUploadError.value = msg
@@ -1096,7 +1102,7 @@ class SwarRoomViewModel(
         }
       }
 
-      val cleanVideoLink = videoLinkUrl.trim()
+      val cleanVideoLink = com.example.data.repository.VideoLinkResolver.extractFirstHttpUrl(videoLinkUrl)
       if (cleanVideoLink.isNotBlank()) {
         if (!cleanVideoLink.startsWith("http://", ignoreCase = true) &&
           !cleanVideoLink.startsWith("https://", ignoreCase = true)
@@ -1106,25 +1112,37 @@ class SwarRoomViewModel(
           _events.tryEmit(msg)
           return@launch
         }
-        _isUploadingMedia.value = true
-        val resolved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-          com.example.data.repository.VideoLinkResolver.resolvePlayableVideo(cleanVideoLink)
-        }
-        _isUploadingMedia.value = false
-        when (resolved) {
-          is com.example.data.repository.VideoLinkResolution.Success -> {
-            videoUrl = resolved.playableUrl
-            if (thumbUrl.isBlank() && resolved.thumbnailUrl.isNotBlank()) {
-              thumbUrl = resolved.thumbnailUrl
+        val canonicalInitial =
+          com.example.data.repository.VideoLinkResolver.instagramCanonicalReelUrl(cleanVideoLink)
+            ?: cleanVideoLink
+        videoUrl = if (canonicalInitial.length <= 780) canonicalInitial else cleanVideoLink.take(780)
+
+        if (com.example.data.repository.VideoLinkResolver.isSocialOrPageVideoUrl(cleanVideoLink)) {
+          _isUploadingMedia.value = true
+          val resolved = kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+              com.example.data.repository.VideoLinkResolver.resolvePlayableVideo(cleanVideoLink)
             }
           }
-          is com.example.data.repository.VideoLinkResolution.Failure -> {
-            // Save the original link so live playback can still retry/test on recipient devices,
-            // and keep any extracted fallback thumbnail for the Gift Panel DP!
-            videoUrl = cleanVideoLink
-            if (thumbUrl.isBlank() && resolved.fallbackImageUrl.isNotBlank()) {
-              thumbUrl = resolved.fallbackImageUrl
+          _isUploadingMedia.value = false
+          when (resolved) {
+            is com.example.data.repository.VideoLinkResolution.Success -> {
+              if (resolved.canonicalPageUrl.isNotBlank() && resolved.canonicalPageUrl.length <= 780) {
+                videoUrl = resolved.canonicalPageUrl
+              }
+              if (thumbUrl.isBlank() && resolved.thumbnailUrl.isNotBlank() && resolved.thumbnailUrl.length <= 800) {
+                thumbUrl = resolved.thumbnailUrl
+              }
             }
+            is com.example.data.repository.VideoLinkResolution.Failure -> {
+              if (resolved.canonicalPageUrl.isNotBlank() && resolved.canonicalPageUrl.length <= 780) {
+                videoUrl = resolved.canonicalPageUrl
+              }
+              if (thumbUrl.isBlank() && resolved.fallbackImageUrl.isNotBlank() && resolved.fallbackImageUrl.length <= 800) {
+                thumbUrl = resolved.fallbackImageUrl
+              }
+            }
+            null -> Unit
           }
         }
       }
@@ -1305,14 +1323,20 @@ class SwarRoomViewModel(
             return@launch
           }
       } else if (newDpLinkUrl.trim().isNotBlank() && newDpLinkUrl.trim() != oldThumbUrl) {
-        val cleanDpLink = newDpLinkUrl.trim()
+        val cleanDpLink = com.example.data.repository.VideoLinkResolver.extractFirstHttpUrl(newDpLinkUrl)
         _isUploadingMedia.value = true
         val resolvedDp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
           com.example.data.repository.VideoLinkResolver.resolveImageUrl(cleanDpLink)
         }
         _isUploadingMedia.value = false
         resolvedDp.onSuccess { resolvedUrl ->
-          finalThumbUrl = resolvedUrl
+          finalThumbUrl = resolvedUrl.takeIf { it.length <= 800 }.orEmpty()
+          if (finalThumbUrl.isBlank()) {
+            val msg = "DP फोटो लिंक बहुत लंबा है (800 अक्षरों से कम होना चाहिए) — कृपया गैलरी से DP चुनें।"
+            _giftUploadError.value = msg
+            _events.tryEmit(msg)
+            return@launch
+          }
         }.onFailure { err ->
           val msg = err.message ?: "नया DP लिंक पढ़ा नहीं जा सका।"
           _giftUploadError.value = msg
@@ -1321,7 +1345,7 @@ class SwarRoomViewModel(
         }
       }
 
-      val cleanVideoLink = newVideoLinkUrl.trim()
+      val cleanVideoLink = com.example.data.repository.VideoLinkResolver.extractFirstHttpUrl(newVideoLinkUrl)
       if (cleanVideoLink.isNotBlank() && cleanVideoLink != oldVideoUrl) {
         if (!cleanVideoLink.startsWith("http://", ignoreCase = true) &&
           !cleanVideoLink.startsWith("https://", ignoreCase = true)
@@ -1331,23 +1355,37 @@ class SwarRoomViewModel(
           _events.tryEmit(msg)
           return@launch
         }
-        _isUploadingMedia.value = true
-        val resolved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-          com.example.data.repository.VideoLinkResolver.resolvePlayableVideo(cleanVideoLink)
-        }
-        _isUploadingMedia.value = false
-        when (resolved) {
-          is com.example.data.repository.VideoLinkResolution.Success -> {
-            finalVideoUrl = resolved.playableUrl
-            if (finalThumbUrl.isBlank() && resolved.thumbnailUrl.isNotBlank()) {
-              finalThumbUrl = resolved.thumbnailUrl
+        val canonicalInitial =
+          com.example.data.repository.VideoLinkResolver.instagramCanonicalReelUrl(cleanVideoLink)
+            ?: cleanVideoLink
+        finalVideoUrl = if (canonicalInitial.length <= 780) canonicalInitial else cleanVideoLink.take(780)
+
+        if (com.example.data.repository.VideoLinkResolver.isSocialOrPageVideoUrl(cleanVideoLink)) {
+          _isUploadingMedia.value = true
+          val resolved = kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+              com.example.data.repository.VideoLinkResolver.resolvePlayableVideo(cleanVideoLink)
             }
           }
-          is com.example.data.repository.VideoLinkResolution.Failure -> {
-            finalVideoUrl = cleanVideoLink
-            if (finalThumbUrl.isBlank() && resolved.fallbackImageUrl.isNotBlank()) {
-              finalThumbUrl = resolved.fallbackImageUrl
+          _isUploadingMedia.value = false
+          when (resolved) {
+            is com.example.data.repository.VideoLinkResolution.Success -> {
+              if (resolved.canonicalPageUrl.isNotBlank() && resolved.canonicalPageUrl.length <= 780) {
+                finalVideoUrl = resolved.canonicalPageUrl
+              }
+              if (finalThumbUrl.isBlank() && resolved.thumbnailUrl.isNotBlank() && resolved.thumbnailUrl.length <= 800) {
+                finalThumbUrl = resolved.thumbnailUrl
+              }
             }
+            is com.example.data.repository.VideoLinkResolution.Failure -> {
+              if (resolved.canonicalPageUrl.isNotBlank() && resolved.canonicalPageUrl.length <= 780) {
+                finalVideoUrl = resolved.canonicalPageUrl
+              }
+              if (finalThumbUrl.isBlank() && resolved.fallbackImageUrl.isNotBlank() && resolved.fallbackImageUrl.length <= 800) {
+                finalThumbUrl = resolved.fallbackImageUrl
+              }
+            }
+            null -> Unit
           }
         }
       } else if (removeExistingVideo) {
