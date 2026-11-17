@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.GiftCatalogItem
+import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserLevelInfo
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
@@ -366,59 +367,15 @@ fun GoldenWingedLevelBadge(
   level: Int,
   modifier: Modifier = Modifier,
 ) {
-  Box(
-    modifier = modifier
-      .height(26.dp)
-      .width(86.dp),
-    contentAlignment = Alignment.Center,
-  ) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-      val cy = size.height / 2f
-      // Left wing feathers
-      val lWing = Path().apply {
-        moveTo(22f, cy - 5f)
-        lineTo(2f, 2f)
-        lineTo(12f, cy + 2f)
-        lineTo(5f, size.height - 4f)
-        lineTo(24f, cy + 7f)
-        close()
-      }
-      drawPath(lWing, Brush.linearGradient(listOf(Color(0xFFFFF59D), Color(0xFFD68910))))
-
-      // Right wing feathers
-      val rWing = Path().apply {
-        moveTo(size.width - 22f, cy - 5f)
-        lineTo(size.width - 2f, 2f)
-        lineTo(size.width - 12f, cy + 2f)
-        lineTo(size.width - 5f, size.height - 4f)
-        lineTo(size.width - 24f, cy + 7f)
-        close()
-      }
-      drawPath(rWing, Brush.linearGradient(listOf(Color(0xFFFFF59D), Color(0xFFD68910))))
-    }
-
-    Surface(
-      shape = RoundedCornerShape(10.dp),
-      color = Color.Transparent,
-      modifier = Modifier
-        .clip(RoundedCornerShape(10.dp))
-        .background(
-          Brush.horizontalGradient(
-            colors = listOf(Color(0xFFFFB300), Color(0xFFFFE082), Color(0xFFE08E00))
-          )
-        )
-        .border(1.dp, Color(0xFFFFF8DC), RoundedCornerShape(10.dp))
-        .testTag("profile_level_badge"),
-    ) {
-      Text(
-        text = "LV.$level",
-        fontSize = 11.sp,
-        fontWeight = FontWeight.ExtraBold,
-        color = Color(0xFF4B2700),
-        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-      )
-    }
-  }
+  val tier = SwarUserIdentity.tierForLevel(level)
+  OrnateWingedLevelCrest(
+    tier = tier,
+    displayText = "LV.$level",
+    badgeWidth = 88.dp,
+    badgeHeight = 30.dp,
+    isCompact = true,
+    modifier = modifier.testTag("profile_level_badge"),
+  )
 }
 
 @Composable
@@ -557,7 +514,7 @@ fun WalletOverviewDialog(
           trackColor = Color(0xFFE8ECF4),
         )
         Text(
-          text = if (levelInfo.level >= 99) "आप अधिकतम स्तर पर पहुँच चुके हैं!"
+          text = if (levelInfo.level >= 120) "आप अधिकतम स्तर पर पहुँच चुके हैं!"
           else "अगले स्तर के लिए ${levelInfo.nextLevelRemainingCoins} कॉइंस और कमाएं।",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -670,45 +627,10 @@ fun LevelDetailsDialog(
   coins: Long,
   onDismiss: () -> Unit,
 ) {
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = {
-      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = SwarGold)
-        Text("स्तर प्रगति (Lv.${levelInfo.level})")
-      }
-    },
-    text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-          text = "उपाधि: ${levelInfo.title}",
-          style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.Bold,
-        )
-        LinearProgressIndicator(
-          progress = { levelInfo.progress },
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(8.dp)
-            .clip(RoundedCornerShape(4.dp)),
-          color = levelInfo.badgeColor,
-          trackColor = Color(0xFFE8ECF4),
-        )
-        Text(
-          text = "कुल कॉइंस स्कोर: $coins",
-          style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-          text = if (levelInfo.level >= 99) "बधाई हो! आप सर्वोच्च स्तर पर हैं।"
-          else "अगले स्तर (Lv.${levelInfo.level + 1}) के लिए ${levelInfo.nextLevelRemainingCoins} कॉइंस और चाहिए।",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-    },
-    confirmButton = {
-      TextButton(onClick = onDismiss) { Text("ठीक है") }
-    },
+  LevelCardsShowcaseDialog(
+    levelInfo = levelInfo,
+    coins = coins,
+    onDismiss = onDismiss,
   )
 }
 

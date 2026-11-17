@@ -484,6 +484,7 @@ fun ProfileScreen(
             GoldenWingedLevelBadge(level = levelInfo.level)
           },
           onClick = { showLevelDialog = true },
+          modifier = Modifier.testTag("profile_level_row"),
         )
         MenuHairlineDivider()
 

@@ -148,4 +148,15 @@ class ExampleUnitTest {
     assertTrue(VideoLinkResolver.isSocialOrPageVideoUrl(extracted))
     assertFalse(VideoLinkResolver.isSocialOrPageVideoUrl("https://cdn.example.com/gifts/dragon.mp4?token=1"))
   }
+
+  @Test
+  fun levelTiers_coversAllThirteenTiersFromLv1ToLv120() {
+    val tiers = SwarUserIdentity.levelTiers
+    assertEquals(13, tiers.size)
+    assertEquals("LV.1~LV.9", tiers.first().rangeLabel)
+    assertEquals("LV.120", tiers.last().rangeLabel)
+    assertEquals("LV.50", SwarUserIdentity.tierForLevel(54).badgeLabel)
+    assertEquals("LV.110~LV.119", SwarUserIdentity.tierForLevel(115).rangeLabel)
+    assertEquals(120, SwarUserIdentity.levelForCoins(250_000L).level)
+  }
 }

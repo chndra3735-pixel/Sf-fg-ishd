@@ -138,6 +138,7 @@ import com.example.ui.components.CrossRoomGiftMarqueeStrip
 import com.example.ui.components.EmojiPanelSheet
 import com.example.ui.components.FullScreenGiftOverlay
 import com.example.ui.components.GiftPanelSheet
+import com.example.ui.components.LevelCardsShowcaseDialog
 import com.example.ui.components.UserAvatar
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
@@ -948,13 +949,17 @@ fun VoiceRoomScreen(
           }
         }
 
-        // 4. Below ID: Level Badge & XP Bar
+        var showSheetLevelCards by remember(profileTarget.uid) { mutableStateOf(false) }
+
+        // 4. Below ID: Level Badge & XP Bar (Tap to view all 13 large level cards)
         Surface(
+          onClick = { showSheetLevelCards = true },
           color = levelInfo.badgeColor.copy(alpha = 0.16f),
           shape = RoundedCornerShape(14.dp),
           modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, levelInfo.badgeColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+            .border(1.dp, levelInfo.badgeColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+            .testTag("sheet_level_card"),
         ) {
           Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -1007,6 +1012,15 @@ fun VoiceRoomScreen(
               trackColor = Color(0x33FFFFFF),
             )
           }
+        }
+
+        if (showSheetLevelCards) {
+          val sheetCoins = if (isSelf) userCoins else (remoteProfile?.coins ?: 1500L)
+          LevelCardsShowcaseDialog(
+            levelInfo = levelInfo,
+            coins = sheetCoins,
+            onDismiss = { showSheetLevelCards = false },
+          )
         }
 
         HorizontalDivider(color = Color(0x28FFFFFF))

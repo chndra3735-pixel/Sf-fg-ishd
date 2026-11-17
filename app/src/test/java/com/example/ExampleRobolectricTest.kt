@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.repository.MediaCompressor
 import com.example.ui.theme.SwarRoomTheme
@@ -40,6 +41,7 @@ class ExampleRobolectricTest {
     val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
     val activity = controller.get()
     assertEquals("SwarRoom", activity.getString(R.string.app_name))
+    controller.pause().stop().destroy()
   }
 
   @Test
@@ -99,5 +101,34 @@ class ExampleRobolectricTest {
         samplePng.delete()
       }
     }
+  }
+
+  @Test
+  fun `clicking profile level opens all 13 large level cards showcase`() {
+    val profile = com.example.data.model.UserProfile(
+      id = "u1",
+      userId = "u1",
+      displayName = "Test Singer",
+      coins = 14_500L,
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.ProfileScreen(
+          profileState = com.example.ui.viewmodel.UiState.Success(profile),
+          isUploadingMedia = false,
+          isSupabaseConfigured = true,
+          onUploadAvatarDp = {},
+          onUpdateProfile = { _, _, _, _, _ -> },
+          onSignOut = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("profile_level_row").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("level_cards_showcase_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_card_1").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("close_level_cards_button").performClick()
+    composeTestRule.waitForIdle()
   }
 }
