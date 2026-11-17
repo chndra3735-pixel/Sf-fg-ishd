@@ -96,4 +96,37 @@ class ExampleUnitTest {
     val dpUrl = VideoLinkResolver.extractImageFromHtml(html)
     assertEquals("https://i.pinimg.com/736x/12/34/56/dp.jpg", dpUrl)
   }
+
+  @Test
+  fun builtInGifts_includesInstagramReelVideoGiftLink() {
+    val igGift = SwarCatalogDefaults.builtInGifts.firstOrNull {
+      it.mediaUrl == "https://www.instagram.com/reel/Dfqs1NiPAe3/?rpxt=MWE0dmtxcHdlaWNubg=="
+    }
+    assertNotNull(igGift)
+    assertEquals("video", igGift?.mediaType)
+    assertEquals("https://www.instagram.com/reel/Dfqs1NiPAe3/embed/", VideoLinkResolver.instagramEmbedUrl(igGift!!.mediaUrl))
+  }
+
+  @Test
+  fun videoLinkResolver_extractsInstagramVideoUrlWithEscapedAmpersand() {
+    val igHtml = """
+      <html><script>{"video_url":"https:\/\/scontent-bom1-2.cdninstagram.com\/v\/reel.mp4?efg=abc\u0026_nc_ht=scontent","display_url":"https:\/\/scontent-bom1-2.cdninstagram.com\/v\/thumb.jpg?stp=dst\u0026ccb=7-5"}</script></html>
+    """.trimIndent()
+    val res = VideoLinkResolver.extractMediaFromHtml(igHtml, "https://www.instagram.com/reel/Dfqs1NiPAe3/embed/captioned/")
+    assertTrue(res is VideoLinkResolution.Success)
+    val ok = res as VideoLinkResolution.Success
+    assertEquals("https://scontent-bom1-2.cdninstagram.com/v/reel.mp4?efg=abc&_nc_ht=scontent", ok.playableUrl)
+    assertEquals("https://scontent-bom1-2.cdninstagram.com/v/thumb.jpg?stp=dst&ccb=7-5", ok.thumbnailUrl)
+  }
+
+  @Test
+  fun videoLinkResolver_extractsPlayableQualityHdAndFbcdnMp4() {
+    val html = """
+      <html><script>{"playable_url_quality_hd":"https:\/\/video-bom1-2.xx.fbcdn.net\/v\/t42.1790-2\/clip.mp4?efg=123&#x26;oe=456"}</script></html>
+    """.trimIndent()
+    val res = VideoLinkResolver.extractMediaFromHtml(html, "https://www.instagram.com/reel/Dfqs1NiPAe3/embed/")
+    assertTrue(res is VideoLinkResolution.Success)
+    val ok = res as VideoLinkResolution.Success
+    assertEquals("https://video-bom1-2.xx.fbcdn.net/v/t42.1790-2/clip.mp4?efg=123&oe=456", ok.playableUrl)
+  }
 }

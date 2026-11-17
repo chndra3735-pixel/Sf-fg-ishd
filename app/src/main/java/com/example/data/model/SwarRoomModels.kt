@@ -184,6 +184,15 @@ object SwarCatalogDefaults {
 
   val builtInGifts = listOf(
     GiftCatalogItem(
+      id = "def_g0_ig_reel_test",
+      name = "रील वीडियो गिफ्ट",
+      category = "हॉट",
+      emoji = "📱",
+      mediaUrl = "https://www.instagram.com/reel/Dfqs1NiPAe3/?rpxt=MWE0dmtxcHdlaWNubg==",
+      mediaType = "video",
+      coinCost = 10L,
+    ),
+    GiftCatalogItem(
       id = "def_g0_pin_test",
       name = "पिन वीडियो गिफ्ट",
       category = "हॉट",

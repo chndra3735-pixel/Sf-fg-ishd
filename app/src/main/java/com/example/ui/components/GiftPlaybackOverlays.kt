@@ -1,11 +1,21 @@
 package com.example.ui.components
 
+import android.annotation.SuppressLint
 import android.graphics.SurfaceTexture
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.view.Surface
 import android.view.TextureView
+import android.view.ViewGroup
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -423,6 +433,7 @@ fun CrossRoomGiftMarqueeStrip(
  * Full-screen gift playback overlay for everyone inside the room.
  * Plays Supabase video gifts full-screen via VideoView; falls back to full-screen celebration for emoji/image gifts.
  */
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun FullScreenGiftOverlay(
   event: GiftEvent,
@@ -434,7 +445,12 @@ fun FullScreenGiftOverlay(
   var isVideoPrepared by remember(event.id) { mutableStateOf(false) }
   var preparedDurationMs by remember(event.id) { mutableStateOf<Long?>(null) }
   var fallbackThumbUrl by remember(event.id) { mutableStateOf("") }
-  val isVideoGift = event.giftMediaType == "video" && event.giftMediaUrl.isNotBlank() && !videoFailed
+  var embedFallbackUrl by remember(event.id) { mutableStateOf<String?>(null) }
+  val directInstagramEmbed = remember(event.giftMediaUrl) {
+    VideoLinkResolver.instagramEmbedUrl(event.giftMediaUrl)
+  }
+  val isEmbedMode = embedFallbackUrl != null
+  val isVideoGift = event.giftMediaType == "video" && event.giftMediaUrl.isNotBlank() && !videoFailed && !isEmbedMode
   var resolvedVideoUri by remember(event.id, event.giftMediaUrl) {
     mutableStateOf<Uri?>(if (event.giftMediaUrl.startsWith("http")) null else Uri.parse(event.giftMediaUrl))
   }
@@ -459,18 +475,23 @@ fun FullScreenGiftOverlay(
           if (resolution.fallbackImageUrl.isNotBlank()) {
             fallbackThumbUrl = resolution.fallbackImageUrl
           }
-          videoFailed = true
-          onPlaybackMessage(resolution.reasonHindi)
+          val embedUrl = resolution.embedFallbackUrl.ifBlank { directInstagramEmbed.orEmpty() }
+          if (embedUrl.isNotBlank()) {
+            embedFallbackUrl = embedUrl
+          } else {
+            videoFailed = true
+            onPlaybackMessage(resolution.reasonHindi)
+          }
         }
       }
     }
   }
 
-  LaunchedEffect(event.id, isVideoGift, preparedDurationMs) {
-    val autoDismissMs = if (isVideoGift) {
-      preparedDurationMs?.let { (it + 2_000L).coerceIn(4_000L, 90_000L) } ?: 35_000L
-    } else {
-      3_400L
+  LaunchedEffect(event.id, isVideoGift, isEmbedMode, preparedDurationMs) {
+    val autoDismissMs = when {
+      isVideoGift -> preparedDurationMs?.let { (it + 2_000L).coerceIn(4_000L, 90_000L) } ?: 35_000L
+      isEmbedMode -> 25_000L
+      else -> 3_400L
     }
     delay(autoDismissMs)
     onDismiss()
@@ -489,16 +510,137 @@ fun FullScreenGiftOverlay(
   Box(
     modifier = Modifier
       .fillMaxSize()
-      .background(if (isVideoGift) Color.Black else Color(0xD90E0622))
+      .background(if (isVideoGift || isEmbedMode) Color.Black else Color(0xD90E0622))
       // Consume touches without closing the room video when touched anywhere on screen
       .clickable(
         interactionSource = blockTouchInteractionSource,
         indication = null,
-        onClick = { if (!isVideoGift) onDismiss() },
+        onClick = { if (!isVideoGift && !isEmbedMode) onDismiss() },
       )
       .testTag("fullscreen_gift_overlay"),
   ) {
-    if (isVideoGift) {
+    if (isEmbedMode && embedFallbackUrl != null) {
+      var webViewRef by remember(event.id) { mutableStateOf<WebView?>(null) }
+      var isEmbedLoaded by remember(event.id) { mutableStateOf(false) }
+
+      AndroidView(
+        factory = { ctx ->
+          WebView(ctx).apply {
+            layoutParams = ViewGroup.LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            setBackgroundColor(android.graphics.Color.BLACK)
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.setSupportMultipleWindows(false)
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+              setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+            }
+            var embedTerminated = false
+            webChromeClient = WebChromeClient()
+            webViewClient = object : WebViewClient() {
+              override fun onPageFinished(view: WebView?, url: String?) {
+                if (embedTerminated) return
+                isEmbedLoaded = true
+                view?.evaluateJavascript(
+                  "try{var v=document.querySelector('video');if(v){v.muted=false;v.play();}}catch(e){}",
+                  null,
+                )
+              }
+
+              override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?,
+              ) {
+                if (!embedTerminated && request?.isForMainFrame == true) {
+                  embedTerminated = true
+                  runCatching {
+                    view?.stopLoading()
+                    view?.webChromeClient = null
+                    (view?.parent as? ViewGroup)?.removeView(view)
+                    view?.removeAllViews()
+                    view?.destroy()
+                  }
+                  webViewRef = null
+                  embedFallbackUrl = null
+                  videoFailed = true
+                  onPlaybackMessage("एम्बेड वीडियो लोड नहीं हो सका — कृपया सीधा .mp4 वीडियो लिंक उपयोग करें।")
+                }
+              }
+
+              @SuppressLint("NewApi")
+              override fun onRenderProcessGone(
+                view: WebView?,
+                detail: RenderProcessGoneDetail?,
+              ): Boolean {
+                if (!embedTerminated) {
+                  embedTerminated = true
+                  runCatching {
+                    view?.stopLoading()
+                    view?.webChromeClient = null
+                    (view?.parent as? ViewGroup)?.removeView(view)
+                    view?.removeAllViews()
+                    view?.destroy()
+                  }
+                  webViewRef = null
+                  embedFallbackUrl = null
+                  videoFailed = true
+                  onPlaybackMessage("इस डिवाइस पर वेब एम्बेड प्लेयर क्रैश हुआ — सीधे प्ले के लिए .mp4 वीडियो लिंक जोड़ें।")
+                }
+                return true
+              }
+            }
+            loadUrl(embedFallbackUrl!!)
+            webViewRef = this
+          }
+        },
+        modifier = Modifier.fillMaxSize(),
+      )
+
+      if (!isEmbedLoaded) {
+        CircularProgressIndicator(
+          color = SwarGold,
+          modifier = Modifier.align(Alignment.Center),
+        )
+      }
+
+      IconButton(
+        onClick = onDismiss,
+        modifier = Modifier
+          .align(Alignment.TopEnd)
+          .statusBarsPadding()
+          .padding(16.dp)
+          .size(48.dp)
+          .clip(CircleShape)
+          .background(Color(0x99000000)),
+      ) {
+        Icon(Icons.Filled.Close, contentDescription = "गिफ्ट बंद करें", tint = Color.White)
+      }
+
+      DisposableEffect(event.id, embedFallbackUrl) {
+        onDispose {
+          val wv = webViewRef
+          webViewRef = null
+          if (wv != null) {
+            runCatching {
+              wv.stopLoading()
+              wv.webChromeClient = null
+              wv.onPause()
+              (wv.parent as? ViewGroup)?.removeView(wv)
+              wv.removeAllViews()
+              wv.destroy()
+            }
+          }
+        }
+      }
+    } else if (isVideoGift) {
       var mediaPlayerRef by remember(event.id) { mutableStateOf<MediaPlayer?>(null) }
       var surfaceRef by remember(event.id) { mutableStateOf<Surface?>(null) }
       val playbackUri = resolvedVideoUri
@@ -573,8 +715,12 @@ fun FullScreenGiftOverlay(
                         onDismiss()
                       }
                       player.setOnErrorListener { _, what, extra ->
-                        videoFailed = true
-                        onPlaybackMessage("यह वीडियो लिंक प्ले नहीं हो सका (कोड: $what/$extra)।")
+                        if (!directInstagramEmbed.isNullOrBlank()) {
+                          embedFallbackUrl = directInstagramEmbed
+                        } else {
+                          videoFailed = true
+                          onPlaybackMessage("यह वीडियो लिंक प्ले नहीं हो सका (कोड: $what/$extra)।")
+                        }
                         true
                       }
                       player.prepareAsync()
@@ -583,8 +729,12 @@ fun FullScreenGiftOverlay(
                       runCatching { videoSurface.release() }
                       if (mediaPlayerRef === player) mediaPlayerRef = null
                       if (surfaceRef === videoSurface) surfaceRef = null
-                      videoFailed = true
-                      onPlaybackMessage("वीडियो चलाने में त्रुटि: ${err.message ?: "असमर्थित लिंक"}")
+                      if (!directInstagramEmbed.isNullOrBlank()) {
+                        embedFallbackUrl = directInstagramEmbed
+                      } else {
+                        videoFailed = true
+                        onPlaybackMessage("वीडियो चलाने में त्रुटि: ${err.message ?: "असमर्थित लिंक"}")
+                      }
                     }
                   }
 

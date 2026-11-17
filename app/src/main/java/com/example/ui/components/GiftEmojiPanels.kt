@@ -991,7 +991,7 @@ private fun AddGiftAdminDialog(
           onValueChange = { videoLinkUrl = it.take(400) },
           leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
           label = { Text("1. गिफ्ट वीडियो लिंक (URL)") },
-          placeholder = { Text("https://... (.mp4 / .m3u8 / pin.it)") },
+          placeholder = { Text("https://... (.mp4 / Reel / pin.it)") },
           singleLine = true,
           modifier = Modifier
             .fillMaxWidth()
@@ -1394,7 +1394,7 @@ private fun EditGiftAdminDialog(
           },
           leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
           label = { Text("1. गिफ्ट वीडियो लिंक (URL)") },
-          placeholder = { Text("https://... (.mp4 / .m3u8 / pin.it)") },
+          placeholder = { Text("https://... (.mp4 / Reel / pin.it)") },
           singleLine = true,
           modifier = Modifier.fillMaxWidth(),
         )
