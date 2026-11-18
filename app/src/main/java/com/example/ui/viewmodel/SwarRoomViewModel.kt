@@ -11,6 +11,7 @@ import android.os.Build
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.SeatCleanupService
 import com.example.SeatPresenceTracker
 import com.example.audio.VoiceAudioEngine
@@ -28,6 +29,8 @@ import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
+import com.example.data.repository.AppUpdateInfo
+import com.example.data.repository.GitHubUpdateChecker
 import com.example.data.repository.MediaCompressor
 import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.SupabaseStorageRepository
@@ -193,6 +196,38 @@ class SwarRoomViewModel(
   private var hasLoadedLevelClaims = false
   private val claimingTiersInFlight = mutableSetOf<Int>()
   private var lastRemoteGiftSnapshot: Map<String, GiftCatalogItem> = emptyMap()
+
+  // --- GitHub Release Auto-Update State ---
+  private val updatePrefs by lazy {
+    appContext?.applicationContext?.getSharedPreferences("swarroom_updates", Context.MODE_PRIVATE)
+  }
+
+  private val _configuredGithubRepo = MutableStateFlow(
+    GitHubUpdateChecker.extractRepoSlug(
+      appContext?.applicationContext
+        ?.getSharedPreferences("swarroom_updates", Context.MODE_PRIVATE)
+        ?.getString(KEY_GITHUB_REPO, "")
+        .orEmpty()
+        .ifBlank { BuildConfig.GITHUB_REPO }
+    ).orEmpty()
+  )
+  val configuredGithubRepo: StateFlow<String> = _configuredGithubRepo.asStateFlow()
+
+  private val _appUpdateInfo = MutableStateFlow<AppUpdateInfo?>(null)
+  val appUpdateInfo: StateFlow<AppUpdateInfo?> = _appUpdateInfo.asStateFlow()
+
+  private val _isCheckingUpdate = MutableStateFlow(false)
+  val isCheckingUpdate: StateFlow<Boolean> = _isCheckingUpdate.asStateFlow()
+
+  private val _updateCheckError = MutableStateFlow<String?>(null)
+  val updateCheckError: StateFlow<String?> = _updateCheckError.asStateFlow()
+
+  private val _dismissedUpdateTag = MutableStateFlow<String?>(null)
+  val showUpdatePrompt: StateFlow<Boolean> =
+    combine(_appUpdateInfo, _dismissedUpdateTag) { info, dismissed ->
+      info != null && info.hasUpdate && info.latestVersionTag != dismissed
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), false)
+  private var lastAutoCheckedRepo: String = ""
 
   // --- Global Gift Marquee & Full-Screen Gift Playback ---
   private val _latestMarqueeGift = MutableStateFlow<GiftEvent?>(null)
@@ -406,6 +441,33 @@ class SwarRoomViewModel(
           }
         }
       }
+    }
+
+    // Observe global GitHub update repo configuration synced from Admin + BuildConfig.GITHUB_REPO
+    viewModelScope.launch {
+      repository.observeAppUpdateConfig()
+        .catch { /* logged by repository */ }
+        .collect { config ->
+          val remoteSlug = config?.githubRepoUrl
+            ?.let { GitHubUpdateChecker.extractRepoSlug(it) }
+            .orEmpty()
+          val resolvedSlug = remoteSlug.ifBlank {
+            GitHubUpdateChecker.extractRepoSlug(BuildConfig.GITHUB_REPO).orEmpty()
+          }
+          if (resolvedSlug.isNotBlank()) {
+            _configuredGithubRepo.value = resolvedSlug
+            updatePrefs?.edit()?.putString(KEY_GITHUB_REPO, resolvedSlug)?.apply()
+            if (resolvedSlug != lastAutoCheckedRepo) {
+              lastAutoCheckedRepo = resolvedSlug
+              checkForAppUpdate(manual = false)
+            }
+          }
+        }
+    }
+
+    if (_configuredGithubRepo.value.isNotBlank()) {
+      lastAutoCheckedRepo = _configuredGithubRepo.value
+      checkForAppUpdate(manual = false)
     }
 
     // Watch remote gift catalog deletions so deleted gift videos/links disappear globally in real time
@@ -2130,6 +2192,88 @@ class SwarRoomViewModel(
     }
   }
 
+  fun checkForAppUpdate(manual: Boolean = true) {
+    val repoSlug = _configuredGithubRepo.value.ifBlank {
+      GitHubUpdateChecker.extractRepoSlug(BuildConfig.GITHUB_REPO).orEmpty()
+    }
+    if (repoSlug.isBlank()) {
+      if (manual) {
+        val msg = "GitHub रिपॉजिटरी लिंक अभी सेट नहीं है। एडमिन प्रोफ़ाइल में लिंक सेव करें या GitHub Actions से APK बिल्ड करें।"
+        _updateCheckError.value = msg
+        _events.tryEmit(msg)
+      }
+      return
+    }
+    if (_isCheckingUpdate.value) return
+    viewModelScope.launch {
+      _isCheckingUpdate.value = true
+      _updateCheckError.value = null
+      try {
+        GitHubUpdateChecker.checkLatestRelease(
+          repoInput = repoSlug,
+          currentVersionName = BuildConfig.VERSION_NAME,
+          currentVersionCode = BuildConfig.VERSION_CODE,
+        ).onSuccess { info ->
+          _appUpdateInfo.value = info
+          if (manual) {
+            if (info.hasUpdate) {
+              _dismissedUpdateTag.value = null
+              _events.tryEmit("नया अपडेट ${info.latestVersionTag} उपलब्ध है!")
+            } else {
+              _events.tryEmit("ऐप पहले से नवीनतम वर्ज़न (v${BuildConfig.VERSION_NAME}) पर है।")
+            }
+          }
+        }.onFailure { err ->
+          val msg = err.message ?: "अपडेट जांच विफल रही"
+          if (manual) {
+            _updateCheckError.value = msg
+            _events.tryEmit(msg)
+          } else {
+            Log.w(TAG, "Auto update check skipped: $msg")
+          }
+        }
+      } finally {
+        _isCheckingUpdate.value = false
+      }
+    }
+  }
+
+  fun saveGithubRepoLink(rawLink: String) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही GitHub लिंक बदला जा सकता है।")
+      return
+    }
+    val slug = GitHubUpdateChecker.extractRepoSlug(rawLink)
+    if (slug == null) {
+      val msg = "कृपया मान्य GitHub लिंक दर्ज करें (जैसे: https://github.com/username/SwarRoom)।"
+      _updateCheckError.value = msg
+      _events.tryEmit(msg)
+      return
+    }
+    viewModelScope.launch {
+      _isCheckingUpdate.value = true
+      _updateCheckError.value = null
+      repository.saveAppUpdateConfig("https://github.com/$slug")
+        .onSuccess {
+          _configuredGithubRepo.value = slug
+          updatePrefs?.edit()?.putString(KEY_GITHUB_REPO, slug)?.apply()
+          _isCheckingUpdate.value = false
+          _events.tryEmit("GitHub लिंक ($slug) सभी यूज़र्स के लिए सेव हो गया! अपडेट जांच शुरू...")
+          checkForAppUpdate(manual = true)
+        }
+        .onFailure { err ->
+          _isCheckingUpdate.value = false
+          val msg = err.message ?: "GitHub लिंक सेव करने में त्रुटि"
+          _updateCheckError.value = msg
+          _events.tryEmit(msg)
+        }
+    }
+  }
+
+  fun dismissUpdatePrompt() {
+    _dismissedUpdateTag.value = _appUpdateInfo.value?.latestVersionTag
+  }
+
   fun claimDailyBonusCoins() {
     viewModelScope.launch {
       repository.claimBonusCoins(500L)
@@ -2173,6 +2317,7 @@ class SwarRoomViewModel(
     private const val KEY_BLOCKED_UIDS = "blocked_uids"
     private const val KEY_HIDDEN_EMOJIS = "hidden_emojis"
     private const val KEY_HIDDEN_GIFTS = "hidden_gifts"
+    private const val KEY_GITHUB_REPO = "github_repo_slug"
     const val HEARTBEAT_INTERVAL_MS = 7_000L
     const val PRESENCE_STALE_MS = 25_000L
     const val SEAT_STALE_MS = 28_000L

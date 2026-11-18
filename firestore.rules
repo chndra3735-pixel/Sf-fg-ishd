@@ -209,6 +209,12 @@ service cloud.firestore {
              isValidTimestamp(data.lastSeenAt);
     }
 
+    function isValidAppUpdateConfig(data) {
+      return data.githubRepoUrl is string && data.githubRepoUrl.size() <= 400 &&
+             data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+             isValidTimestamp(data.updatedAt);
+    }
+
     // --- Collection Rules ---
 
     // 1. User Profiles (Public display metadata only, zero PII)
@@ -535,6 +541,21 @@ service cloud.firestore {
                        isValidLevelClaim(incoming());
 
       allow update, delete: if false;
+    }
+
+    // 10. Global App Update Configuration (Admin writes GitHub repo URL, signed-in users read)
+    match /app_config/{configId} {
+      allow get: if isSignedIn() && configId == 'update';
+      allow list: if false;
+
+      allow create, update: if isAdmin() &&
+                               configId == 'update' &&
+                               incoming().updatedByUid == request.auth.uid &&
+                               incoming().keys().hasAll(['githubRepoUrl', 'updatedByUid', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['githubRepoUrl', 'updatedByUid', 'updatedAt']) &&
+                               isValidAppUpdateConfig(incoming());
+
+      allow delete: if isAdmin() && configId == 'update';
     }
   }
 }

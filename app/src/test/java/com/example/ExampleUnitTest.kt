@@ -3,6 +3,7 @@ package com.example
 import com.example.data.model.RoomMessage
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
+import com.example.data.repository.GitHubUpdateChecker
 import com.example.data.repository.VideoLinkResolution
 import com.example.data.repository.VideoLinkResolver
 import com.example.ui.viewmodel.SwarRoomViewModel
@@ -241,5 +242,36 @@ class ExampleUnitTest {
     assertTrue(SwarRoomViewModel.isTimestampFresh(now - 7_000L, now, 25_000L))
     assertFalse(SwarRoomViewModel.isTimestampFresh(now - 30_000L, now, 25_000L))
     assertTrue(SwarRoomViewModel.isTimestampFresh(null, now, 25_000L))
+  }
+
+  @Test
+  fun githubUpdateChecker_extractsOwnerAndRepoFromAnyLinkOrSlug() {
+    assertEquals(
+      "chndra/SwarRoom",
+      GitHubUpdateChecker.extractRepoSlug("https://github.com/chndra/SwarRoom"),
+    )
+    assertEquals(
+      "chndra/SwarRoom",
+      GitHubUpdateChecker.extractRepoSlug("https://github.com/chndra/SwarRoom.git"),
+    )
+    assertEquals(
+      "chndra/SwarRoom",
+      GitHubUpdateChecker.extractRepoSlug("Check repo: https://github.com/chndra/SwarRoom/releases/latest"),
+    )
+    assertEquals(
+      "chndra/SwarRoom",
+      GitHubUpdateChecker.extractRepoSlug("chndra/SwarRoom"),
+    )
+    assertNull(GitHubUpdateChecker.extractRepoSlug("https://github.com/owner/repo"))
+    assertNull(GitHubUpdateChecker.extractRepoSlug("not-a-repo"))
+  }
+
+  @Test
+  fun githubUpdateChecker_comparesReleaseVersionsNumerically() {
+    assertTrue(GitHubUpdateChecker.isNewerVersion("v1.0.10", "1.0.2", 2))
+    assertTrue(GitHubUpdateChecker.isNewerVersion("v1.0.6", "1.0", 5))
+    assertFalse(GitHubUpdateChecker.isNewerVersion("v1.0.5", "1.0.5", 5))
+    assertFalse(GitHubUpdateChecker.isNewerVersion("v1.0.5", "1.0", 5))
+    assertFalse(GitHubUpdateChecker.isNewerVersion("v1.0.3", "1.0.8", 8))
   }
 }

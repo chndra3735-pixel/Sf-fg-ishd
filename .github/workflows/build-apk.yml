@@ -157,6 +157,9 @@ jobs:
           test -f app/src/main/res/values/firebase_applet_config.xml && echo "firebase_applet_config.xml verified"
 
       - name: Build SwarRoom APK
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
           set +e
           gradle :app:assembleDebug \
@@ -203,12 +206,13 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: SwarRoom APK v1.0.${{ github.run_number }}
           files: app/build/outputs/apk/debug/SwarRoom.apk
-          generate_release_notes: false
+          generate_release_notes: true
 
       - name: Write Build Summary
         run: |
           {
-            echo "### SwarRoom APK Build Complete"
+            echo "### SwarRoom APK Build Complete (v1.0.${{ github.run_number }})"
+            echo "- **In-App Update Repo**: \`${{ github.repository }}\` (\`v1.0.${{ github.run_number }}\`)"
             echo "- **Direct APK Download**: Check the **Releases** tab on GitHub for \`SwarRoom.apk\`, or download \`SwarRoom-APK\` from **Artifacts** below."
             if [ "${FIREBASE_CONFIGURED:-false}" = "true" ]; then
               echo "- **Firebase Config**: Included via \`GOOGLE_SERVICES_JSON\`."

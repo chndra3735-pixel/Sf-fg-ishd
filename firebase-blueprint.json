@@ -226,6 +226,17 @@
         "lastSeenAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "roomId", "roomOwnerId", "isRoomPublic", "displayName", "avatarUrl", "clubTag", "joinedAt", "lastSeenAt"]
+    },
+    "AppUpdateConfig": {
+      "title": "AppUpdateConfig",
+      "description": "Admin-managed GitHub repository link used by all SwarRoom clients to detect new GitHub Release APK updates.",
+      "type": "object",
+      "properties": {
+        "githubRepoUrl": { "type": "string" },
+        "updatedByUid": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["githubRepoUrl", "updatedByUid", "updatedAt"]
     }
   },
   "firestore": {
@@ -280,6 +291,10 @@
     "/level_claims/{claimId}": {
       "schema": { "$ref": "#/entities/LevelRewardClaim" },
       "description": "User-scoped immutable claims of unlocked level tier reward coins."
+    },
+    "/app_config/{configId}": {
+      "schema": { "$ref": "#/entities/AppUpdateConfig" },
+      "description": "Global admin-managed app configuration such as the GitHub repository link for release updates."
     }
   }
 }

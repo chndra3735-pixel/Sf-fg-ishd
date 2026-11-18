@@ -253,4 +253,81 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("fullscreen_gift_overlay").assertDoesNotExist()
   }
+
+  @Test
+  fun `profile app update center shows available GitHub release and saves admin repo link`() {
+    val profile = com.example.data.model.UserProfile(
+      id = "admin_1",
+      userId = "admin_1",
+      displayName = "Chandra",
+      coins = 5_000L,
+    )
+    val updateInfo = com.example.data.repository.AppUpdateInfo(
+      hasUpdate = true,
+      currentVersionName = "1.0.1",
+      currentVersionCode = 1,
+      latestVersionTag = "v1.0.9",
+      releaseTitle = "SwarRoom APK v1.0.9",
+      releaseNotes = "नया रीयल-टाइम अपडेट फीचर",
+      downloadUrl = "https://github.com/chndra/SwarRoom/releases/download/v1.0.9/SwarRoom.apk",
+      releasePageUrl = "https://github.com/chndra/SwarRoom/releases/tag/v1.0.9",
+      repoSlug = "chndra/SwarRoom",
+    )
+    var savedRepoLink = ""
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.ProfileScreen(
+          profileState = com.example.ui.viewmodel.UiState.Success(profile),
+          isUploadingMedia = false,
+          isSupabaseConfigured = true,
+          onUploadAvatarDp = {},
+          onUpdateProfile = { _, _, _, _, _ -> },
+          onSignOut = {},
+          isAdminUser = true,
+          configuredGithubRepo = "chndra/SwarRoom",
+          appUpdateInfo = updateInfo,
+          onSaveGithubRepoLink = { savedRepoLink = it },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("profile_app_update_row").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("app_update_center_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("update_center_download_button").assertExists()
+    composeTestRule.onNodeWithTag("check_github_update_button").assertExists()
+    composeTestRule.onNodeWithTag("save_github_repo_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("https://github.com/chndra/SwarRoom", savedRepoLink)
+  }
+
+  @Test
+  fun `app update available dialog renders update CTA and dismisses cleanly`() {
+    var dismissed = false
+    val updateInfo = com.example.data.repository.AppUpdateInfo(
+      hasUpdate = true,
+      currentVersionName = "1.0.1",
+      currentVersionCode = 1,
+      latestVersionTag = "v1.0.4",
+      releaseTitle = "SwarRoom APK v1.0.4",
+      releaseNotes = "",
+      downloadUrl = "https://github.com/chndra/SwarRoom/releases/latest",
+      releasePageUrl = "https://github.com/chndra/SwarRoom/releases/latest",
+      repoSlug = "chndra/SwarRoom",
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.AppUpdateAvailableDialog(
+          updateInfo = updateInfo,
+          onDismiss = { dismissed = true },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("app_update_available_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("download_app_update_button").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("dismiss_app_update_button").performClick()
+    composeTestRule.waitForIdle()
+    assertTrue(dismissed)
+  }
 }

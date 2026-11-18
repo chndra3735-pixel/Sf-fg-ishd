@@ -17,10 +17,40 @@ android {
     applicationId = "com.aistudio.swarroom.vkpzmx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    val githubRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.coerceAtLeast(1)
+    versionCode = githubRunNumber ?: 1
+    versionName = if (githubRunNumber != null) "1.0.$githubRunNumber" else "1.0.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    val rawGithubRepo = run {
+      val envText = listOf(".env", ".env.example")
+        .map { rootProject.file(it) }
+        .firstNotNullOfOrNull { f ->
+          if (f.exists()) {
+            f.readLines().firstOrNull { line ->
+              val trimmed = line.trimStart()
+              !trimmed.startsWith("#") && trimmed.startsWith("GITHUB_REPO=")
+            }?.substringAfter("=")
+          } else {
+            null
+          }
+        }
+      (System.getenv("GITHUB_REPOSITORY")
+        ?: System.getenv("GITHUB_REPO")
+        ?: envText
+        ?: "").trim()
+    }
+    val parsedGithubRepo = Regex("""(?:https?://github\.com/)?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?(?:/.*)?$""")
+      .find(rawGithubRepo)
+      ?.groupValues
+      ?.getOrNull(1)
+      ?.takeIf { !it.equals("owner/repo", ignoreCase = true) && !it.startsWith("your-", ignoreCase = true) }
+      .orEmpty()
+    val safeGithubRepo = parsedGithubRepo
+      .replace("\\", "\\\\")
+      .replace("\"", "\\\"")
+    buildConfigField("String", "GITHUB_REPO", "\"$safeGithubRepo\"")
 
     val rawTokenEndpoint = run {
       val envText = listOf(".env", ".env.example")
@@ -101,6 +131,7 @@ secrets {
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
   ignoreList.add("AGORA_TOKEN_ENDPOINT")
+  ignoreList.add("GITHUB_REPO")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

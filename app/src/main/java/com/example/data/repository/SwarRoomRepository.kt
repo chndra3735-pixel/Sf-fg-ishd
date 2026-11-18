@@ -1560,6 +1560,42 @@ class SwarRoomRepository(
     }
   }
 
+  // --- Global GitHub Release App Update Configuration ---
+
+  fun observeAppUpdateConfig(): Flow<com.example.data.model.AppUpdateConfig?> = flow {
+    val uid = requireUserId()
+    val docRef = db.collection("app_config").document("update")
+    emitAll(
+      docRef.snapshots()
+        .map { snapshot ->
+          if (snapshot.exists()) {
+            snapshot.toObject(com.example.data.model.AppUpdateConfig::class.java, ServerTimestampBehavior.ESTIMATE)
+          } else {
+            null
+          }
+        }
+        .catch { error -> handleFlowError(error, OperationType.GET, docRef.path, uid); throw error }
+    )
+  }
+
+  suspend fun saveAppUpdateConfig(githubRepoUrl: String): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("app_config").document("update")
+    val payload = mapOf(
+      "githubRepoUrl" to githubRepoUrl.trim().take(400),
+      "updatedByUid" to uid,
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, docRef.path)
+      throw e
+    }
+  }
+
   private companion object {
     val VALID_TIER_LEVELS = setOf(1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120)
   }

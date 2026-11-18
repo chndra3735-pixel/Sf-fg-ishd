@@ -97,6 +97,7 @@ import com.example.data.repository.SupabaseStorageRepository
 import com.example.data.repository.SwarRoomRepository
 import com.example.ui.auth.authStateFlow
 import com.example.ui.auth.signOut
+import com.example.ui.components.AppUpdateAvailableDialog
 import com.example.ui.components.CreateMomentDialog
 import com.example.ui.components.CreateRoomDialog
 import com.example.ui.components.MinimizedRoomFloatingBar
@@ -394,6 +395,11 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val levelConfigs by viewModel.levelConfigs.collectAsStateWithLifecycle()
   val claimedLevelTiers by viewModel.claimedLevelTiers.collectAsStateWithLifecycle()
   val activeRoomPresence by viewModel.activeRoomPresence.collectAsStateWithLifecycle()
+  val configuredGithubRepo by viewModel.configuredGithubRepo.collectAsStateWithLifecycle()
+  val appUpdateInfo by viewModel.appUpdateInfo.collectAsStateWithLifecycle()
+  val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
+  val updateCheckError by viewModel.updateCheckError.collectAsStateWithLifecycle()
+  val showUpdatePrompt by viewModel.showUpdatePrompt.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
@@ -686,6 +692,12 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
             viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone)
           },
           onClaimLevelTierReward = { lvl -> viewModel.claimLevelTierReward(lvl) },
+          configuredGithubRepo = configuredGithubRepo,
+          appUpdateInfo = appUpdateInfo,
+          isCheckingUpdate = isCheckingUpdate,
+          updateCheckError = updateCheckError,
+          onCheckForAppUpdate = { viewModel.checkForAppUpdate(manual = true) },
+          onSaveGithubRepoLink = { link -> viewModel.saveGithubRepoLink(link) },
         )
       }
 
@@ -738,6 +750,14 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         viewModel.uploadMomentPost(uri, isVideo, caption)
         showCreateMomentDialog = false
       },
+    )
+  }
+
+  val availableUpdate = appUpdateInfo
+  if (showUpdatePrompt && availableUpdate != null && availableUpdate.hasUpdate) {
+    AppUpdateAvailableDialog(
+      updateInfo = availableUpdate,
+      onDismiss = { viewModel.dismissUpdatePrompt() },
     )
   }
 }

@@ -379,3 +379,28 @@ test("Users manage own room presence heartbeat, host can prune stale presence, a
   await assertSucceeds(roomRef.collection("presence").doc(BOB_UID).delete());
 });
 
+// 7. Global GitHub App Update Config
+test("Only verified admin can configure app_config/update; signed-in users can read it", async () => {
+  const verifiedAdmin = testEnv.authenticatedContext(ADMIN_UID, {
+    email: ADMIN_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID, {
+    email: "bob@gmail.com",
+    email_verified: true,
+  }).firestore();
+  const unauth = testEnv.unauthenticatedContext().firestore();
+
+  const updatePayload = {
+    githubRepoUrl: "https://github.com/chndra3735/SwarRoom",
+    updatedByUid: ADMIN_UID,
+    updatedAt: serverTimestamp(),
+  };
+
+  await assertFails(bob.collection("app_config").doc("update").set({ ...updatePayload, updatedByUid: BOB_UID }));
+  await assertSucceeds(verifiedAdmin.collection("app_config").doc("update").set(updatePayload));
+  await assertSucceeds(bob.collection("app_config").doc("update").get());
+  await assertFails(bob.collection("app_config").get());
+  await assertFails(unauth.collection("app_config").doc("update").get());
+});
+

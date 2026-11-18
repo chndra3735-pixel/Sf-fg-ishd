@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.MilitaryTech
 import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -73,11 +74,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
+import com.example.data.repository.AppUpdateInfo
+import com.example.ui.components.AppUpdateCenterDialog
 import com.example.ui.components.FamilyCrestEmblem
 import com.example.ui.components.FramedUserAvatar
 import com.example.ui.components.GoldenWingedLevelBadge
@@ -131,12 +135,19 @@ fun ProfileScreen(
     onDone: () -> Unit,
   ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
   onClaimLevelTierReward: (Int) -> Unit = {},
+  configuredGithubRepo: String = "",
+  appUpdateInfo: AppUpdateInfo? = null,
+  isCheckingUpdate: Boolean = false,
+  updateCheckError: String? = null,
+  onCheckForAppUpdate: () -> Unit = {},
+  onSaveGithubRepoLink: (String) -> Unit = {},
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
   var showWalletDialog by remember { mutableStateOf(false) }
   var showStoreDialog by remember { mutableStateOf(false) }
   var showLevelDialog by remember { mutableStateOf(false) }
   var showLanguageDialog by remember { mutableStateOf(false) }
+  var showUpdateCenterDialog by remember { mutableStateOf(false) }
   var selectedLanguage by remember { mutableStateOf("हिंदी (डिफ़ॉल्ट)") }
   var activeFeatureInfo by remember { mutableStateOf<ProfileInfoPayload?>(null) }
 
@@ -573,6 +584,21 @@ fun ProfileScreen(
           iconBgColor = Color(0xFFEEE9FF),
           onClick = { showEditDialog = true },
         )
+        MenuHairlineDivider()
+        ProfileMenuRow(
+          title = "ऐप अपडेट (GitHub)",
+          icon = Icons.Filled.SystemUpdate,
+          iconTint = Color(0xFF006CB5),
+          iconBgColor = Color(0xFFE1F3FF),
+          showNewBadge = appUpdateInfo?.hasUpdate == true,
+          trailingText = if (appUpdateInfo?.hasUpdate == true) {
+            appUpdateInfo.latestVersionTag
+          } else {
+            "v${BuildConfig.VERSION_NAME}"
+          },
+          onClick = { showUpdateCenterDialog = true },
+          modifier = Modifier.testTag("profile_app_update_row"),
+        )
       }
     }
 
@@ -677,6 +703,21 @@ fun ProfileScreen(
       highlightBadge = featureInfo.highlight,
       description = featureInfo.description,
       onDismiss = { activeFeatureInfo = null },
+    )
+  }
+
+  if (showUpdateCenterDialog) {
+    AppUpdateCenterDialog(
+      currentVersionName = BuildConfig.VERSION_NAME,
+      currentVersionCode = BuildConfig.VERSION_CODE,
+      configuredGithubRepo = configuredGithubRepo,
+      appUpdateInfo = appUpdateInfo,
+      isCheckingUpdate = isCheckingUpdate,
+      updateCheckError = updateCheckError,
+      isAdminUser = isAdminUser,
+      onCheckForUpdate = onCheckForAppUpdate,
+      onSaveGithubRepoLink = onSaveGithubRepoLink,
+      onDismiss = { showUpdateCenterDialog = false },
     )
   }
 }

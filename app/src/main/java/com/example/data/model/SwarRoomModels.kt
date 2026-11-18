@@ -198,6 +198,15 @@ data class RoomPresenceMember(
   @ServerTimestamp val lastSeenAt: Timestamp? = null,
 )
 
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class AppUpdateConfig(
+  @DocumentId val id: String = "",
+  val githubRepoUrl: String = "",
+  val updatedByUid: String = "",
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
 object SwarCatalogDefaults {
   val emojiCategories = listOf("ट्रेंडिंग", "मस्ती", "प्यार", "प्रतिक्रिया")
   val giftCategories = listOf("हॉट", "लग्ज़री", "वीडियो VIP", "लकी")
