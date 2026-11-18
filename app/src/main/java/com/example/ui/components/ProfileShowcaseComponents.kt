@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.GiftCatalogItem
+import com.example.data.model.LevelTierConfig
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserLevelInfo
 import com.example.ui.theme.SwarCoral
@@ -626,11 +628,37 @@ fun LevelDetailsDialog(
   levelInfo: UserLevelInfo,
   coins: Long,
   onDismiss: () -> Unit,
+  levelConfigs: Map<Int, LevelTierConfig> = emptyMap(),
+  claimedTiers: Set<Int> = emptySet(),
+  isAdminUser: Boolean = false,
+  isUploadingMedia: Boolean = false,
+  sampleAvatarUrl: String = "",
+  sampleDisplayName: String = "Swar",
+  onSaveTierConfig: (
+    badgeLevel: Int,
+    entryVideoLink: String,
+    entryVideoUri: Uri?,
+    frameLink: String,
+    frameUri: Uri?,
+    rewardCoins: Long,
+    badgeLink: String,
+    badgeUri: Uri?,
+    onDone: () -> Unit,
+  ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
+  onClaimTierReward: (Int) -> Unit = {},
 ) {
   LevelCardsShowcaseDialog(
     levelInfo = levelInfo,
     coins = coins,
     onDismiss = onDismiss,
+    levelConfigs = levelConfigs,
+    claimedTiers = claimedTiers,
+    isAdminUser = isAdminUser,
+    isUploadingMedia = isUploadingMedia,
+    sampleAvatarUrl = sampleAvatarUrl,
+    sampleDisplayName = sampleDisplayName,
+    onSaveTierConfig = onSaveTierConfig,
+    onClaimTierReward = onClaimTierReward,
   )
 }
 

@@ -295,4 +295,33 @@ object SwarUserIdentity {
   fun levelForProfile(profile: UserProfile?): UserLevelInfo {
     return levelForCoins(profile?.coins ?: 1500L)
   }
+
+  fun unlockedTiersForLevel(level: Int): List<LevelTierSpec> {
+    val safeLevel = level.coerceIn(1, 120)
+    return levelTiers.filter { safeLevel >= it.minLevel }
+  }
+
+  fun highestUnlockedFrameUrl(
+    level: Int,
+    configs: Map<Int, LevelTierConfig>,
+  ): String {
+    val unlocked = unlockedTiersForLevel(level).asReversed()
+    for (tier in unlocked) {
+      val url = configs[tier.badgeLevel]?.avatarFrameUrl?.trim().orEmpty()
+      if (url.isNotBlank()) return url
+    }
+    return ""
+  }
+
+  fun highestUnlockedEntryVideo(
+    level: Int,
+    configs: Map<Int, LevelTierConfig>,
+  ): Pair<LevelTierSpec, String>? {
+    val unlocked = unlockedTiersForLevel(level).asReversed()
+    for (tier in unlocked) {
+      val url = configs[tier.badgeLevel]?.entryVideoUrl?.trim().orEmpty()
+      if (url.isNotBlank()) return tier to url
+    }
+    return null
+  }
 }

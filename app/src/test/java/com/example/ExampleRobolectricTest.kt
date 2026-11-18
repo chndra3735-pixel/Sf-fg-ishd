@@ -104,13 +104,15 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `clicking profile level opens all 13 large level cards showcase`() {
+  fun `clicking profile level opens all 13 large level cards showcase and admin configurator`() {
     val profile = com.example.data.model.UserProfile(
       id = "u1",
       userId = "u1",
       displayName = "Test Singer",
       coins = 14_500L,
     )
+    var savedBadgeLevel = -1
+    var savedCoins = -1L
     composeTestRule.setContent {
       SwarRoomTheme {
         com.example.ui.screens.ProfileScreen(
@@ -120,14 +122,31 @@ class ExampleRobolectricTest {
           onUploadAvatarDp = {},
           onUpdateProfile = { _, _, _, _, _ -> },
           onSignOut = {},
+          isAdminUser = true,
+          onSaveLevelTierConfig = { lvl, _, _, _, _, coinsReward, _, _, onDone ->
+            savedBadgeLevel = lvl
+            savedCoins = coinsReward
+            onDone()
+          },
         )
       }
     }
     composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("profile_unlocked_badges_line").assertIsDisplayed()
     composeTestRule.onNodeWithTag("profile_level_row").performScrollTo().performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("level_cards_showcase_dialog").assertIsDisplayed()
-    composeTestRule.onNodeWithTag("level_card_1").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_card_1").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("level_tier_detail_sheet").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("tier_entry_video_input").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("tier_frame_input").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("tier_coins_input").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("tier_badge_input").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("save_level_config_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(1, savedBadgeLevel)
+    assertEquals(0L, savedCoins)
     composeTestRule.onNodeWithTag("close_level_cards_button").performClick()
     composeTestRule.waitForIdle()
   }

@@ -138,6 +138,7 @@ data class GiftCatalogItem(
   @ServerTimestamp val createdAt: Timestamp? = null,
 )
 
+@androidx.annotation.Keep
 @IgnoreExtraProperties
 data class GiftEvent(
   @DocumentId val id: String = "",
@@ -157,6 +158,29 @@ data class GiftEvent(
   val quantity: Long = 1L,
   @get:PropertyName("isPublic") @field:PropertyName("isPublic") val isPublic: Boolean = true,
   @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class LevelTierConfig(
+  @DocumentId val id: String = "",
+  val badgeLevel: Long = 1L,
+  val entryVideoUrl: String = "",
+  val avatarFrameUrl: String = "",
+  val rewardCoins: Long = 0L,
+  val profileBadgeUrl: String = "",
+  val updatedByUid: String = "",
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class LevelRewardClaim(
+  @DocumentId val id: String = "",
+  val userId: String = "",
+  val badgeLevel: Long = 1L,
+  val coinsGranted: Long = 0L,
+  @ServerTimestamp val claimedAt: Timestamp? = null,
 )
 
 object SwarCatalogDefaults {

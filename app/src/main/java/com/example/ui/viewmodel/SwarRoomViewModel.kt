@@ -14,15 +14,20 @@ import com.example.data.model.DirectMessage
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
+import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
+import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
 import com.example.data.repository.MediaCompressor
+import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.SupabaseStorageRepository
 import com.example.data.repository.SwarRoomRepository
+import com.example.data.repository.VideoLinkResolution
+import com.example.data.repository.VideoLinkResolver
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -168,6 +173,18 @@ class SwarRoomViewModel(
     }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SwarCatalogDefaults.builtInGifts)
 
+  // --- Per-Level Rewards (Entry Video, Animated Frame, Coins Bonus, Profile Badge) ---
+  val levelConfigs: StateFlow<Map<Int, LevelTierConfig>> =
+    repository.observeLevelConfigs()
+      .catch { emit(emptyMap()) }
+      .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+  private val _claimedLevelTiers = MutableStateFlow<Set<Int>>(emptySet())
+  val claimedLevelTiers: StateFlow<Set<Int>> = _claimedLevelTiers.asStateFlow()
+  private var hasLoadedLevelClaims = false
+  private val claimingTiersInFlight = mutableSetOf<Int>()
+  private var lastRemoteGiftSnapshot: Map<String, GiftCatalogItem> = emptyMap()
+
   // --- Global Gift Marquee & Full-Screen Gift Playback ---
   private val _latestMarqueeGift = MutableStateFlow<GiftEvent?>(null)
   val latestMarqueeGift: StateFlow<GiftEvent?> = _latestMarqueeGift.asStateFlow()
@@ -258,22 +275,96 @@ class SwarRoomViewModel(
       repository.ensureUserProfile(initialDisplayName, initialAvatarUrl)
     }
 
-    // Observe cross-room gift broadcasts for the right-to-left marquee & full-screen room playback
+    // Observe claimed level rewards & auto-award newly unlocked level coins once per tier
+    viewModelScope.launch {
+      repository.observeClaimedLevelTiers()
+        .catch { /* logged by repository */ }
+        .collect { claimed ->
+          hasLoadedLevelClaims = true
+          _claimedLevelTiers.value = claimed
+        }
+    }
+
+    viewModelScope.launch {
+      combine(userProfile, levelConfigs, _claimedLevelTiers) { pState, configs, claimed ->
+        Triple((pState as? UiState.Success)?.data, configs, claimed)
+      }.collect { (profile, configs, claimed) ->
+        if (!hasLoadedLevelClaims || profile == null || configs.isEmpty()) return@collect
+        val userLevel = SwarUserIdentity.levelForProfile(profile).level
+        val unlockedTiers = SwarUserIdentity.unlockedTiersForLevel(userLevel)
+        for (tier in unlockedTiers) {
+          val cfg = configs[tier.badgeLevel] ?: continue
+          if (cfg.rewardCoins > 0L && tier.badgeLevel !in claimed && claimingTiersInFlight.add(tier.badgeLevel)) {
+            launch {
+              try {
+                repository.claimLevelRewardCoins(tier.badgeLevel, cfg.rewardCoins)
+                  .onSuccess { granted ->
+                    if (granted > 0L) {
+                      _claimedLevelTiers.update { it + tier.badgeLevel }
+                      _events.tryEmit("🎉 LV.${tier.badgeLevel} स्तर अनलॉक बोनस: +$granted कॉइंस मिले!")
+                    }
+                  }
+              } finally {
+                claimingTiersInFlight.remove(tier.badgeLevel)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Watch remote gift catalog deletions so deleted gift videos/links disappear globally in real time
+    viewModelScope.launch {
+      repository.observeGiftCatalog()
+        .catch { /* logged by repository */ }
+        .collect { remoteList ->
+          val currentMap = remoteList.associateBy { it.id }
+          val removedGifts = lastRemoteGiftSnapshot.values.filter { it.id !in currentMap }
+          removedGifts.forEach { deleted ->
+            purgeDeletedGiftEverywhere(
+              giftId = deleted.id,
+              mediaUrls = listOf(deleted.mediaUrl, deleted.thumbnailUrl),
+            )
+          }
+          lastRemoteGiftSnapshot = currentMap
+        }
+    }
+
+    // Observe cross-room gift broadcasts for the marquee strip & full-screen room playback
     viewModelScope.launch {
       repository.observeGlobalGiftEvents()
         .catch { /* logged by repository */ }
         .collect { events ->
+          val currentEventIds = events.asSequence().map { it.id }.toSet()
+          // If the currently displayed gift event was deleted from Firestore, dismiss immediately
+          val activeFull = _activeFullScreenGift.value
+          if (activeFull != null && activeFull.id.isNotBlank() &&
+            !activeFull.giftId.startsWith("entry_lv_") &&
+            activeFull.id !in currentEventIds
+          ) {
+            dismissFullScreenGift()
+          }
+          val activeMarquee = _latestMarqueeGift.value
+          if (activeMarquee != null && activeMarquee.id.isNotBlank() && activeMarquee.id !in currentEventIds) {
+            _latestMarqueeGift.value = null
+          }
+
           if (!initialGiftSnapshotHandled) {
             events.forEach { seenGiftEventIds.add(it.id) }
             initialGiftSnapshotHandled = true
           } else {
-            val freshEvents = events.filter { it.id.isNotBlank() && seenGiftEventIds.add(it.id) }
+            val hiddenIds = _hiddenGiftIds.value
+            val freshEvents = events.filter {
+              it.id.isNotBlank() && it.giftId !in hiddenIds && seenGiftEventIds.add(it.id)
+            }
             val activeId = _activeRoomId.value
             val newRoomEvents = freshEvents
               .filter { it.roomId == activeId }
               .reversed()
             newRoomEvents.forEach { enqueueFullScreenGift(it) }
-            freshEvents.firstOrNull()?.let { triggerOrQueueMarquee(it) }
+            // Do not show cross-room gift marquee for room-entry videos
+            freshEvents.firstOrNull { !it.giftId.startsWith("entry_lv_") }
+              ?.let { triggerOrQueueMarquee(it) }
           }
         }
     }
@@ -343,10 +434,46 @@ class SwarRoomViewModel(
   }
 
   private fun triggerOrQueueMarquee(event: GiftEvent) {
+    if (event.giftId.startsWith("entry_lv_")) return
     if (_activeFullScreenGift.value == null) {
       _latestMarqueeGift.value = event
     } else {
       pendingMarqueeGift = event
+    }
+  }
+
+  private fun purgeDeletedGiftEverywhere(
+    giftId: String,
+    mediaUrls: List<String>,
+  ) {
+    val cleanUrls = mediaUrls.map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    cleanUrls.forEach { url ->
+      SupabaseNetworkClient.evictCachedMedia(appContext?.cacheDir, url)
+    }
+    fun matchesDeleted(evt: GiftEvent): Boolean {
+      if (giftId.isNotBlank() && evt.giftId == giftId) return true
+      val evtUrl = evt.giftMediaUrl.trim()
+      return evtUrl.isNotBlank() && evtUrl in cleanUrls
+    }
+    if (pendingGiftQueue.isNotEmpty()) {
+      val remaining = pendingGiftQueue.filterNot(::matchesDeleted)
+      pendingGiftQueue.clear()
+      remaining.forEach { pendingGiftQueue.addLast(it) }
+    }
+    pendingMarqueeGift?.let { queuedMarquee ->
+      if (matchesDeleted(queuedMarquee)) {
+        pendingMarqueeGift = null
+      }
+    }
+    _latestMarqueeGift.value?.let { currentMarquee ->
+      if (matchesDeleted(currentMarquee)) {
+        _latestMarqueeGift.value = null
+      }
+    }
+    _activeFullScreenGift.value?.let { currentActive ->
+      if (matchesDeleted(currentActive)) {
+        dismissFullScreenGift()
+      }
     }
   }
 
@@ -507,6 +634,26 @@ class SwarRoomViewModel(
             messageType = "join",
             badgeTag = profile.clubTag,
           )
+        }
+      }
+      // Play user's unlocked royal entry video inside the room (visible & audible to all room members)
+      if (room != null) {
+        val profile = currentProfileOrDefault()
+        val userLevel = SwarUserIdentity.levelForProfile(profile).level
+        val configs = levelConfigs.value
+        val entryMatch = SwarUserIdentity.highestUnlockedEntryVideo(userLevel, configs)
+        if (entryMatch != null) {
+          val (tier, entryUrl) = entryMatch
+          repository.broadcastRoomEntryVideo(
+            room = room,
+            sender = profile,
+            badgeLevel = tier.badgeLevel,
+            entryVideoUrl = entryUrl,
+          ).onSuccess { entryEvent ->
+            if (_activeRoomId.value == room.id && seenGiftEventIds.add(entryEvent.id)) {
+              enqueueFullScreenGift(entryEvent)
+            }
+          }
         }
       }
     }
@@ -1444,43 +1591,45 @@ class SwarRoomViewModel(
       _events.tryEmit("अमान्य गिफ्ट चयनित है।")
       return
     }
+    val mediaUrls = listOf(gift.thumbnailUrl, gift.mediaUrl)
+      .map { it.trim() }
+      .filter { it.isNotBlank() }
+      .distinct()
+    purgeDeletedGiftEverywhere(giftId = gift.id, mediaUrls = mediaUrls)
+
     if (gift.id.startsWith("def_")) {
       _hiddenGiftIds.update { prev ->
         val updated = prev + gift.id
         catalogHiddenPrefs?.edit()?.putStringSet(KEY_HIDDEN_GIFTS, updated)?.apply()
         updated
       }
-      _events.tryEmit("गिफ्ट '${gift.name}' गिफ्ट पैनल से हटा दिया गया!")
+      _events.tryEmit("गिफ्ट '${gift.name}' और इसका लिंक पैनल से हटा दिया गया!")
       onSuccess()
       return
     }
     viewModelScope.launch {
       _isUploadingMedia.value = true
       try {
-        repository.deleteGiftFromCatalog(gift.id)
+        repository.deleteGiftFromCatalog(gift.id, mediaUrls)
           .onSuccess {
             _hiddenGiftIds.update { prev ->
               val updated = prev + gift.id
               catalogHiddenPrefs?.edit()?.putStringSet(KEY_HIDDEN_GIFTS, updated)?.apply()
               updated
             }
-            val mediaUrls = listOf(gift.thumbnailUrl, gift.mediaUrl)
-              .map { it.trim() }
-              .filter { it.isNotBlank() }
-              .distinct()
-            var storageMessage = "गिफ्ट '${gift.name}' गिफ्ट पैनल से डिलीट हो गया!"
+            var storageMessage = "गिफ्ट '${gift.name}' व इसका लिंक हर जगह से रियल-टाइम डिलीट हो गए!"
             if (mediaUrls.isNotEmpty()) {
               supabaseStorage.deleteMediaByPublicUrls(mediaUrls)
                 .onSuccess { deletedCount ->
                   storageMessage = if (deletedCount > 0) {
-                    "गिफ्ट '${gift.name}', DP और वीडियो स्टोरेज व गिफ्ट पैनल से पूरी तरह डिलीट हो गए!"
+                    "गिफ्ट '${gift.name}', DP और वीडियो लिंक स्टोरेज व हर रूम से डिलीट हो गए!"
                   } else {
-                    "गिफ्ट '${gift.name}' गिफ्ट पैनल से डिलीट हो गया!"
+                    "गिफ्ट '${gift.name}' और लिंक हर जगह से रियल-टाइम डिलीट हो गए!"
                   }
                 }
                 .onFailure { err ->
                   Log.w(TAG, "Gift storage delete warning", err)
-                  storageMessage = "गिफ्ट पैनल से हट गया, पर स्टोरेज डिलीट त्रुटि: ${err.message}"
+                  storageMessage = "गिफ्ट पैनल से डिलीट हो गया!"
                 }
             }
             _events.tryEmit(storageMessage)
@@ -1491,6 +1640,148 @@ class SwarRoomViewModel(
           }
       } finally {
         _isUploadingMedia.value = false
+      }
+    }
+  }
+
+  fun saveLevelTierConfig(
+    badgeLevel: Int,
+    entryVideoLink: String,
+    entryVideoUri: Uri?,
+    frameLink: String,
+    frameImageUri: Uri?,
+    rewardCoins: Long,
+    badgeLink: String,
+    badgeImageUri: Uri?,
+    onDone: () -> Unit = {},
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही स्तर कार्ड सेटिंग बदली जा सकती है।")
+      return
+    }
+    viewModelScope.launch {
+      _isUploadingMedia.value = true
+      try {
+        var finalEntryUrl = VideoLinkResolver.extractFirstHttpUrl(entryVideoLink)
+        if (entryVideoUri != null) {
+          val up = supabaseStorage.uploadMediaFromUri(
+            uri = entryVideoUri,
+            folder = "level_entries",
+            uid = currentUserId,
+            isVideo = true,
+          )
+          up.onSuccess { finalEntryUrl = it }
+            .onFailure { err ->
+              _events.tryEmit(err.message ?: "एंट्री वीडियो अपलोड विफल")
+              return@launch
+            }
+        } else if (finalEntryUrl.isNotBlank()) {
+          val canonical = VideoLinkResolver.instagramCanonicalReelUrl(finalEntryUrl) ?: finalEntryUrl
+          finalEntryUrl = canonical.take(780)
+        }
+
+        var finalFrameUrl = VideoLinkResolver.extractFirstHttpUrl(frameLink)
+        if (frameImageUri != null) {
+          val up = supabaseStorage.uploadMediaFromUri(
+            uri = frameImageUri,
+            folder = "level_frames",
+            uid = currentUserId,
+            isVideo = false,
+          )
+          up.onSuccess { finalFrameUrl = it }
+            .onFailure { err ->
+              _events.tryEmit(err.message ?: "फ्रेम अपलोड विफल")
+              return@launch
+            }
+        } else if (finalFrameUrl.isNotBlank() && finalFrameUrl.length <= 800 &&
+          !finalFrameUrl.lowercase().let {
+            it.contains(".gif") || it.contains(".png") || it.contains(".webp") || it.contains(".jpg") || it.contains(".jpeg") || it.contains("supabase.co")
+          }
+        ) {
+          kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            VideoLinkResolver.resolveImageUrl(finalFrameUrl)
+          }.onSuccess { resolved ->
+            if (resolved.length <= 800) finalFrameUrl = resolved
+          }
+        }
+
+        var finalBadgeUrl = VideoLinkResolver.extractFirstHttpUrl(badgeLink)
+        if (badgeImageUri != null) {
+          val up = supabaseStorage.uploadMediaFromUri(
+            uri = badgeImageUri,
+            folder = "level_badges",
+            uid = currentUserId,
+            isVideo = false,
+          )
+          up.onSuccess { finalBadgeUrl = it }
+            .onFailure { err ->
+              _events.tryEmit(err.message ?: "बैज अपलोड विफल")
+              return@launch
+            }
+        } else if (finalBadgeUrl.isNotBlank() && finalBadgeUrl.length <= 800 &&
+          !finalBadgeUrl.lowercase().let {
+            it.contains(".gif") || it.contains(".png") || it.contains(".webp") || it.contains(".jpg") || it.contains(".jpeg") || it.contains("supabase.co")
+          }
+        ) {
+          kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            VideoLinkResolver.resolveImageUrl(finalBadgeUrl)
+          }.onSuccess { resolved ->
+            if (resolved.length <= 800) finalBadgeUrl = resolved
+          }
+        }
+
+        repository.upsertLevelConfig(
+          badgeLevel = badgeLevel,
+          entryVideoUrl = finalEntryUrl.take(800),
+          avatarFrameUrl = finalFrameUrl.take(800),
+          rewardCoins = rewardCoins.coerceIn(0L, 999999L),
+          profileBadgeUrl = finalBadgeUrl.take(800),
+        ).onSuccess {
+          _events.tryEmit("LV.$badgeLevel कार्ड सेटिंग सभी यूज़र्स के लिए लाइव सेव हो गई! ✨")
+          onDone()
+        }.onFailure { err ->
+          _events.tryEmit(err.message ?: "स्तर सेटिंग सेव करने में त्रुटि")
+        }
+      } finally {
+        _isUploadingMedia.value = false
+      }
+    }
+  }
+
+  fun claimLevelTierReward(badgeLevel: Int) {
+    val profile = (userProfile.value as? UiState.Success)?.data ?: return
+    val userLevel = SwarUserIdentity.levelForProfile(profile).level
+    val tier = SwarUserIdentity.levelTiers.firstOrNull { it.badgeLevel == badgeLevel } ?: return
+    if (userLevel < tier.minLevel) {
+      _events.tryEmit("यह इनाम LV.${tier.minLevel} खुलने पर अनलॉक होगा।")
+      return
+    }
+    val reward = levelConfigs.value[badgeLevel]?.rewardCoins ?: 0L
+    if (reward <= 0L) {
+      _events.tryEmit("इस स्तर पर अभी कोई कॉइन बोनस सेट नहीं है।")
+      return
+    }
+    if (badgeLevel in _claimedLevelTiers.value || !claimingTiersInFlight.add(badgeLevel)) {
+      _events.tryEmit("इस स्तर का कॉइन इनाम पहले ही मिल चुका है।")
+      return
+    }
+    viewModelScope.launch {
+      try {
+        repository.claimLevelRewardCoins(badgeLevel, reward)
+          .onSuccess { granted ->
+            if (granted > 0L) {
+              _claimedLevelTiers.update { it + badgeLevel }
+              _events.tryEmit("🎉 LV.$badgeLevel बोनस: +$granted कॉइंस आपके वॉलेट में जुड़ गए!")
+            } else {
+              _claimedLevelTiers.update { it + badgeLevel }
+              _events.tryEmit("यह इनाम पहले ही प्राप्त हो चुका है।")
+            }
+          }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "इनाम कॉइंस लेने में त्रुटि")
+          }
+      } finally {
+        claimingTiersInFlight.remove(badgeLevel)
       }
     }
   }

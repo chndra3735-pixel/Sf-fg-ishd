@@ -7,6 +7,8 @@ import com.example.data.model.DirectMessage
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
+import com.example.data.model.LevelRewardClaim
+import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomSeat
@@ -1066,7 +1068,10 @@ class SwarRoomRepository(
     }
   }
 
-  suspend fun deleteGiftFromCatalog(giftId: String): Result<Unit> = runCatching {
+  suspend fun deleteGiftFromCatalog(
+    giftId: String,
+    mediaUrls: List<String> = emptyList(),
+  ): Result<Unit> = runCatching {
     requireUserId()
     val docRef = db.collection("gift_catalog").document(giftId)
     try {
@@ -1076,6 +1081,25 @@ class SwarRoomRepository(
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.DELETE, docRef.path)
       throw e
+    }
+
+    // Real-time delete all public gift_events referencing this deleted giftId or mediaUrl
+    val urlSet = mediaUrls.map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    runCatching {
+      val snapshot = db.collection("gift_events")
+        .whereEqualTo("isPublic", true)
+        .get()
+        .await()
+      val matchingRefs = snapshot.documents.filter { doc ->
+        val evtGiftId = doc.getString("giftId").orEmpty()
+        val evtMediaUrl = doc.getString("giftMediaUrl").orEmpty().trim()
+        evtGiftId == giftId || (evtMediaUrl.isNotBlank() && evtMediaUrl in urlSet)
+      }.map { it.reference }
+      matchingRefs.chunked(400).forEach { chunk ->
+        val batch = db.batch()
+        chunk.forEach { batch.delete(it) }
+        batch.commit().await()
+      }
     }
   }
 
@@ -1223,6 +1247,174 @@ class SwarRoomRepository(
       handleFirestoreError(e, OperationType.UPDATE, docRef.path)
       throw e
     }
+  }
+
+  // --- Admin-Managed Per-Level Configurations, Coin Rewards & Room Entry Video ---
+
+  fun observeLevelConfigs(): Flow<Map<Int, LevelTierConfig>> = flow {
+    val uid = requireUserId()
+    val colRef = db.collection("level_configs")
+    emitAll(
+      colRef.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(LevelTierConfig::class.java, ServerTimestampBehavior.ESTIMATE)
+            .associateBy { it.badgeLevel.toInt() }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "level_configs", uid); throw error }
+    )
+  }
+
+  suspend fun upsertLevelConfig(
+    badgeLevel: Int,
+    entryVideoUrl: String,
+    avatarFrameUrl: String,
+    rewardCoins: Long,
+    profileBadgeUrl: String,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    require(badgeLevel in VALID_TIER_LEVELS) { "अमान्य स्तर चयनित है।" }
+    val docRef = db.collection("level_configs").document(badgeLevel.toString())
+    val payload = mapOf(
+      "badgeLevel" to badgeLevel.toLong(),
+      "entryVideoUrl" to entryVideoUrl.trim().take(800),
+      "avatarFrameUrl" to avatarFrameUrl.trim().take(800),
+      "rewardCoins" to rewardCoins.coerceIn(0L, 999999L),
+      "profileBadgeUrl" to profileBadgeUrl.trim().take(800),
+      "updatedByUid" to uid,
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, docRef.path)
+      throw e
+    }
+  }
+
+  fun observeClaimedLevelTiers(): Flow<Set<Int>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("level_claims").whereEqualTo("userId", uid)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(LevelRewardClaim::class.java, ServerTimestampBehavior.ESTIMATE)
+            .map { it.badgeLevel.toInt() }
+            .toSet()
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "level_claims", uid); throw error }
+    )
+  }
+
+  suspend fun claimLevelRewardCoins(
+    badgeLevel: Int,
+    rewardCoins: Long,
+  ): Result<Long> = runCatching {
+    val uid = requireUserId()
+    require(badgeLevel in VALID_TIER_LEVELS) { "अमान्य स्तर चयनित है।" }
+    val safeReward = rewardCoins.coerceIn(0L, 999999L)
+    if (safeReward <= 0L) return@runCatching 0L
+    val claimId = "${uid}_$badgeLevel"
+    val claimRef = db.collection("level_claims").document(claimId)
+    val userRef = db.collection("users").document(uid)
+    try {
+      db.runTransaction { tx ->
+        val claimSnap = tx.get(claimRef)
+        if (claimSnap.exists()) {
+          return@runTransaction 0L
+        }
+        val userSnap = tx.get(userRef)
+        val currentCoins = userSnap.getLong("coins") ?: 0L
+        val nextCoins = (currentCoins + safeReward).coerceAtMost(999999999L)
+        tx.update(
+          userRef,
+          mapOf(
+            "coins" to nextCoins,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        tx.set(
+          claimRef,
+          mapOf(
+            "userId" to uid,
+            "badgeLevel" to badgeLevel.toLong(),
+            "coinsGranted" to safeReward,
+            "claimedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        safeReward
+      }.await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, claimRef.path)
+      throw e
+    }
+  }
+
+  suspend fun broadcastRoomEntryVideo(
+    room: VoiceRoom,
+    sender: UserProfile,
+    badgeLevel: Int,
+    entryVideoUrl: String,
+  ): Result<GiftEvent> = runCatching {
+    val uid = requireUserId()
+    val cleanUrl = entryVideoUrl.trim().take(800)
+    require(cleanUrl.isNotBlank()) { "एंट्री वीडियो लिंक खाली है।" }
+    val eventId = "ent_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val eventRef = db.collection("gift_events").document(eventId)
+    val safeName = sender.displayName.trim().take(40).ifBlank { "Member" }
+    val giftId = "entry_lv_$badgeLevel"
+    val giftName = "LV.$badgeLevel रॉयल एंट्री"
+    val payload = mapOf(
+      "roomId" to room.id,
+      "roomTitle" to room.title.take(60).ifBlank { "लाइव रूम" },
+      "senderUid" to uid,
+      "senderName" to safeName,
+      "senderAvatarUrl" to sender.avatarUrl.take(600),
+      "recipientUid" to uid.take(128),
+      "recipientName" to safeName,
+      "giftId" to giftId,
+      "giftName" to giftName,
+      "giftEmoji" to "👑",
+      "giftMediaUrl" to cleanUrl,
+      "giftMediaType" to "video",
+      "coinCost" to 0L,
+      "quantity" to 1L,
+      "isPublic" to true,
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      eventRef.set(payload).await()
+      GiftEvent(
+        id = eventId,
+        roomId = room.id,
+        roomTitle = room.title.take(60),
+        senderUid = uid,
+        senderName = safeName,
+        senderAvatarUrl = sender.avatarUrl,
+        recipientUid = uid,
+        recipientName = safeName,
+        giftId = giftId,
+        giftName = giftName,
+        giftEmoji = "👑",
+        giftMediaUrl = cleanUrl,
+        giftMediaType = "video",
+        coinCost = 0L,
+        quantity = 1L,
+        isPublic = true,
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, eventRef.path)
+      throw e
+    }
+  }
+
+  private companion object {
+    val VALID_TIER_LEVELS = setOf(1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120)
   }
 
   private fun handleFlowError(

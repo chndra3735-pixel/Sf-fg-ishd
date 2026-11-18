@@ -74,10 +74,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GiftCatalogItem
+import com.example.data.model.LevelTierConfig
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
 import com.example.ui.components.FamilyCrestEmblem
+import com.example.ui.components.FramedUserAvatar
 import com.example.ui.components.GoldenWingedLevelBadge
 import com.example.ui.components.LanguageSelectionDialog
 import com.example.ui.components.LevelDetailsDialog
@@ -86,12 +88,13 @@ import com.example.ui.components.ProfileMenuRow
 import com.example.ui.components.StoreGradientCard
 import com.example.ui.components.SupabaseConfigNoticeCard
 import com.example.ui.components.SwarStoreDialog
-import com.example.ui.components.UserAvatar
+import com.example.ui.components.UnlockedProfileBadgesLine
 import com.example.ui.components.WalletGradientCard
 import com.example.ui.components.WalletOverviewDialog
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarDeepNight
+import com.example.ui.theme.SwarGold
 import com.example.ui.viewmodel.UiState
 
 private data class ProfileInfoPayload(
@@ -113,6 +116,21 @@ fun ProfileScreen(
   onSignInClick: (() -> Unit)? = null,
   onClaimBonusCoins: (() -> Unit)? = null,
   giftCatalog: List<GiftCatalogItem> = SwarCatalogDefaults.builtInGifts,
+  levelConfigs: Map<Int, LevelTierConfig> = emptyMap(),
+  claimedLevelTiers: Set<Int> = emptySet(),
+  isAdminUser: Boolean = false,
+  onSaveLevelTierConfig: (
+    badgeLevel: Int,
+    entryVideoLink: String,
+    entryVideoUri: Uri?,
+    frameLink: String,
+    frameUri: Uri?,
+    rewardCoins: Long,
+    badgeLink: String,
+    badgeUri: Uri?,
+    onDone: () -> Unit,
+  ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
+  onClaimLevelTierReward: (Int) -> Unit = {},
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
   var showWalletDialog by remember { mutableStateOf(false) }
@@ -136,6 +154,9 @@ fun ProfileScreen(
   }
   val levelInfo = remember(profile?.coins) {
     SwarUserIdentity.levelForProfile(profile)
+  }
+  val activeFrameUrl = remember(levelInfo.level, levelConfigs) {
+    SwarUserIdentity.highestUnlockedFrameUrl(levelInfo.level, levelConfigs)
   }
   val coins = profile?.coins ?: 1500L
   val clubTag = profile?.clubTag.orEmpty().ifBlank { "SWAR" }
@@ -163,7 +184,7 @@ fun ProfileScreen(
       .padding(horizontal = 16.dp, vertical = 14.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    // Top Header: Large Circular Avatar + Flag-Accented Name + ID Pill + Edit/Switch Action
+    // Top Header: Large Circular Avatar (with animated Level Frame) + Flag-Accented Name + ID Pill
     Row(
       modifier = Modifier
         .fillMaxWidth()
@@ -171,11 +192,12 @@ fun ProfileScreen(
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Box(contentAlignment = Alignment.BottomEnd) {
-        UserAvatar(
+        FramedUserAvatar(
           url = profile?.avatarUrl.orEmpty(),
           name = displayName,
-          size = 76.dp,
-          borderColor = Color.White,
+          avatarSize = 76.dp,
+          frameUrl = activeFrameUrl,
+          borderColor = if (activeFrameUrl.isNotBlank()) SwarGold else Color.White,
           borderWidth = 2.dp,
           modifier = Modifier.clickable {
             dpPicker.launch(
@@ -374,6 +396,13 @@ fun ProfileScreen(
         onClick = { showEditDialog = true },
       )
     }
+
+    // Unlocked Level Achievement Badges Line near top of Profile ("जितना लेवल खुलता जाएगा वह प्रोफाइल के ऊपर की लाइन पर दिखे")
+    UnlockedProfileBadgesLine(
+      userLevel = levelInfo.level,
+      levelConfigs = levelConfigs,
+      onOpenLevelCards = { showLevelDialog = true },
+    )
 
     // Two Vibrant Side-by-Side Feature Cards: वॉलेट (Wallet) & स्टोर (Store)
     Row(
@@ -619,6 +648,14 @@ fun ProfileScreen(
       levelInfo = levelInfo,
       coins = coins,
       onDismiss = { showLevelDialog = false },
+      levelConfigs = levelConfigs,
+      claimedTiers = claimedLevelTiers,
+      isAdminUser = isAdminUser,
+      isUploadingMedia = isUploadingMedia,
+      sampleAvatarUrl = profile?.avatarUrl.orEmpty(),
+      sampleDisplayName = displayName,
+      onSaveTierConfig = onSaveLevelTierConfig,
+      onClaimTierReward = onClaimLevelTierReward,
     )
   }
 

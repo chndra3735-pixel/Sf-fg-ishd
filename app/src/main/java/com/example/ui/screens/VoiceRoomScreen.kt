@@ -129,6 +129,7 @@ import com.example.R
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
+import com.example.data.model.LevelTierConfig
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarUserIdentity
@@ -136,9 +137,12 @@ import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
 import com.example.ui.components.CrossRoomGiftMarqueeStrip
 import com.example.ui.components.EmojiPanelSheet
+import com.example.ui.components.FramedUserAvatar
 import com.example.ui.components.FullScreenGiftOverlay
 import com.example.ui.components.GiftPanelSheet
 import com.example.ui.components.LevelCardsShowcaseDialog
+import com.example.ui.components.OrnateWingedLevelCrest
+import com.example.ui.components.ProfileSideBadgesShowcaseCard
 import com.example.ui.components.UserAvatar
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
@@ -224,6 +228,20 @@ fun VoiceRoomScreen(
   agoraStatusText: String = "",
   giftUploadError: String? = null,
   onClearGiftUploadError: () -> Unit = {},
+  levelConfigs: Map<Int, LevelTierConfig> = emptyMap(),
+  claimedLevelTiers: Set<Int> = emptySet(),
+  onSaveLevelTierConfig: (
+    badgeLevel: Int,
+    entryVideoLink: String,
+    entryVideoUri: Uri?,
+    frameLink: String,
+    frameUri: Uri?,
+    rewardCoins: Long,
+    badgeLink: String,
+    badgeUri: Uri?,
+    onDone: () -> Unit,
+  ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
+  onClaimLevelTierReward: (Int) -> Unit = {},
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -282,6 +300,14 @@ fun VoiceRoomScreen(
   }
   val guestSeats = remember(seats) { seats.filter { it.seatIndex >= 2L } }
   val seatedMembers = remember(seats) { seats.filter { it.occupantUid.isNotBlank() } }
+  LaunchedEffect(seatedMembers) {
+    seatedMembers.forEach { seat ->
+      val uid = seat.occupantUid
+      if (uid.isNotBlank() && uid != currentUserId && uid !in userProfiles) {
+        onRequestUserProfile(uid)
+      }
+    }
+  }
   val seatedUids = remember(seatedMembers) { seatedMembers.map { it.occupantUid }.toSet() }
   val totalSeatCount = if (seats.isNotEmpty()) seats.size else room.seatCount.toInt()
   val isCurrentUserSeated = currentUserId in seatedUids
@@ -604,10 +630,19 @@ fun VoiceRoomScreen(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         topSeats.forEach { topSeat ->
+          val occUid = topSeat.occupantUid
+          val occFrameUrl = if (occUid.isNotBlank()) {
+            val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
+            SwarUserIdentity.highestUnlockedFrameUrl(
+              SwarUserIdentity.levelForCoins(occCoins).level,
+              levelConfigs,
+            )
+          } else ""
           HostSeatBadge(
             seat = topSeat,
             emptyLabel = if (topSeat.seatIndex == 0L) "होस्ट सीट 1" else "होस्ट सीट 2",
             localLevel = if (topSeat.occupantUid == currentUserId) micAudioLevel else 0f,
+            frameUrl = occFrameUrl,
             activeEmoji = topSeat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
             onClick = { openSeatOrProfileSheet(topSeat) },
           )
@@ -625,9 +660,18 @@ fun VoiceRoomScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         items(guestSeats, key = { it.id.ifBlank { "seat_${it.seatIndex}" } }) { seat ->
+          val occUid = seat.occupantUid
+          val occFrameUrl = if (occUid.isNotBlank()) {
+            val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
+            SwarUserIdentity.highestUnlockedFrameUrl(
+              SwarUserIdentity.levelForCoins(occCoins).level,
+              levelConfigs,
+            )
+          } else ""
           GuestSeatTile(
             seat = seat,
             localLevel = if (seat.occupantUid == currentUserId) micAudioLevel else 0f,
+            frameUrl = occFrameUrl,
             activeEmoji = seat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
             onClick = { openSeatOrProfileSheet(seat) },
           )
@@ -874,12 +918,16 @@ fun VoiceRoomScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
-        // 1. Top Circular DP
-        UserAvatar(
+        val activeFrameUrl = remember(levelInfo.level, levelConfigs) {
+          SwarUserIdentity.highestUnlockedFrameUrl(levelInfo.level, levelConfigs)
+        }
+        // 1. Top Circular DP with Animated Level Frame
+        FramedUserAvatar(
           url = resolvedAvatar,
           name = resolvedName,
-          size = 82.dp,
-          borderColor = if (isSelf) SwarGold else SwarCyan,
+          avatarSize = 82.dp,
+          frameUrl = activeFrameUrl,
+          borderColor = if (isSelf || activeFrameUrl.isNotBlank()) SwarGold else SwarCyan,
           borderWidth = 2.5.dp,
         )
 
@@ -951,43 +999,51 @@ fun VoiceRoomScreen(
 
         var showSheetLevelCards by remember(profileTarget.uid) { mutableStateOf(false) }
 
-        // 4. Below ID: Level Badge & XP Bar (Tap to view all 13 large level cards)
-        Surface(
-          onClick = { showSheetLevelCards = true },
-          color = levelInfo.badgeColor.copy(alpha = 0.16f),
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, levelInfo.badgeColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
-            .testTag("sheet_level_card"),
+        // 4. Below ID: Royal Side-by-Side Level Card (Left) + Unlocked Achievement Badges / ब्याज Showcase (Right)
+        val sheetTier = remember(levelInfo.level) { SwarUserIdentity.tierForLevel(levelInfo.level) }
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+          Surface(
+            onClick = { showSheetLevelCards = true },
+            color = levelInfo.badgeColor.copy(alpha = 0.16f),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+              .weight(0.95f)
+              .border(1.dp, levelInfo.badgeColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+              .testTag("sheet_level_card"),
           ) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween,
-              verticalAlignment = Alignment.CenterVertically,
+            Column(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+              verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-              ) {
-                Icon(
-                  imageVector = Icons.Filled.WorkspacePremium,
-                  contentDescription = null,
-                  tint = levelInfo.badgeColor,
-                  modifier = Modifier.size(18.dp),
-                )
-                Text(
-                  text = "Lv.${levelInfo.level} • ${levelInfo.title}",
-                  style = MaterialTheme.typography.labelLarge,
-                  color = levelInfo.badgeColor,
-                  fontWeight = FontWeight.Bold,
-                  modifier = Modifier.testTag("sheet_user_level_badge"),
-                )
-              }
+              OrnateWingedLevelCrest(
+                tier = sheetTier,
+                displayText = "LV.${levelInfo.level}",
+                badgeWidth = 92.dp,
+                badgeHeight = 32.dp,
+                isCompact = true,
+              )
+              Text(
+                text = "Lv.${levelInfo.level} • ${levelInfo.title}",
+                style = MaterialTheme.typography.labelMedium,
+                color = levelInfo.badgeColor,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("sheet_user_level_badge"),
+              )
+              LinearProgressIndicator(
+                progress = { levelInfo.progress },
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(5.dp)
+                  .clip(RoundedCornerShape(4.dp)),
+                color = levelInfo.badgeColor,
+                trackColor = Color(0x33FFFFFF),
+              )
               Text(
                 text = if (liveSeat != null) {
                   when (liveSeat.seatIndex) {
@@ -996,22 +1052,21 @@ fun VoiceRoomScreen(
                     else -> "सीट #${liveSeat.seatIndex - 1L}"
                   }
                 } else {
-                  "लिसनर"
+                  "लिसनर • 13 कार्ड्स ›"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFFD0C9EC),
+                maxLines = 1,
               )
             }
-            LinearProgressIndicator(
-              progress = { levelInfo.progress },
-              modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(4.dp)),
-              color = levelInfo.badgeColor,
-              trackColor = Color(0x33FFFFFF),
-            )
           }
+
+          ProfileSideBadgesShowcaseCard(
+            userLevel = levelInfo.level,
+            levelConfigs = levelConfigs,
+            onOpenAllCards = { showSheetLevelCards = true },
+            modifier = Modifier.weight(1.05f),
+          )
         }
 
         if (showSheetLevelCards) {
@@ -1020,6 +1075,14 @@ fun VoiceRoomScreen(
             levelInfo = levelInfo,
             coins = sheetCoins,
             onDismiss = { showSheetLevelCards = false },
+            levelConfigs = levelConfigs,
+            claimedTiers = if (isSelf) claimedLevelTiers else emptySet(),
+            isAdminUser = isAdminUser,
+            isUploadingMedia = isUploadingMedia,
+            sampleAvatarUrl = resolvedAvatar,
+            sampleDisplayName = resolvedName,
+            onSaveTierConfig = onSaveLevelTierConfig,
+            onClaimTierReward = onClaimLevelTierReward,
           )
         }
 
@@ -1903,6 +1966,7 @@ private fun HostSeatBadge(
   seat: RoomSeat?,
   emptyLabel: String = "होस्ट सीट",
   localLevel: Float,
+  frameUrl: String = "",
   activeEmoji: ActiveSeatEmoji? = null,
   onClick: () -> Unit,
 ) {
@@ -1935,10 +1999,11 @@ private fun HostSeatBadge(
               .border(2.5.dp, SwarCyan, CircleShape)
           )
         }
-        UserAvatar(
+        FramedUserAvatar(
           url = seat?.occupantAvatarUrl.orEmpty(),
           name = seat?.occupantName.orEmpty(),
-          size = 48.dp,
+          avatarSize = 48.dp,
+          frameUrl = frameUrl,
           borderColor = if (speaking) SwarMint else SwarGold,
           borderWidth = 1.8.dp,
         )
@@ -1998,6 +2063,7 @@ private fun HostSeatBadge(
 private fun GuestSeatTile(
   seat: RoomSeat,
   localLevel: Float,
+  frameUrl: String = "",
   activeEmoji: ActiveSeatEmoji? = null,
   onClick: () -> Unit,
 ) {
@@ -2012,15 +2078,16 @@ private fun GuestSeatTile(
   ) {
     Box(contentAlignment = Alignment.Center) {
       if (isOccupied) {
-        UserAvatar(
+        FramedUserAvatar(
           url = seat.occupantAvatarUrl,
           name = seat.occupantName,
-          size = 48.dp,
+          avatarSize = 46.dp,
+          frameUrl = frameUrl,
           borderColor = if (isSpeaking) SwarCyan else Color(0x88FFFFFF),
           borderWidth = if (isSpeaking) 2.5.dp else 1.dp,
         )
         if (activeEmoji != null) {
-          SeatEmojiReactionOverlay(reaction = activeEmoji, dpSize = 48.dp)
+          SeatEmojiReactionOverlay(reaction = activeEmoji, dpSize = 46.dp)
         }
         Box(
           modifier = Modifier

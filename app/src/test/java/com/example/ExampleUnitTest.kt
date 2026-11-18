@@ -159,4 +159,36 @@ class ExampleUnitTest {
     assertEquals("LV.110~LV.119", SwarUserIdentity.tierForLevel(115).rangeLabel)
     assertEquals(120, SwarUserIdentity.levelForCoins(250_000L).level)
   }
+
+  @Test
+  fun unlockedTiersAndHighestConfiguredEffects_resolveHighestUnlockedReward() {
+    val unlockedLv25 = SwarUserIdentity.unlockedTiersForLevel(25)
+    assertEquals(listOf(1, 10, 20), unlockedLv25.map { it.badgeLevel })
+
+    val configs = mapOf(
+      1 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 1L,
+        avatarFrameUrl = "https://cdn.example.com/frame_lv1.gif",
+        entryVideoUrl = "https://cdn.example.com/entry_lv1.mp4",
+      ),
+      20 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 20L,
+        avatarFrameUrl = "https://cdn.example.com/frame_lv20.webp",
+      ),
+      50 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 50L,
+        avatarFrameUrl = "https://cdn.example.com/frame_lv50.gif",
+        entryVideoUrl = "https://cdn.example.com/entry_lv50.mp4",
+      ),
+    )
+
+    assertEquals(
+      "https://cdn.example.com/frame_lv20.webp",
+      SwarUserIdentity.highestUnlockedFrameUrl(25, configs),
+    )
+    val entry = SwarUserIdentity.highestUnlockedEntryVideo(25, configs)
+    assertNotNull(entry)
+    assertEquals(1, entry?.first?.badgeLevel)
+    assertEquals("https://cdn.example.com/entry_lv1.mp4", entry?.second)
+  }
 }

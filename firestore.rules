@@ -178,6 +178,25 @@ service cloud.firestore {
              isValidTimestamp(data.createdAt);
     }
 
+    function isValidLevelTierConfig(data) {
+      return data.badgeLevel is int &&
+             data.badgeLevel in [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120] &&
+             data.entryVideoUrl is string && data.entryVideoUrl.size() <= 800 &&
+             data.avatarFrameUrl is string && data.avatarFrameUrl.size() <= 800 &&
+             data.rewardCoins is int && data.rewardCoins >= 0 && data.rewardCoins <= 999999 &&
+             data.profileBadgeUrl is string && data.profileBadgeUrl.size() <= 800 &&
+             data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidLevelClaim(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.badgeLevel is int &&
+             data.badgeLevel in [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120] &&
+             data.coinsGranted is int && data.coinsGranted >= 0 && data.coinsGranted <= 999999 &&
+             isValidTimestamp(data.claimedAt);
+    }
+
     // --- Collection Rules ---
 
     // 1. User Profiles (Public display metadata only, zero PII)
@@ -427,6 +446,39 @@ service cloud.firestore {
                        incoming().keys().hasOnly(['roomId', 'roomTitle', 'senderUid', 'senderName', 'senderAvatarUrl', 'recipientUid', 'recipientName', 'giftId', 'giftName', 'giftEmoji', 'giftMediaUrl', 'giftMediaType', 'coinCost', 'quantity', 'isPublic', 'createdAt']) &&
                        isValidGiftEvent(incoming()) &&
                        exists(/databases/$(database)/documents/rooms/$(incoming().roomId));
+
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(eventId);
+    }
+
+    // 8. Admin-managed Per-Level Rewards & Effects (Entry Video URL, Animated Frame URL, Coins, Profile Badge URL)
+    match /level_configs/{tierId} {
+      allow get: if isSignedIn() && isValidId(tierId);
+      allow list: if isSignedIn();
+
+      allow create, update: if isAdmin() &&
+                               isValidId(tierId) &&
+                               tierId in ['1', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100', '110', '120'] &&
+                               incoming().updatedByUid == request.auth.uid &&
+                               incoming().keys().hasAll(['badgeLevel', 'entryVideoUrl', 'avatarFrameUrl', 'rewardCoins', 'profileBadgeUrl', 'updatedByUid', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['badgeLevel', 'entryVideoUrl', 'avatarFrameUrl', 'rewardCoins', 'profileBadgeUrl', 'updatedByUid', 'updatedAt']) &&
+                               isValidLevelTierConfig(incoming());
+
+      allow delete: if isAdmin() && isValidId(tierId);
+    }
+
+    // 9. User-scoped One-Time Level Reward Claims
+    match /level_claims/{claimId} {
+      allow get: if isSignedIn() && isValidId(claimId) &&
+                    (resource == null || resource.data.userId == request.auth.uid);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(claimId) &&
+                       claimId.matches('^' + request.auth.uid + '_(1|10|20|30|40|50|60|70|80|90|100|110|120)$') &&
+                       incoming().keys().hasAll(['userId', 'badgeLevel', 'coinsGranted', 'claimedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'badgeLevel', 'coinsGranted', 'claimedAt']) &&
+                       isValidLevelClaim(incoming());
 
       allow update, delete: if false;
     }

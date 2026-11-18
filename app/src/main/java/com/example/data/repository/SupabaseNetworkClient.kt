@@ -187,4 +187,18 @@ object SupabaseNetworkClient {
       }
     }.getOrNull()
   }
+
+  fun evictCachedMedia(cacheDir: java.io.File?, remoteUrl: String) {
+    if (cacheDir == null || remoteUrl.isBlank()) return
+    runCatching {
+      val dir = java.io.File(cacheDir, "swar_media_cache")
+      if (!dir.exists()) return@runCatching
+      val key = remoteUrl.hashCode().toUInt().toString(16)
+      dir.listFiles()?.forEach { file ->
+        if (file.name.startsWith("media_$key.") || file.name == "media_$key.tmp") {
+          file.delete()
+        }
+      }
+    }
+  }
 }

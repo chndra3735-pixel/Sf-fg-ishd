@@ -1,5 +1,12 @@
 package com.example.ui.components
 
+import android.net.Uri
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,9 +31,13 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +63,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -62,10 +74,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
+import com.example.data.model.LevelTierConfig
 import com.example.data.model.LevelTierSpec
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserLevelInfo
+import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarGold
+import com.example.ui.theme.SwarMint
 
 @Composable
 fun OrnateWingedLevelCrest(
@@ -237,9 +253,14 @@ fun OrnateWingedLevelCrest(
 @Composable
 fun LevelTierLargeCard(
   tier: LevelTierSpec,
+  config: LevelTierConfig = LevelTierConfig(badgeLevel = tier.badgeLevel.toLong()),
   isCurrentTier: Boolean,
   isUnlocked: Boolean,
   isSelected: Boolean,
+  isAdminUser: Boolean = false,
+  sampleAvatarUrl: String = "",
+  sampleDisplayName: String = "Swar",
+  shimmerFraction: Float = 0f,
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -256,14 +277,14 @@ fun LevelTierLargeCard(
     color = Color.Transparent,
     modifier = modifier
       .fillMaxWidth()
-      .height(166.dp)
+      .height(224.dp)
       .clip(RoundedCornerShape(20.dp))
       .background(
         Brush.verticalGradient(
           colors = listOf(
-            Color(0xFF262047),
+            Color(0xFF28214D),
             Color(0xFF1A1534),
-            Color(0xFF141029),
+            Color(0xFF120E26),
           )
         )
       )
@@ -274,8 +295,60 @@ fun LevelTierLargeCard(
     Box(
       modifier = Modifier
         .fillMaxSize()
-        .padding(horizontal = 10.dp, vertical = 12.dp),
+        .padding(horizontal = 10.dp, vertical = 10.dp),
     ) {
+      // Live continuous light sheen across every level card
+      Canvas(modifier = Modifier.matchParentSize()) {
+        val bandW = size.width * 0.35f
+        val startX = (size.width + bandW) * shimmerFraction - bandW
+        drawRect(
+          brush = Brush.linearGradient(
+            colors = listOf(Color.Transparent, tier.glowColor.copy(alpha = 0.14f), Color.Transparent),
+            start = Offset(startX, 0f),
+            end = Offset(startX + bandW, size.height),
+          )
+        )
+      }
+
+      // Top Left: Quick indicator if Entry Video / Frame / Badge live
+      Row(
+        modifier = Modifier.align(Alignment.TopStart),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        if (config.entryVideoUrl.isNotBlank()) {
+          Surface(
+            color = SwarCyan.copy(alpha = 0.2f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.border(0.8.dp, SwarCyan.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+              Icon(Icons.Filled.Movie, contentDescription = null, tint = SwarCyan, modifier = Modifier.size(10.dp))
+              Text("एंट्री", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
+            }
+          }
+        }
+        if (config.rewardCoins > 0L) {
+          Surface(
+            color = SwarGold.copy(alpha = 0.2f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.border(0.8.dp, SwarGold.copy(alpha = 0.55f), RoundedCornerShape(8.dp)),
+          ) {
+            Text(
+              text = "+${config.rewardCoins}",
+              fontSize = 8.sp,
+              color = SwarGold,
+              fontWeight = FontWeight.ExtraBold,
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+            )
+          }
+        }
+      }
+
       // Top status chip: Current / Unlocked / Locked
       Row(
         modifier = Modifier.align(Alignment.TopEnd),
@@ -315,39 +388,117 @@ fun LevelTierLargeCard(
       Column(
         modifier = Modifier
           .fillMaxSize()
-          .padding(top = 14.dp),
+          .padding(top = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.SpaceBetween,
       ) {
         OrnateWingedLevelCrest(
           tier = tier,
           displayText = tier.badgeLabel,
-          badgeWidth = 148.dp,
-          badgeHeight = 56.dp,
+          badgeWidth = 144.dp,
+          badgeHeight = 52.dp,
           isCompact = false,
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+          Text(
+            text = tier.rangeLabel,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFFE5E2F5),
+            maxLines = 1,
+          )
+          val requiredCoins = (tier.minLevel - 1) * 1000L
+          Text(
+            text = if (requiredCoins == 0L) tier.titleHindi else "${tier.titleHindi} • ${requiredCoins / 1000}K+",
+            fontSize = 10.sp,
+            color = if (isCurrentTier) SwarGold else Color(0xFF9C96BE),
+            fontWeight = if (isCurrentTier) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
 
-        Text(
-          text = tier.rangeLabel,
-          fontSize = 15.sp,
-          fontWeight = FontWeight.Bold,
-          color = Color(0xFFE5E2F5),
-          maxLines = 1,
-        )
+        // Live Real-Time 4-Reward Strip inside every card (Animated Frame + Badge + Video + Coins)
+        Surface(
+          color = Color(0x66110C24),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .border(0.8.dp, tier.rimColor.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 6.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            // 1. Live Animated DP Frame preview
+            FramedUserAvatar(
+              url = sampleAvatarUrl,
+              name = sampleDisplayName,
+              avatarSize = 24.dp,
+              frameUrl = config.avatarFrameUrl,
+              borderColor = tier.rimColor,
+              borderWidth = 1.dp,
+            )
 
-        Spacer(modifier = Modifier.height(3.dp))
+            // 2. Live Animated Profile Badge ("ब्याज") preview
+            if (config.profileBadgeUrl.isNotBlank()) {
+              AsyncImage(
+                model = config.profileBadgeUrl,
+                contentDescription = "बैज",
+                modifier = Modifier
+                  .size(26.dp)
+                  .clip(CircleShape)
+                  .border(1.dp, SwarGold, CircleShape),
+                contentScale = ContentScale.Crop,
+              )
+            } else {
+              Box(
+                modifier = Modifier
+                  .size(24.dp)
+                  .clip(CircleShape)
+                  .background(Color(0xFF28204B)),
+                contentAlignment = Alignment.Center,
+              ) {
+                Icon(
+                  imageVector = Icons.Filled.WorkspacePremium,
+                  contentDescription = null,
+                  tint = tier.rimColor.copy(alpha = 0.75f),
+                  modifier = Modifier.size(14.dp),
+                )
+              }
+            }
 
-        val requiredCoins = (tier.minLevel - 1) * 1000L
-        Text(
-          text = if (requiredCoins == 0L) tier.titleHindi else "${tier.titleHindi} • ${requiredCoins / 1000}K+ कॉइन",
-          fontSize = 11.sp,
-          color = if (isCurrentTier) SwarGold else Color(0xFF9C96BE),
-          fontWeight = if (isCurrentTier) FontWeight.SemiBold else FontWeight.Normal,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
+            // 3. Video + Coins status or Admin setup cue
+            Surface(
+              color = if (isAdminUser) Color(0xFF31255C) else tier.glowColor.copy(alpha = 0.22f),
+              shape = RoundedCornerShape(8.dp),
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+              ) {
+                Icon(
+                  imageVector = if (isAdminUser) Icons.Filled.Settings else Icons.Filled.AutoAwesome,
+                  contentDescription = null,
+                  tint = if (isAdminUser) SwarCyan else SwarGold,
+                  modifier = Modifier.size(12.dp),
+                )
+                Text(
+                  text = if (isAdminUser) "सेटअप" else "लाइव",
+                  fontSize = 10.sp,
+                  color = Color.White,
+                  fontWeight = FontWeight.Bold,
+                  maxLines = 1,
+                )
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -358,10 +509,37 @@ fun LevelCardsShowcaseDialog(
   levelInfo: UserLevelInfo,
   coins: Long,
   onDismiss: () -> Unit,
+  levelConfigs: Map<Int, LevelTierConfig> = emptyMap(),
+  claimedTiers: Set<Int> = emptySet(),
+  isAdminUser: Boolean = false,
+  isUploadingMedia: Boolean = false,
+  sampleAvatarUrl: String = "",
+  sampleDisplayName: String = "Swar",
+  onSaveTierConfig: (
+    badgeLevel: Int,
+    entryVideoLink: String,
+    entryVideoUri: Uri?,
+    frameLink: String,
+    frameUri: Uri?,
+    rewardCoins: Long,
+    badgeLink: String,
+    badgeUri: Uri?,
+    onDone: () -> Unit,
+  ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
+  onClaimTierReward: (Int) -> Unit = {},
 ) {
   val tiers = SwarUserIdentity.levelTiers
   val currentTier = remember(levelInfo.level) { SwarUserIdentity.tierForLevel(levelInfo.level) }
   var selectedTier by remember(levelInfo.level) { mutableStateOf(currentTier) }
+  var detailTier by remember { mutableStateOf<LevelTierSpec?>(null) }
+
+  val cardShimmer = rememberInfiniteTransition(label = "levelGridShimmer")
+  val shimmerFraction by cardShimmer.animateFloat(
+    initialValue = -0.35f,
+    targetValue = 1.35f,
+    animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
+    label = "gridSheen",
+  )
 
   Dialog(
     onDismissRequest = onDismiss,
@@ -415,7 +593,7 @@ fun LevelCardsShowcaseDialog(
                 fontWeight = FontWeight.ExtraBold,
               )
               Text(
-                text = "सभी 13 लेवल रैंक और कॉइन लक्ष्य",
+                text = if (isAdminUser) "किसी भी कार्ड पर टैप करके एंट्री वीडियो, फ्रेम, कॉइन व बैज जोड़ें" else "कार्ड पर टैप करें और लाइव एनीमेशन व इनाम देखें",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFFA7A0CE),
               )
@@ -506,9 +684,9 @@ fun LevelCardsShowcaseDialog(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Large 2-Column (Adaptive) Cards Grid for all 13 Level Tiers
+        // Large Adaptive Cards Grid for all 13 Level Tiers with live rewards preview
         LazyVerticalGrid(
-          columns = GridCells.Adaptive(minSize = 148.dp),
+          columns = GridCells.Adaptive(minSize = 152.dp),
           modifier = Modifier
             .weight(1f)
             .fillMaxWidth()
@@ -520,26 +698,37 @@ fun LevelCardsShowcaseDialog(
           items(tiers, key = { it.badgeLevel }) { tier ->
             val isCurrent = levelInfo.level in tier.minLevel..tier.maxLevel
             val isUnlocked = levelInfo.level >= tier.minLevel
+            val tierConfig = levelConfigs[tier.badgeLevel] ?: LevelTierConfig(badgeLevel = tier.badgeLevel.toLong())
             LevelTierLargeCard(
               tier = tier,
+              config = tierConfig,
               isCurrentTier = isCurrent,
               isUnlocked = isUnlocked,
               isSelected = selectedTier.badgeLevel == tier.badgeLevel,
-              onClick = { selectedTier = tier },
+              isAdminUser = isAdminUser,
+              sampleAvatarUrl = sampleAvatarUrl,
+              sampleDisplayName = sampleDisplayName,
+              shimmerFraction = shimmerFraction,
+              onClick = {
+                selectedTier = tier
+                detailTier = tier
+              },
             )
           }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Selected Tier Milestone Info Pill
+        // Selected Tier Quick Open Bar
         val minRequiredCoins = (selectedTier.minLevel - 1) * 1000L
         Surface(
+          onClick = { detailTier = selectedTier },
           shape = RoundedCornerShape(14.dp),
           color = Color(0xFF211B40),
           modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, selectedTier.glowColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+            .border(1.dp, selectedTier.glowColor.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+            .testTag("open_selected_tier_studio_button"),
         ) {
           Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -564,15 +753,46 @@ fun LevelCardsShowcaseDialog(
               )
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = if (levelInfo.level >= selectedTier.minLevel) "अनलॉक ✓" else "लॉक्ड",
-              style = MaterialTheme.typography.labelMedium,
-              color = if (levelInfo.level >= selectedTier.minLevel) Color(0xFF4CD964) else SwarGold,
-              fontWeight = FontWeight.ExtraBold,
-            )
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              val selReward = levelConfigs[selectedTier.badgeLevel]?.rewardCoins ?: 0L
+              if (selReward > 0L) {
+                Text(
+                  text = "+$selReward 🪙",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = SwarGold,
+                  fontWeight = FontWeight.Bold,
+                )
+              }
+              Text(
+                text = if (isAdminUser) "सेटअप ⚙" else if (levelInfo.level >= selectedTier.minLevel) "खोलें ✨" else "देखें",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (levelInfo.level >= selectedTier.minLevel) SwarMint else SwarGold,
+                fontWeight = FontWeight.ExtraBold,
+              )
+            }
           }
         }
       }
     }
+  }
+
+  val activeDetailTier = detailTier
+  if (activeDetailTier != null) {
+    LevelTierDetailConfiguratorDialog(
+      tier = activeDetailTier,
+      config = levelConfigs[activeDetailTier.badgeLevel] ?: LevelTierConfig(badgeLevel = activeDetailTier.badgeLevel.toLong()),
+      userLevel = levelInfo.level,
+      isClaimed = activeDetailTier.badgeLevel in claimedTiers,
+      isAdminUser = isAdminUser,
+      isUploadingMedia = isUploadingMedia,
+      sampleAvatarUrl = sampleAvatarUrl,
+      sampleDisplayName = sampleDisplayName,
+      onDismiss = { detailTier = null },
+      onClaimRewardCoins = onClaimTierReward,
+      onSaveTierConfig = onSaveTierConfig,
+    )
   }
 }

@@ -230,4 +230,57 @@ test("Only verified admin Gmail can add emojis & gifts; all signed-in users can 
     })
   );
   await assertSucceeds(verifiedAdmin.collection("gift_events").where("isPublic", "==", true).get());
+  await assertFails(bob.collection("gift_events").doc("evt_1").delete());
+  await assertSucceeds(verifiedAdmin.collection("gift_events").doc("evt_1").delete());
+});
+
+// 5. Level Configs & Level Reward Claims
+test("Only verified admin can write level_configs; all signed-in users can read level_configs and claim own level rewards once", async () => {
+  const verifiedAdmin = testEnv.authenticatedContext(ADMIN_UID, {
+    email: ADMIN_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID, {
+    email: "bob@gmail.com",
+    email_verified: true,
+  }).firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+
+  const levelPayload = {
+    badgeLevel: 10,
+    entryVideoUrl: "https://www.instagram.com/reel/Dfqs1NiPAe3/",
+    avatarFrameUrl: "https://example.supabase.co/storage/v1/object/public/swarroom-media/frames/silver.gif",
+    rewardCoins: 2500,
+    profileBadgeUrl: "https://example.supabase.co/storage/v1/object/public/swarroom-media/badges/lv10.gif",
+    updatedByUid: ADMIN_UID,
+    updatedAt: serverTimestamp(),
+  };
+
+  await assertFails(bob.collection("level_configs").doc("10").set({ ...levelPayload, updatedByUid: BOB_UID }));
+  await assertFails(verifiedAdmin.collection("level_configs").doc("99").set({ ...levelPayload, badgeLevel: 99 }));
+  await assertSucceeds(verifiedAdmin.collection("level_configs").doc("10").set(levelPayload));
+  await assertSucceeds(bob.collection("level_configs").get());
+
+  // Level reward claim isolated per user & immutable
+  const bobClaimId = `${BOB_UID}_10`;
+  const aliceClaimId = `${ALICE_UID}_10`;
+  await assertSucceeds(
+    bob.collection("level_claims").doc(bobClaimId).set({
+      userId: BOB_UID,
+      badgeLevel: 10,
+      coinsGranted: 2500,
+      claimedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(
+    bob.collection("level_claims").doc(aliceClaimId).set({
+      userId: ALICE_UID,
+      badgeLevel: 10,
+      coinsGranted: 2500,
+      claimedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(bob.collection("level_claims").doc(bobClaimId).update({ coinsGranted: 9999 }));
+  await assertSucceeds(bob.collection("level_claims").where("userId", "==", BOB_UID).get());
+  await assertFails(alice.collection("level_claims").get());
 });

@@ -391,6 +391,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isAgoraConnected by viewModel.isAgoraConnected.collectAsStateWithLifecycle()
   val agoraStatusText by viewModel.agoraStatusText.collectAsStateWithLifecycle()
   val giftUploadError by viewModel.giftUploadError.collectAsStateWithLifecycle()
+  val levelConfigs by viewModel.levelConfigs.collectAsStateWithLifecycle()
+  val claimedLevelTiers by viewModel.claimedLevelTiers.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
@@ -532,6 +534,12 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         agoraStatusText = agoraStatusText,
         giftUploadError = giftUploadError,
         onClearGiftUploadError = { viewModel.clearGiftUploadError() },
+        levelConfigs = levelConfigs,
+        claimedLevelTiers = claimedLevelTiers,
+        onSaveLevelTierConfig = { lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone ->
+          viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone)
+        },
+        onClaimLevelTierReward = { lvl -> viewModel.claimLevelTierReward(lvl) },
       )
       SnackbarHost(
         hostState = snackbarHostState,
@@ -669,6 +677,13 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           },
           onClaimBonusCoins = { viewModel.claimDailyBonusCoins() },
           giftCatalog = giftCatalog,
+          levelConfigs = levelConfigs,
+          claimedLevelTiers = claimedLevelTiers,
+          isAdminUser = viewModel.isAdminUser,
+          onSaveLevelTierConfig = { lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone ->
+            viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone)
+          },
+          onClaimLevelTierReward = { lvl -> viewModel.claimLevelTierReward(lvl) },
         )
       }
 

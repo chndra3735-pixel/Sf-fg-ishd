@@ -182,6 +182,33 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["roomId", "roomTitle", "senderUid", "senderName", "senderAvatarUrl", "recipientUid", "recipientName", "giftId", "giftName", "giftEmoji", "giftMediaUrl", "giftMediaType", "coinCost", "quantity", "isPublic", "createdAt"]
+    },
+    "LevelTierConfig": {
+      "title": "LevelTierConfig",
+      "description": "Admin-configured entry video URL, animated DP frame URL, level-up coin reward, and profile badge URL per level tier.",
+      "type": "object",
+      "properties": {
+        "badgeLevel": { "type": "integer" },
+        "entryVideoUrl": { "type": "string" },
+        "avatarFrameUrl": { "type": "string" },
+        "rewardCoins": { "type": "integer" },
+        "profileBadgeUrl": { "type": "string" },
+        "updatedByUid": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["badgeLevel", "entryVideoUrl", "avatarFrameUrl", "rewardCoins", "profileBadgeUrl", "updatedByUid", "updatedAt"]
+    },
+    "LevelRewardClaim": {
+      "title": "LevelRewardClaim",
+      "description": "Immutable record tracking one-time level-up reward coins claimed by a user for a level tier.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "badgeLevel": { "type": "integer" },
+        "coinsGranted": { "type": "integer" },
+        "claimedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "badgeLevel", "coinsGranted", "claimedAt"]
     }
   },
   "firestore": {
@@ -224,6 +251,14 @@
     "/gift_events/{eventId}": {
       "schema": { "$ref": "#/entities/GiftEvent" },
       "description": "Real-time gift send broadcasts for full-screen playback and cross-room marquee banner."
+    },
+    "/level_configs/{tierId}": {
+      "schema": { "$ref": "#/entities/LevelTierConfig" },
+      "description": "Admin-managed level tier rewards (entry video, avatar frame, coins, profile badge) synced in real time."
+    },
+    "/level_claims/{claimId}": {
+      "schema": { "$ref": "#/entities/LevelRewardClaim" },
+      "description": "User-scoped immutable claims of unlocked level tier reward coins."
     }
   }
 }
