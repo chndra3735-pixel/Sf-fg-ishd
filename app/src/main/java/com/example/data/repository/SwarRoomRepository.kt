@@ -11,6 +11,7 @@ import com.example.data.model.LevelRewardClaim
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
 import com.example.data.model.RoomMessage
+import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
 import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
@@ -356,6 +357,25 @@ class SwarRoomRepository(
     }
   }
 
+  suspend fun syncRoomListenerCount(roomId: String, exactCount: Long): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    val clamped = exactCount.coerceIn(0L, 9999L)
+    try {
+      docRef.update(
+        mapOf(
+          "listenerCount" to clamped,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        )
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
   suspend fun deleteRoom(roomId: String): Result<Unit> = runCatching {
     requireUserId()
     val docRef = db.collection("rooms").document(roomId)
@@ -693,6 +713,133 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.CREATE, msgRef.path)
+    }
+  }
+
+  suspend fun deleteUserJoinMessagesInRoom(
+    roomId: String,
+    targetUid: String? = null,
+  ): Result<Int> = runCatching {
+    val uid = targetUid?.takeIf { it.isNotBlank() } ?: requireUserId()
+    val msgCollection = db.collection("rooms").document(roomId).collection("messages")
+    val matching = msgCollection
+      .whereEqualTo("isRoomPublic", true)
+      .whereEqualTo("senderUid", uid)
+      .get()
+      .await()
+    val joinDocs = matching.documents.filter { it.getString("messageType") == "join" }
+    if (joinDocs.isEmpty()) return@runCatching 0
+    val batch = db.batch()
+    joinDocs.forEach { doc -> batch.delete(doc.reference) }
+    batch.commit().await()
+    joinDocs.size
+  }
+
+  // --- Live Room Presence & Seat Heartbeats ---
+
+  fun observeRoomPresence(roomId: String): Flow<List<RoomPresenceMember>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("rooms").document(roomId).collection("presence")
+      .whereEqualTo("isRoomPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(RoomPresenceMember::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedBy { it.joinedAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "rooms/$roomId/presence", uid); throw error }
+    )
+  }
+
+  suspend fun upsertRoomPresence(
+    room: VoiceRoom,
+    profile: UserProfile,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val presenceRef = db.collection("rooms").document(room.id).collection("presence").document(uid)
+    val safeName = profile.displayName.trim().take(40).ifBlank { "Swar User" }
+    val safeAvatar = profile.avatarUrl.take(600)
+    val safeClub = profile.clubTag.take(24)
+    try {
+      val existing = presenceRef.get().await()
+      if (existing.exists()) {
+        presenceRef.update(
+          mapOf(
+            "displayName" to safeName,
+            "avatarUrl" to safeAvatar,
+            "clubTag" to safeClub,
+            "lastSeenAt" to FieldValue.serverTimestamp(),
+          )
+        ).await()
+      } else {
+        presenceRef.set(
+          mapOf(
+            "userId" to uid,
+            "roomId" to room.id,
+            "roomOwnerId" to room.ownerId,
+            "isRoomPublic" to room.isPublic,
+            "displayName" to safeName,
+            "avatarUrl" to safeAvatar,
+            "clubTag" to safeClub,
+            "joinedAt" to FieldValue.serverTimestamp(),
+            "lastSeenAt" to FieldValue.serverTimestamp(),
+          )
+        ).await()
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, presenceRef.path)
+      throw e
+    }
+  }
+
+  suspend fun touchRoomPresenceHeartbeat(
+    roomId: String,
+    profile: UserProfile,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val presenceRef = db.collection("rooms").document(roomId).collection("presence").document(uid)
+    try {
+      presenceRef.update(
+        mapOf(
+          "displayName" to profile.displayName.trim().take(40).ifBlank { "Swar User" },
+          "avatarUrl" to profile.avatarUrl.take(600),
+          "clubTag" to profile.clubTag.take(24),
+          "lastSeenAt" to FieldValue.serverTimestamp(),
+        )
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      val room = getRoom(roomId)
+      if (room != null) {
+        upsertRoomPresence(room, profile).getOrThrow()
+      } else {
+        throw e
+      }
+    }
+  }
+
+  suspend fun touchSeatHeartbeat(roomId: String, seatIndex: Int): Result<Unit> = runCatching {
+    requireUserId()
+    val seatRef = db.collection("rooms").document(roomId).collection("seats").document("seat_$seatIndex")
+    seatRef.update(mapOf("updatedAt" to FieldValue.serverTimestamp())).await()
+  }
+
+  suspend fun removeRoomPresence(
+    roomId: String,
+    targetUid: String? = null,
+  ): Result<Unit> = runCatching {
+    val uid = targetUid?.takeIf { it.isNotBlank() } ?: requireUserId()
+    val presenceRef = db.collection("rooms").document(roomId).collection("presence").document(uid)
+    try {
+      presenceRef.delete().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.DELETE, presenceRef.path)
+      throw e
     }
   }
 

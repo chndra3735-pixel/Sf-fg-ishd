@@ -284,3 +284,98 @@ test("Only verified admin can write level_configs; all signed-in users can read 
   await assertSucceeds(bob.collection("level_claims").where("userId", "==", BOB_UID).get());
   await assertFails(alice.collection("level_claims").get());
 });
+
+// 6. Live Room Presence, Heartbeats & Entry Message Cleanup
+test("Users manage own room presence heartbeat, host can prune stale presence, and users delete own join messages", async () => {
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const roomRef = alice.collection("rooms").doc("room_live_1");
+  await assertSucceeds(roomRef.set(validRoomPayload(ALICE_UID, true)));
+  await assertSucceeds(
+    roomRef.collection("seats").doc("seat_1").set({
+      roomId: "room_live_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      seatIndex: 1,
+      occupantUid: BOB_UID,
+      occupantName: "Bob",
+      occupantAvatarUrl: "",
+      isLocked: false,
+      isMuted: false,
+      isSpeaking: false,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  const bobRoomRef = bob.collection("rooms").doc("room_live_1");
+
+  // Seated user can refresh updatedAt heartbeat
+  await assertSucceeds(
+    bobRoomRef.collection("seats").doc("seat_1").update({
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Bob creates and updates own presence heartbeat
+  const bobPresenceRef = bobRoomRef.collection("presence").doc(BOB_UID);
+  await assertSucceeds(
+    bobPresenceRef.set({
+      userId: BOB_UID,
+      roomId: "room_live_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      displayName: "Bob",
+      avatarUrl: "",
+      clubTag: "UP55",
+      joinedAt: serverTimestamp(),
+      lastSeenAt: serverTimestamp(),
+    })
+  );
+
+  await assertFails(
+    bobRoomRef.collection("presence").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      roomId: "room_live_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      displayName: "Spoof",
+      avatarUrl: "",
+      clubTag: "UP55",
+      joinedAt: serverTimestamp(),
+      lastSeenAt: serverTimestamp(),
+    })
+  );
+
+  await assertSucceeds(
+    bobPresenceRef.update({
+      lastSeenAt: serverTimestamp(),
+    })
+  );
+
+  await assertSucceeds(
+    alice.collection("rooms").doc("room_live_1").collection("presence").where("isRoomPublic", "==", true).get()
+  );
+
+  // Room join message can be deleted by sender when leaving
+  const msgRef = bobRoomRef.collection("messages").doc("sys_bob_join");
+  await assertSucceeds(
+    msgRef.set({
+      roomId: "room_live_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      senderUid: BOB_UID,
+      senderName: "Bob",
+      senderAvatarUrl: "",
+      text: "Bob का कमरे में स्वागत है",
+      messageType: "join",
+      badgeTag: "UP55",
+      createdAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(msgRef.delete());
+
+  // Room owner (Alice) can prune Bob's stale presence doc
+  await assertSucceeds(roomRef.collection("presence").doc(BOB_UID).delete());
+});
+

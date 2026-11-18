@@ -566,51 +566,80 @@ fun SwarStoreDialog(
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        LazyVerticalGrid(
-          columns = GridCells.Fixed(3),
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(230.dp),
-          contentPadding = PaddingValues(2.dp),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          items(gifts.take(12), key = { it.id.ifBlank { it.name } }) { gift ->
-            Surface(
-              shape = RoundedCornerShape(12.dp),
-              color = SwarDeepNight,
-              modifier = Modifier.fillMaxWidth(),
+        if (gifts.isEmpty()) {
+          Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = SwarDeepNight,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 22.dp),
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-              Column(
-                modifier = Modifier.padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+              Text("🎁", fontSize = 28.sp)
+              Text(
+                text = "स्टोर में अभी कोई गिफ्ट नहीं है",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+              )
+              Text(
+                text = "रूम के गिफ्ट पैनल में '+' से नए गिफ्ट लिंक जोड़ने पर वे यहां दिखेंगे।",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFB5ACDA),
+              )
+            }
+          }
+        } else {
+          LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(230.dp),
+            contentPadding = PaddingValues(2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            items(gifts.take(12), key = { it.id.ifBlank { it.name } }) { gift ->
+              Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = SwarDeepNight,
+                modifier = Modifier.fillMaxWidth(),
               ) {
-                if (gift.thumbnailUrl.isNotBlank()) {
-                  AsyncImage(
-                    model = gift.thumbnailUrl,
-                    contentDescription = gift.name,
-                    modifier = Modifier
-                      .size(36.dp)
-                      .clip(CircleShape),
-                    contentScale = ContentScale.Crop,
+                Column(
+                  modifier = Modifier.padding(8.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  if (gift.thumbnailUrl.isNotBlank()) {
+                    AsyncImage(
+                      model = gift.thumbnailUrl,
+                      contentDescription = gift.name,
+                      modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape),
+                      contentScale = ContentScale.Crop,
+                    )
+                  } else {
+                    Text(gift.emoji.ifBlank { "🎁" }, fontSize = 24.sp)
+                  }
+                  Text(
+                    text = gift.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                   )
-                } else {
-                  Text(gift.emoji.ifBlank { "🎁" }, fontSize = 24.sp)
+                  Text(
+                    text = "🪙 ${gift.coinCost}",
+                    fontSize = 10.sp,
+                    color = SwarGold,
+                    fontWeight = FontWeight.Bold,
+                  )
                 }
-                Text(
-                  text = gift.name,
-                  style = MaterialTheme.typography.labelSmall,
-                  color = Color.White,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                  text = "🪙 ${gift.coinCost}",
-                  fontSize = 10.sp,
-                  color = SwarGold,
-                  fontWeight = FontWeight.Bold,
-                )
               }
             }
           }

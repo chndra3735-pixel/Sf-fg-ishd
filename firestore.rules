@@ -197,6 +197,18 @@ service cloud.firestore {
              isValidTimestamp(data.claimedAt);
     }
 
+    function isValidRoomPresence(data) {
+      return data.userId is string && isValidId(data.userId) &&
+             data.roomId is string && isValidId(data.roomId) &&
+             data.roomOwnerId is string && data.roomOwnerId.size() >= 1 && data.roomOwnerId.size() <= 128 &&
+             data.isRoomPublic is bool &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40 &&
+             data.avatarUrl is string && data.avatarUrl.size() <= 600 &&
+             data.clubTag is string && data.clubTag.size() <= 24 &&
+             isValidTimestamp(data.joinedAt) &&
+             isValidTimestamp(data.lastSeenAt);
+    }
+
     // --- Collection Rules ---
 
     // 1. User Profiles (Public display metadata only, zero PII)
@@ -292,7 +304,7 @@ service cloud.firestore {
         allow delete: if isSignedIn() && isValidId(roomId) && isValidId(seatId) && existing().roomOwnerId == request.auth.uid;
       }
 
-      // 2b. Real-time Room Messages (append-only)
+      // 2b. Real-time Room Messages (create + sender/host cleanup of stale entry/room messages)
       match /messages/{messageId} {
         allow get: if isSignedIn() && isValidId(roomId) && isValidId(messageId) &&
                       (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
@@ -309,7 +321,49 @@ service cloud.firestore {
                          isValidRoomMessage(incoming()) &&
                          exists(/databases/$(database)/documents/rooms/$(roomId));
 
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(messageId) &&
+                         (existing().senderUid == request.auth.uid || existing().roomOwnerId == request.auth.uid);
+      }
+
+      // 2c. Live Room Presence Heartbeats
+      match /presence/{presenceUserId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(presenceUserId) &&
+                      (resource == null || resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid || request.auth.uid == presenceUserId);
+        allow list: if isSignedIn() &&
+                       (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(presenceUserId) &&
+                         request.auth.uid == presenceUserId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().roomId == roomId &&
+                         incoming().keys().hasAll(['userId', 'roomId', 'roomOwnerId', 'isRoomPublic', 'displayName', 'avatarUrl', 'clubTag', 'joinedAt', 'lastSeenAt']) &&
+                         incoming().keys().hasOnly(['userId', 'roomId', 'roomOwnerId', 'isRoomPublic', 'displayName', 'avatarUrl', 'clubTag', 'joinedAt', 'lastSeenAt']) &&
+                         isValidRoomPresence(incoming()) &&
+                         exists(/databases/$(database)/documents/rooms/$(roomId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(presenceUserId) &&
+                         request.auth.uid == presenceUserId &&
+                         isValidRoomPresence(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().roomId == existing().roomId &&
+                         incoming().roomOwnerId == existing().roomOwnerId &&
+                         incoming().isRoomPublic == existing().isRoomPublic &&
+                         incoming().joinedAt == existing().joinedAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'avatarUrl', 'clubTag', 'lastSeenAt']);
+
+        allow delete: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(presenceUserId) &&
+                         (request.auth.uid == presenceUserId ||
+                          existing().roomOwnerId == request.auth.uid ||
+                          get(/databases/$(database)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid);
       }
     }
 

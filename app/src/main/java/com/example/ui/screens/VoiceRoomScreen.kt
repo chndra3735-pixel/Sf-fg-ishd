@@ -131,6 +131,7 @@ import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.RoomMessage
+import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
@@ -242,6 +243,7 @@ fun VoiceRoomScreen(
     onDone: () -> Unit,
   ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
   onClaimLevelTierReward: (Int) -> Unit = {},
+  livePresenceMembers: List<RoomPresenceMember> = emptyList(),
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -318,22 +320,28 @@ fun VoiceRoomScreen(
       hostView.keepScreenOn = false
     }
   }
-  val totalInRoom = maxOf(
-    room.listenerCount,
-    seatedMembers.size.toLong() + if (isCurrentUserSeated) 0L else 1L,
-  )
-  val audienceCount = (totalInRoom - seatedMembers.size).coerceAtLeast(0L)
-  val recentListeners = remember(visibleMessages, seatedUids, currentUserId, audienceCount) {
-    val maxExtra = (audienceCount - if (isCurrentUserSeated) 0L else 1L).coerceAtLeast(0L).toInt()
-    if (maxExtra <= 0) {
-      emptyList()
-    } else {
-      visibleMessages
-        .asReversed()
-        .filter { it.senderUid.isNotBlank() && it.senderUid !in seatedUids && it.senderUid != currentUserId }
-        .distinctBy { it.senderUid }
-        .take(maxExtra)
+  val liveAllUids = remember(seatedUids, livePresenceMembers, currentUserId, blockedUserIds) {
+    buildSet {
+      addAll(seatedUids.filter { it.isNotBlank() && it !in blockedUserIds })
+      livePresenceMembers.forEach { member ->
+        if (member.userId.isNotBlank() && member.userId !in blockedUserIds) {
+          add(member.userId)
+        }
+      }
+      if (currentUserId.isNotBlank()) add(currentUserId)
     }
+  }
+  val totalInRoom = liveAllUids.size.toLong().coerceAtLeast(1L)
+  val audienceCount = (totalInRoom - seatedMembers.size).coerceAtLeast(0L)
+  val liveListeners = remember(livePresenceMembers, seatedUids, currentUserId, blockedUserIds) {
+    livePresenceMembers
+      .filter {
+        it.userId.isNotBlank() &&
+          it.userId !in seatedUids &&
+          it.userId != currentUserId &&
+          it.userId !in blockedUserIds
+      }
+      .distinctBy { it.userId }
   }
   val listState = rememberLazyListState()
   val activeSeatReactions = remember(room.id) { mutableStateMapOf<String, ActiveSeatEmoji>() }
@@ -420,7 +428,7 @@ fun VoiceRoomScreen(
         currentUserAvatar = currentUserAvatar,
         userCoins = userCoins,
         userProfiles = userProfiles,
-        recentListeners = recentListeners,
+        liveListeners = liveListeners,
         onOwnProfileClick = {
           coroutineScope.launch { drawerState.close() }
           val mySeat = seatedMembers.firstOrNull { it.occupantUid == currentUserId }
@@ -862,8 +870,8 @@ fun VoiceRoomScreen(
       }
     }
 
-    // Full-Screen Gift Playback Overlay (video gifts play full-screen; emoji/image gifts animate full-screen)
-    if (activeFullScreenGift != null) {
+    // Full-Screen Gift Playback Overlay (strictly scoped to the active room only)
+    if (activeFullScreenGift != null && activeFullScreenGift.roomId == room.id) {
       FullScreenGiftOverlay(
         event = activeFullScreenGift,
         onDismiss = onDismissFullScreenGift,
@@ -1576,7 +1584,7 @@ private fun RoomParticipantsDrawerSheet(
   currentUserAvatar: String,
   userCoins: Long,
   userProfiles: Map<String, UserProfile>,
-  recentListeners: List<RoomMessage>,
+  liveListeners: List<RoomPresenceMember>,
   onOwnProfileClick: () -> Unit,
   onSeatMemberClick: (RoomSeat) -> Unit,
   onListenerMemberClick: (uid: String, name: String, avatar: String) -> Unit,
@@ -1820,22 +1828,22 @@ private fun RoomParticipantsDrawerSheet(
             onClick = onOwnProfileClick,
           )
         }
-        recentListeners.forEach { participant ->
-          val listenerLevel = SwarUserIdentity.levelForProfile(userProfiles[participant.senderUid])
+        liveListeners.forEach { participant ->
+          val listenerLevel = SwarUserIdentity.levelForProfile(userProfiles[participant.userId])
           DrawerListenerRow(
-            name = participant.senderName.ifBlank { "श्रोता" },
-            avatarUrl = participant.senderAvatarUrl,
+            name = participant.displayName.ifBlank { "श्रोता" },
+            avatarUrl = participant.avatarUrl,
             subtitle = "लिसनर • Lv.${listenerLevel.level}",
             onClick = {
               onListenerMemberClick(
-                participant.senderUid,
-                participant.senderName,
-                participant.senderAvatarUrl,
+                participant.userId,
+                participant.displayName,
+                participant.avatarUrl,
               )
             },
           )
         }
-        val namedCount = (if (selfListenerShown) 1 else 0) + recentListeners.size
+        val namedCount = (if (selfListenerShown) 1 else 0) + liveListeners.size
         val remainingListeners = (audienceCount - namedCount).coerceAtLeast(0L)
         if (remainingListeners > 0L) {
           Surface(

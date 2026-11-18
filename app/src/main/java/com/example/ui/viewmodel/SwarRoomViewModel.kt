@@ -2,7 +2,12 @@ package com.example.ui.viewmodel
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -17,6 +22,7 @@ import com.example.data.model.GiftEvent
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
 import com.example.data.model.RoomMessage
+import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
@@ -30,7 +36,9 @@ import com.example.data.repository.VideoLinkResolution
 import com.example.data.repository.VideoLinkResolver
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -46,6 +54,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 sealed interface UiState<out T> {
@@ -201,6 +210,18 @@ class SwarRoomViewModel(
   private val _activeRoomId = MutableStateFlow<String?>(null)
   val activeRoomId: StateFlow<String?> = _activeRoomId.asStateFlow()
 
+  private val _roomJoinedAtMs = MutableStateFlow(0L)
+  private val _presenceClockMs = MutableStateFlow(System.currentTimeMillis())
+
+  @Volatile
+  private var serverClockOffsetMs: Long = 0L
+
+  @Volatile
+  private var sawValidatedInternet: Boolean = false
+
+  private var registeredConnectivityManager: ConnectivityManager? = null
+  private var registeredNetworkCallback: ConnectivityManager.NetworkCallback? = null
+
   private val _isRoomMinimized = MutableStateFlow(false)
   val isRoomMinimized: StateFlow<Boolean> = _isRoomMinimized.asStateFlow()
 
@@ -216,6 +237,36 @@ class SwarRoomViewModel(
       else repository.observeRoomSeats(roomId).catch { emit(emptyList()) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
+  private val rawRoomPresence: StateFlow<List<RoomPresenceMember>> =
+    _activeRoomId.flatMapLatest { roomId ->
+      if (roomId == null) flowOf(emptyList())
+      else repository.observeRoomPresence(roomId).catch { emit(emptyList()) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+
+  val activeRoomPresence: StateFlow<List<RoomPresenceMember>> =
+    combine(
+      rawRoomPresence,
+      _presenceClockMs,
+      _blockedUserIds,
+      _activeRoomId,
+    ) { members, clockNow, blocked, activeId ->
+      if (activeId == null) {
+        emptyList()
+      } else {
+        val ownDoc = members.firstOrNull { it.userId == currentUserId }
+        ownDoc?.lastSeenAt?.toDate()?.time?.let { ownServerMs ->
+          serverClockOffsetMs = ownServerMs - System.currentTimeMillis()
+        }
+        val estimatedServerNow = clockNow + serverClockOffsetMs
+        members.filter { member ->
+          member.userId.isNotBlank() &&
+            member.userId !in blocked &&
+            (member.userId == currentUserId ||
+              isTimestampFresh(member.lastSeenAt?.toDate()?.time, estimatedServerNow, PRESENCE_STALE_MS))
+        }
+      }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+
   val activeRoomMessages: StateFlow<List<RoomMessage>> =
     combine(
       _activeRoomId.flatMapLatest { roomId ->
@@ -223,8 +274,21 @@ class SwarRoomViewModel(
         else repository.observeRoomMessages(roomId).catch { emit(emptyList()) }
       },
       _blockedUserIds,
-    ) { msgs, blocked ->
-      if (blocked.isEmpty()) msgs else msgs.filter { it.senderUid !in blocked }
+      activeRoomPresence,
+      activeRoomSeats,
+      _roomJoinedAtMs,
+    ) { msgs, blocked, livePresence, seats, joinedAtMs ->
+      val liveUids = buildSet {
+        if (_activeRoomId.value != null) add(currentUserId)
+        livePresence.forEach { if (it.userId.isNotBlank()) add(it.userId) }
+        seats.forEach { if (it.occupantUid.isNotBlank()) add(it.occupantUid) }
+      }
+      filterLiveRoomMessages(
+        messages = msgs,
+        blockedUids = blocked,
+        liveMemberUids = liveUids,
+        roomJoinedAtMs = joinedAtMs,
+      )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
   // --- Active Direct Conversation ---
@@ -258,16 +322,47 @@ class SwarRoomViewModel(
   init {
     SeatPresenceTracker.registerAudioDisconnect { audioEngine.leaveRoomVoice() }
     appContext?.let { ctx ->
-      val stale = SeatPresenceTracker.consumeActivePresence(ctx)
-      if (stale != null && stale.userId == currentUserId && stale.roomId.isNotBlank()) {
-        viewModelScope.launch {
-          if (_activeRoomId.value != stale.roomId) {
-            runCatching { repository.vacateUserSeatsInRoom(stale.roomId, stale.seatIndex) }
-            if (stale.listenerCounted) {
-              runCatching { repository.adjustListenerCount(stale.roomId, -1L) }
-            }
+      registerNetworkMonitor(ctx)
+      viewModelScope.launch(Dispatchers.IO) {
+        SeatPresenceTracker.flushPendingCleanup(ctx, currentUserId, _activeRoomId.value)
+      }
+    }
+
+    // Live presence + seat heartbeat every 7s; auto-exit if offline; host prunes stale occupants
+    viewModelScope.launch {
+      _activeRoomId.collectLatest { roomId ->
+        if (roomId == null) return@collectLatest
+        while (isActive && _activeRoomId.value == roomId) {
+          delay(HEARTBEAT_INTERVAL_MS)
+          if (_activeRoomId.value != roomId) break
+          _presenceClockMs.value = System.currentTimeMillis()
+          if (!isNetworkConnected()) {
+            leaveRoomOnNetworkLoss()
+            break
+          }
+          val profile = currentProfileOrDefault()
+          runCatching { repository.touchRoomPresenceHeartbeat(roomId, profile) }
+          val seats = activeRoomSeats.value
+          val mySeat = seats.firstOrNull { it.occupantUid == currentUserId }
+          if (mySeat != null) {
+            runCatching { repository.touchSeatHeartbeat(roomId, mySeat.seatIndex.toInt()) }
+          }
+          val room = activeRoom.value
+          if (room != null && room.ownerId == currentUserId) {
+            pruneStaleOccupantsAsHost(room, seats)
           }
         }
+      }
+    }
+
+    // Prefetch profiles of off-seat live room members too
+    viewModelScope.launch {
+      activeRoomPresence.collect { members ->
+        members.asSequence()
+          .map { it.userId }
+          .filter { it.isNotBlank() && it !in _memberProfiles.value }
+          .distinct()
+          .forEach { uid -> loadUserProfile(uid) }
       }
     }
 
@@ -358,9 +453,17 @@ class SwarRoomViewModel(
               it.id.isNotBlank() && it.giftId !in hiddenIds && seenGiftEventIds.add(it.id)
             }
             val activeId = _activeRoomId.value
-            val newRoomEvents = freshEvents
-              .filter { it.roomId == activeId }
-              .reversed()
+            val joinedAt = _roomJoinedAtMs.value
+            val newRoomEvents = if (activeId != null) {
+              freshEvents
+                .filter { evt ->
+                  evt.roomId == activeId &&
+                    (evt.createdAt == null || joinedAt == 0L || evt.createdAt.toDate().time >= joinedAt - 5_000L)
+                }
+                .reversed()
+            } else {
+              emptyList()
+            }
             newRoomEvents.forEach { enqueueFullScreenGift(it) }
             // Do not show cross-room gift marquee for room-entry videos
             freshEvents.firstOrNull { !it.giftId.startsWith("entry_lv_") }
@@ -426,6 +529,8 @@ class SwarRoomViewModel(
   }
 
   private fun enqueueFullScreenGift(event: GiftEvent) {
+    val activeId = _activeRoomId.value ?: return
+    if (event.roomId != activeId) return
     if (_activeFullScreenGift.value == null) {
       _activeFullScreenGift.value = event
     } else {
@@ -484,7 +589,15 @@ class SwarRoomViewModel(
   }
 
   fun dismissFullScreenGift() {
-    val next = if (pendingGiftQueue.isNotEmpty()) pendingGiftQueue.removeFirst() else null
+    val activeId = _activeRoomId.value
+    var next: GiftEvent? = null
+    while (pendingGiftQueue.isNotEmpty()) {
+      val candidate = pendingGiftQueue.removeFirst()
+      if (activeId != null && candidate.roomId == activeId) {
+        next = candidate
+        break
+      }
+    }
     _activeFullScreenGift.value = next
     if (next == null) {
       pendingMarqueeGift?.let { queued ->
@@ -577,11 +690,18 @@ class SwarRoomViewModel(
     sendJoinMessage: Boolean = true,
     incrementListenerCount: Boolean = true,
   ) {
+    if (!isNetworkConnected()) {
+      _events.tryEmit("इंटरनेट कनेक्शन उपलब्ध नहीं है — कृपया नेटवर्क चालू करें।")
+      return
+    }
     val prevRoomId = _activeRoomId.value
     if (prevRoomId == roomId) {
       _isRoomMinimized.value = false
       return
     }
+    // Always stop/clear any active or queued full-screen gift from the previous room
+    _activeFullScreenGift.value = null
+    pendingGiftQueue.clear()
     _isRoomMinimized.value = false
     val prevSeatHint = if (prevRoomId != null) {
       activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
@@ -592,6 +712,9 @@ class SwarRoomViewModel(
       stopMicEngine()
       audioEngine.leaveRoomVoice()
     }
+    val nowMs = System.currentTimeMillis()
+    _roomJoinedAtMs.value = nowMs
+    _presenceClockMs.value = nowMs
     _activeRoomId.value = roomId
     SeatPresenceTracker.recordEnteredRoom(
       context = appContext,
@@ -618,27 +741,29 @@ class SwarRoomViewModel(
       val room = (rooms.value as? UiState.Success)?.data?.firstOrNull { it.id == roomId }
         ?: activeRoom.value?.takeIf { it.id == roomId }
         ?: repository.getRoom(roomId)
+      val profile = currentProfileOrDefault()
+      if (room != null) {
+        runCatching { repository.upsertRoomPresence(room, profile) }
+      }
       if (room != null && room.ownerId == currentUserId) {
         runCatching { repository.ensureMinimumSeats(room, 22) }
       }
-      if (sendJoinMessage) {
-        val profile = currentProfileOrDefault()
-        if (room != null) {
-          repository.sendRoomSystemMessage(
-            roomId = roomId,
-            roomOwnerId = room.ownerId,
-            isRoomPublic = room.isPublic,
-            senderName = profile.displayName,
-            senderAvatarUrl = profile.avatarUrl,
-            text = "${profile.displayName} का कमरे में स्वागत है",
-            messageType = "join",
-            badgeTag = profile.clubTag,
-          )
-        }
+      // Clean any leftover old join entry message from earlier visits before posting fresh entry
+      runCatching { repository.deleteUserJoinMessagesInRoom(roomId, currentUserId) }
+      if (sendJoinMessage && room != null && _activeRoomId.value == roomId) {
+        repository.sendRoomSystemMessage(
+          roomId = roomId,
+          roomOwnerId = room.ownerId,
+          isRoomPublic = room.isPublic,
+          senderName = profile.displayName,
+          senderAvatarUrl = profile.avatarUrl,
+          text = "${profile.displayName} का कमरे में स्वागत है",
+          messageType = "join",
+          badgeTag = profile.clubTag,
+        )
       }
-      // Play user's unlocked royal entry video inside the room (visible & audible to all room members)
-      if (room != null) {
-        val profile = currentProfileOrDefault()
+      // Play user's unlocked royal entry video inside THIS room only
+      if (room != null && _activeRoomId.value == roomId) {
         val userLevel = SwarUserIdentity.levelForProfile(profile).level
         val configs = levelConfigs.value
         val entryMatch = SwarUserIdentity.highestUnlockedEntryVideo(userLevel, configs)
@@ -661,6 +786,10 @@ class SwarRoomViewModel(
 
   fun leaveActiveRoom(onComplete: (() -> Unit)? = null) {
     val roomId = _activeRoomId.value
+    // Immediately cancel any full-screen gift playing for this room
+    _activeFullScreenGift.value = null
+    pendingGiftQueue.clear()
+    _roomJoinedAtMs.value = 0L
     if (roomId == null) {
       _isRoomMinimized.value = false
       SeatPresenceTracker.clearSession(appContext)
@@ -668,7 +797,15 @@ class SwarRoomViewModel(
       return
     }
     val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
-    SeatPresenceTracker.clearSession(appContext)
+    SeatPresenceTracker.savePendingCleanup(
+      context = appContext,
+      presence = SeatPresenceTracker.ActivePresence(
+        userId = currentUserId,
+        roomId = roomId,
+        seatIndex = seatHint,
+        listenerCounted = true,
+      ),
+    )
     appContext?.let { ctx ->
       runCatching { ctx.stopService(Intent(ctx, SeatCleanupService::class.java)) }
     }
@@ -678,18 +815,190 @@ class SwarRoomViewModel(
     _activeRoomId.value = null
     viewModelScope.launch {
       try {
-        vacateRoomPresence(roomId, seatHint)
+        if (vacateRoomPresence(roomId, seatHint)) {
+          SeatPresenceTracker.clearPendingCleanup(appContext)
+        }
       } finally {
         onComplete?.invoke()
       }
     }
   }
 
-  private suspend fun vacateRoomPresence(roomId: String, seatHint: Int?) {
-    runCatching { repository.vacateUserSeatsInRoom(roomId, seatHint) }
-      .onFailure { err -> Log.w(TAG, "Vacate seats error in $roomId", err) }
-    runCatching { repository.adjustListenerCount(roomId, -1L) }
-      .onFailure { err -> Log.w(TAG, "Decrement listenerCount error in $roomId", err) }
+  fun onNetworkConnectivityChanged(isConnected: Boolean) {
+    if (!isConnected) {
+      if (_activeRoomId.value != null) {
+        leaveRoomOnNetworkLoss()
+      }
+    } else {
+      appContext?.let { ctx ->
+        viewModelScope.launch(Dispatchers.IO) {
+          SeatPresenceTracker.flushPendingCleanup(ctx, currentUserId, _activeRoomId.value)
+        }
+      }
+      val activeId = _activeRoomId.value
+      if (activeId != null) {
+        viewModelScope.launch {
+          runCatching { repository.touchRoomPresenceHeartbeat(activeId, currentProfileOrDefault()) }
+        }
+      }
+    }
+  }
+
+  private fun leaveRoomOnNetworkLoss() {
+    val roomId = _activeRoomId.value ?: return
+    val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
+    SeatPresenceTracker.savePendingCleanup(
+      context = appContext,
+      presence = SeatPresenceTracker.ActivePresence(
+        userId = currentUserId,
+        roomId = roomId,
+        seatIndex = seatHint,
+        listenerCounted = true,
+      ),
+    )
+    appContext?.let { ctx ->
+      runCatching { ctx.stopService(Intent(ctx, SeatCleanupService::class.java)) }
+    }
+    stopMicEngine()
+    audioEngine.leaveRoomVoice()
+    _activeFullScreenGift.value = null
+    pendingGiftQueue.clear()
+    _roomJoinedAtMs.value = 0L
+    _isRoomMinimized.value = false
+    _activeRoomId.value = null
+    _events.tryEmit("नेटवर्क कनेक्शन कट गया — आप रूम से बाहर आ गए हैं।")
+    viewModelScope.launch(Dispatchers.IO) {
+      if (vacateRoomPresence(roomId, seatHint)) {
+        SeatPresenceTracker.clearPendingCleanup(appContext)
+      }
+    }
+  }
+
+  private suspend fun vacateRoomPresence(roomId: String, seatHint: Int?): Boolean {
+    var ok = true
+    runCatching { repository.vacateUserSeatsInRoom(roomId, seatHint).getOrThrow() }
+      .onFailure { err ->
+        ok = false
+        Log.w(TAG, "Vacate seats error in $roomId", err)
+      }
+    runCatching { repository.removeRoomPresence(roomId, currentUserId).getOrThrow() }
+      .onFailure { err ->
+        ok = false
+        Log.w(TAG, "Remove presence error in $roomId", err)
+      }
+    runCatching { repository.deleteUserJoinMessagesInRoom(roomId, currentUserId) }
+    runCatching { repository.adjustListenerCount(roomId, -1L).getOrThrow() }
+      .onFailure { err ->
+        ok = false
+        Log.w(TAG, "Decrement listenerCount error in $roomId", err)
+      }
+    return ok
+  }
+
+  private suspend fun pruneStaleOccupantsAsHost(room: VoiceRoom, seats: List<RoomSeat>) {
+    val estimatedServerNow = System.currentTimeMillis() + serverClockOffsetMs
+    val allPresence = rawRoomPresence.value
+    val stalePresence = allPresence.filter { member ->
+      member.userId.isNotBlank() &&
+        member.userId != currentUserId &&
+        !isTimestampFresh(member.lastSeenAt?.toDate()?.time, estimatedServerNow, PRESENCE_STALE_MS)
+    }
+    stalePresence.forEach { stale ->
+      runCatching { repository.removeRoomPresence(room.id, stale.userId) }
+      runCatching { repository.deleteUserJoinMessagesInRoom(room.id, stale.userId) }
+    }
+    val freshPresenceUids = allPresence
+      .filter { member ->
+        member.userId.isNotBlank() &&
+          (member.userId == currentUserId ||
+            isTimestampFresh(member.lastSeenAt?.toDate()?.time, estimatedServerNow, PRESENCE_STALE_MS))
+      }
+      .map { it.userId }
+      .toSet()
+
+    val staleSeats = seats.filter { seat ->
+      seat.occupantUid.isNotBlank() &&
+        seat.occupantUid != currentUserId &&
+        seat.occupantUid !in freshPresenceUids &&
+        !isTimestampFresh(seat.updatedAt?.toDate()?.time, estimatedServerNow, SEAT_STALE_MS)
+    }
+    staleSeats.forEach { seat ->
+      runCatching { repository.leaveSeat(room.id, seat.seatIndex.toInt()) }
+      runCatching { repository.deleteUserJoinMessagesInRoom(room.id, seat.occupantUid) }
+    }
+    val liveUids = buildSet {
+      add(currentUserId)
+      addAll(freshPresenceUids)
+      seats.filter { it.occupantUid.isNotBlank() && it !in staleSeats }.forEach { add(it.occupantUid) }
+    }
+    val desiredCount = liveUids.size.toLong().coerceAtLeast(1L)
+    if (desiredCount != room.listenerCount) {
+      runCatching { repository.syncRoomListenerCount(room.id, desiredCount) }
+    }
+  }
+
+  private fun isNetworkConnected(): Boolean {
+    val cm = registeredConnectivityManager
+      ?: (appContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)
+      ?: return true
+    val network = cm.activeNetwork ?: return false
+    val caps = cm.getNetworkCapabilities(network) ?: return false
+    if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
+    if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+      sawValidatedInternet = true
+    } else if (sawValidatedInternet && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      return false
+    }
+    return true
+  }
+
+  private fun registerNetworkMonitor(ctx: Context) {
+    val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+    registeredConnectivityManager = cm
+    runCatching {
+      val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+      if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true) {
+        sawValidatedInternet = true
+      }
+    }
+    val callback = object : ConnectivityManager.NetworkCallback() {
+      override fun onAvailable(network: Network) {
+        viewModelScope.launch { onNetworkConnectivityChanged(true) }
+      }
+
+      override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+        val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val hasValidated = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        if (hasValidated) {
+          sawValidatedInternet = true
+        }
+        val effectiveOnline = hasInternet && (!sawValidatedInternet || hasValidated)
+        if (!effectiveOnline && !isNetworkConnected()) {
+          viewModelScope.launch { onNetworkConnectivityChanged(false) }
+        } else if (effectiveOnline) {
+          viewModelScope.launch { onNetworkConnectivityChanged(true) }
+        }
+      }
+
+      override fun onLost(network: Network) {
+        viewModelScope.launch {
+          // Slight grace check for immediate interface handoff (e.g. Wi-Fi -> 4G), disconnect immediately if offline
+          delay(250L)
+          if (!isNetworkConnected()) {
+            onNetworkConnectivityChanged(false)
+          }
+        }
+      }
+
+      override fun onUnavailable() {
+        viewModelScope.launch { onNetworkConnectivityChanged(false) }
+      }
+    }
+    registeredNetworkCallback = callback
+    val request = NetworkRequest.Builder()
+      .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+      .build()
+    runCatching { cm.registerNetworkCallback(request, callback) }
   }
 
   // --- Seat & Live Mic Controls ---
@@ -1810,8 +2119,8 @@ class SwarRoomViewModel(
         gift = gift,
         quantity = quantity,
       ).onSuccess { event ->
-        // Snapshot observer also receives this event; mark & enqueue immediately if not yet seen for zero latency
-        if (seenGiftEventIds.add(event.id)) {
+        // Snapshot observer also receives this event; mark & enqueue strictly for the active room
+        if (_activeRoomId.value == event.roomId && seenGiftEventIds.add(event.id)) {
           enqueueFullScreenGift(event)
           triggerOrQueueMarquee(event)
         }
@@ -1845,6 +2154,11 @@ class SwarRoomViewModel(
 
   override fun onCleared() {
     super.onCleared()
+    registeredNetworkCallback?.let { cb ->
+      runCatching { registeredConnectivityManager?.unregisterNetworkCallback(cb) }
+    }
+    registeredNetworkCallback = null
+    registeredConnectivityManager = null
     appContext?.let { ctx ->
       SeatPresenceTracker.cleanupSynchronously(ctx, timeoutMs = 800L)
     }
@@ -1852,12 +2166,46 @@ class SwarRoomViewModel(
     audioEngine.release()
   }
 
-  private companion object {
-    const val TAG = "SwarRoomVM"
-    const val STOP_TIMEOUT_MS = 5000L
-    const val ADMIN_EMAIL = "chndra3735@gmail.com"
-    const val KEY_BLOCKED_UIDS = "blocked_uids"
-    const val KEY_HIDDEN_EMOJIS = "hidden_emojis"
-    const val KEY_HIDDEN_GIFTS = "hidden_gifts"
+  companion object {
+    private const val TAG = "SwarRoomVM"
+    private const val STOP_TIMEOUT_MS = 5000L
+    private const val ADMIN_EMAIL = "chndra3735@gmail.com"
+    private const val KEY_BLOCKED_UIDS = "blocked_uids"
+    private const val KEY_HIDDEN_EMOJIS = "hidden_emojis"
+    private const val KEY_HIDDEN_GIFTS = "hidden_gifts"
+    const val HEARTBEAT_INTERVAL_MS = 7_000L
+    const val PRESENCE_STALE_MS = 25_000L
+    const val SEAT_STALE_MS = 28_000L
+
+    fun isTimestampFresh(
+      tsMillis: Long?,
+      estimatedServerNowMs: Long,
+      staleThresholdMs: Long = PRESENCE_STALE_MS,
+    ): Boolean {
+      if (tsMillis == null) return true
+      return (estimatedServerNowMs - tsMillis) <= staleThresholdMs
+    }
+
+    fun filterLiveRoomMessages(
+      messages: List<RoomMessage>,
+      blockedUids: Set<String>,
+      liveMemberUids: Set<String>,
+      roomJoinedAtMs: Long,
+      sessionJoinWindowMs: Long = 5_000L,
+    ): List<RoomMessage> {
+      return messages.filter { msg ->
+        if (msg.senderUid in blockedUids) return@filter false
+        if (msg.messageType == "join") {
+          if (msg.senderUid !in liveMemberUids) return@filter false
+          if (roomJoinedAtMs > 0L) {
+            val createdMs = msg.createdAt?.toDate()?.time
+            if (createdMs != null && createdMs < roomJoinedAtMs - sessionJoinWindowMs) {
+              return@filter false
+            }
+          }
+        }
+        true
+      }
+    }
   }
 }

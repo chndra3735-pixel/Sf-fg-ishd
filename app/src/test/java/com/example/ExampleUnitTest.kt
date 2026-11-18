@@ -1,11 +1,15 @@
 package com.example
 
+import com.example.data.model.RoomMessage
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
 import com.example.data.repository.VideoLinkResolution
 import com.example.data.repository.VideoLinkResolver
+import com.example.ui.viewmodel.SwarRoomViewModel
+import com.google.firebase.Timestamp
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.Date
 
 /**
  * Unit tests for core SwarRoom utilities.
@@ -40,12 +44,8 @@ class ExampleUnitTest {
   }
 
   @Test
-  fun builtInGifts_includesPinterestVideoGiftLink() {
-    val pinGift = SwarCatalogDefaults.builtInGifts.firstOrNull {
-      it.mediaUrl == "https://pin.it/5wrohsACd"
-    }
-    assertNotNull(pinGift)
-    assertEquals("video", pinGift?.mediaType)
+  fun builtInGifts_isCompletelyEmptyForFreshLinkSetup() {
+    assertTrue(SwarCatalogDefaults.builtInGifts.isEmpty())
   }
 
   @Test
@@ -98,13 +98,11 @@ class ExampleUnitTest {
   }
 
   @Test
-  fun builtInGifts_includesInstagramReelVideoGiftLink() {
-    val igGift = SwarCatalogDefaults.builtInGifts.firstOrNull {
-      it.mediaUrl == "https://www.instagram.com/reel/Dfqs1NiPAe3/?rpxt=MWE0dmtxcHdlaWNubg=="
-    }
-    assertNotNull(igGift)
-    assertEquals("video", igGift?.mediaType)
-    assertEquals("https://www.instagram.com/reel/Dfqs1NiPAe3/embed/", VideoLinkResolver.instagramEmbedUrl(igGift!!.mediaUrl))
+  fun videoLinkResolver_buildsInstagramEmbedUrlForReels() {
+    assertEquals(
+      "https://www.instagram.com/reel/Dfqs1NiPAe3/embed/",
+      VideoLinkResolver.instagramEmbedUrl("https://www.instagram.com/reel/Dfqs1NiPAe3/?rpxt=MWE0dmtxcHdlaWNubg=="),
+    )
   }
 
   @Test
@@ -190,5 +188,58 @@ class ExampleUnitTest {
     assertNotNull(entry)
     assertEquals(1, entry?.first?.badgeLevel)
     assertEquals("https://cdn.example.com/entry_lv1.mp4", entry?.second)
+  }
+
+  @Test
+  fun filterLiveRoomMessages_hidesExitedUsersAndOldJoinHistoryOnReentry() {
+    val rejoinedAt = 100_000L
+    val oldJoinBeforeReentry = RoomMessage(
+      id = "m_old",
+      senderUid = "u_old",
+      senderName = "Old Visitor",
+      text = "Old Visitor का कमरे में स्वागत है",
+      messageType = "join",
+      createdAt = Timestamp(Date(rejoinedAt - 20_000L)),
+    )
+    val leftUserJoin = RoomMessage(
+      id = "m_left",
+      senderUid = "u_left",
+      senderName = "Gone User",
+      text = "Gone User का कमरे में स्वागत है",
+      messageType = "join",
+      createdAt = Timestamp(Date(rejoinedAt + 2_000L)),
+    )
+    val liveUserJoin = RoomMessage(
+      id = "m_live",
+      senderUid = "u_live",
+      senderName = "Active Member",
+      text = "Active Member का कमरे में स्वागत है",
+      messageType = "join",
+      createdAt = Timestamp(Date(rejoinedAt + 4_000L)),
+    )
+    val normalChat = RoomMessage(
+      id = "m_chat",
+      senderUid = "u_live",
+      senderName = "Active Member",
+      text = "Hello room!",
+      messageType = "text",
+      createdAt = Timestamp(Date(rejoinedAt + 5_000L)),
+    )
+
+    val filtered = SwarRoomViewModel.filterLiveRoomMessages(
+      messages = listOf(oldJoinBeforeReentry, leftUserJoin, liveUserJoin, normalChat),
+      blockedUids = emptySet(),
+      liveMemberUids = setOf("u_live"),
+      roomJoinedAtMs = rejoinedAt,
+    )
+    assertEquals(listOf("m_live", "m_chat"), filtered.map { it.id })
+  }
+
+  @Test
+  fun isTimestampFresh_marksStaleHeartbeatsOfflineAfterThreshold() {
+    val now = 1_000_000L
+    assertTrue(SwarRoomViewModel.isTimestampFresh(now - 7_000L, now, 25_000L))
+    assertFalse(SwarRoomViewModel.isTimestampFresh(now - 30_000L, now, 25_000L))
+    assertTrue(SwarRoomViewModel.isTimestampFresh(null, now, 25_000L))
   }
 }

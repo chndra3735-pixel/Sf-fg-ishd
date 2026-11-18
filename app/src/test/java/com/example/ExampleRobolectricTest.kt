@@ -23,7 +23,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [36], qualifiers = "w411dp-h891dp")
 class ExampleRobolectricTest {
 
   @get:Rule
@@ -149,5 +149,108 @@ class ExampleRobolectricTest {
     assertEquals(0L, savedCoins)
     composeTestRule.onNodeWithTag("close_level_cards_button").performClick()
     composeTestRule.waitForIdle()
+  }
+
+  @Test
+  fun `empty gift panel shows empty catalog state with admin add CTA`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_empty_gift",
+      ownerId = "admin_1",
+      ownerName = "Chandra",
+      title = "Empty Gift Room",
+      roomCode = "102030",
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.GiftPanelSheet(
+          room = room,
+          seats = emptyList(),
+          gifts = emptyList(),
+          userCoins = 1000L,
+          isAdminUser = true,
+          isUploading = false,
+          onClaimBonusCoins = {},
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, onDone -> onDone() },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
+          onDeleteCustomGift = { _, onDone -> onDone() },
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("empty_gift_catalog_state").assertExists().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("empty_add_gift_button").assertExists().assertIsDisplayed()
+  }
+
+  @Test
+  fun `voice room hides full screen gift playback belonging to another room`() {
+    val roomB = com.example.data.model.VoiceRoom(
+      id = "room_B",
+      ownerId = "host_B",
+      ownerName = "Host B",
+      title = "Room B",
+      roomCode = "223344",
+    )
+    val giftFromRoomA = com.example.data.model.GiftEvent(
+      id = "evt_from_room_A",
+      roomId = "room_A",
+      roomTitle = "Room A",
+      senderUid = "u2",
+      senderName = "Sender A",
+      recipientUid = "host_A",
+      recipientName = "Host A",
+      giftId = "gift_1",
+      giftName = "Royal Gift",
+      giftEmoji = "🎁",
+      giftMediaUrl = "https://example.com/video.mp4",
+      giftMediaType = "video",
+      coinCost = 50L,
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = roomB,
+          seats = emptyList(),
+          messages = emptyList(),
+          currentUserId = "u_viewer",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 1000L,
+          emojiCatalog = emptyList(),
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = giftFromRoomA,
+          isMicMuted = true,
+          isSpeakerOn = true,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {},
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("fullscreen_gift_overlay").assertDoesNotExist()
   }
 }

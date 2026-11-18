@@ -52,6 +52,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -68,6 +70,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -405,8 +408,10 @@ fun GiftPanelSheet(
   var editingGift by remember { mutableStateOf<GiftCatalogItem?>(null) }
   var deletingDefaultGift by remember { mutableStateOf<GiftCatalogItem?>(null) }
 
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   ModalBottomSheet(
     onDismissRequest = onDismiss,
+    sheetState = sheetState,
     containerColor = Color(0xFF170E2E),
     contentColor = Color.White,
   ) {
@@ -517,17 +522,80 @@ fun GiftPanelSheet(
         }
       }
 
-      // Gifts Grid
-      LazyVerticalGrid(
-        columns = GridCells.Fixed(4),
-        modifier = Modifier
-          .fillMaxWidth()
-          .height(240.dp),
-        contentPadding = PaddingValues(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        items(filteredGifts, key = { it.id.ifBlank { "${it.category}_${it.name}" } }) { gift ->
+      // Gifts Grid (or empty state when admin cleared / before adding gifts)
+      if (filteredGifts.isEmpty()) {
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(240.dp)
+            .padding(horizontal = 20.dp, vertical = 14.dp)
+            .testTag("empty_gift_catalog_state"),
+          contentAlignment = Alignment.Center,
+        ) {
+          Surface(
+            color = Color(0xFF231642),
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .border(1.dp, Color(0x44FFFFFF), RoundedCornerShape(18.dp)),
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 20.dp),
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Text(text = "🎁", fontSize = 32.sp)
+              Text(
+                text = if (gifts.isEmpty()) "गिफ्ट पैनल अभी खाली है" else "$currentCategory श्रेणी में कोई गिफ्ट नहीं है",
+                style = MaterialTheme.typography.titleSmall,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+              )
+              Text(
+                text = if (isAdminUser) {
+                  "नया वीडियो या फोटो गिफ्ट लिंक + DP जोड़ने के लिए '+' बटन दबाएं।"
+                } else {
+                  "नए गिफ्ट एडमिन द्वारा लिंक के ज़रिए जोड़े जाएंगे।"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFC8C0E8),
+                textAlign = TextAlign.Center,
+              )
+              if (isAdminUser) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Button(
+                  onClick = {
+                    onClearGiftUploadError()
+                    showAdminAddGiftDialog = true
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = SwarCoral, contentColor = Color.White),
+                  shape = RoundedCornerShape(20.dp),
+                  modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("empty_add_gift_button"),
+                ) {
+                  Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Text("नया गिफ्ट जोड़ें (+)", fontWeight = FontWeight.Bold)
+                }
+              }
+            }
+          }
+        }
+      } else {
+        LazyVerticalGrid(
+          columns = GridCells.Fixed(4),
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(240.dp),
+          contentPadding = PaddingValues(12.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          items(filteredGifts, key = { it.id.ifBlank { "${it.category}_${it.name}" } }) { gift ->
           val isPicked = selectedGift?.id == gift.id
           val isCustomGift = !gift.id.startsWith("def_")
           val borderColor = if (isPicked) SwarGold else Color(0x33FFFFFF)
@@ -640,6 +708,7 @@ fun GiftPanelSheet(
               }
             }
           }
+        }
         }
       }
 

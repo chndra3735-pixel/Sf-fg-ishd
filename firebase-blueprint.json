@@ -209,6 +209,23 @@
         "claimedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "badgeLevel", "coinsGranted", "claimedAt"]
+    },
+    "RoomPresenceMember": {
+      "title": "RoomPresenceMember",
+      "description": "Ephemeral live presence heartbeat record for a user currently inside a voice room.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "roomId": { "type": "string" },
+        "roomOwnerId": { "type": "string" },
+        "isRoomPublic": { "type": "boolean" },
+        "displayName": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "clubTag": { "type": "string" },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "lastSeenAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "roomId", "roomOwnerId", "isRoomPublic", "displayName", "avatarUrl", "clubTag", "joinedAt", "lastSeenAt"]
     }
   },
   "firestore": {
@@ -227,6 +244,10 @@
     "/rooms/{roomId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/RoomMessage" },
       "description": "Real-time text messages inside a voice room."
+    },
+    "/rooms/{roomId}/presence/{userId}": {
+      "schema": { "$ref": "#/entities/RoomPresenceMember" },
+      "description": "Live presence heartbeat documents for users currently active inside a voice room."
     },
     "/conversations/{conversationId}": {
       "schema": { "$ref": "#/entities/Conversation" },

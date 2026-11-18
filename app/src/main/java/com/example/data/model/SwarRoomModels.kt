@@ -183,6 +183,21 @@ data class LevelRewardClaim(
   @ServerTimestamp val claimedAt: Timestamp? = null,
 )
 
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class RoomPresenceMember(
+  @DocumentId val id: String = "",
+  val userId: String = "",
+  val roomId: String = "",
+  val roomOwnerId: String = "",
+  @get:PropertyName("isRoomPublic") @field:PropertyName("isRoomPublic") val isRoomPublic: Boolean = true,
+  val displayName: String = "",
+  val avatarUrl: String = "",
+  val clubTag: String = "",
+  @ServerTimestamp val joinedAt: Timestamp? = null,
+  @ServerTimestamp val lastSeenAt: Timestamp? = null,
+)
+
 object SwarCatalogDefaults {
   val emojiCategories = listOf("ट्रेंडिंग", "मस्ती", "प्यार", "प्रतिक्रिया")
   val giftCategories = listOf("हॉट", "लग्ज़री", "वीडियो VIP", "लकी")
@@ -206,36 +221,6 @@ object SwarCatalogDefaults {
     EmojiCatalogItem(id = "def_e16", label = "वाह", category = "प्रतिक्रिया", symbol = "😮"),
   )
 
-  val builtInGifts = listOf(
-    GiftCatalogItem(
-      id = "def_g0_ig_reel_test",
-      name = "रील वीडियो गिफ्ट",
-      category = "हॉट",
-      emoji = "📱",
-      mediaUrl = "https://www.instagram.com/reel/Dfqs1NiPAe3/?rpxt=MWE0dmtxcHdlaWNubg==",
-      mediaType = "video",
-      coinCost = 10L,
-    ),
-    GiftCatalogItem(
-      id = "def_g0_pin_test",
-      name = "पिन वीडियो गिफ्ट",
-      category = "हॉट",
-      emoji = "🎬",
-      mediaUrl = "https://pin.it/5wrohsACd",
-      mediaType = "video",
-      coinCost = 10L,
-    ),
-    GiftCatalogItem(id = "def_g1", name = "गोल्डन रोज़", category = "हॉट", emoji = "🌹", coinCost = 10L),
-    GiftCatalogItem(id = "def_g2", name = "म्यूज़िक माइक", category = "हॉट", emoji = "🎤", coinCost = 50L),
-    GiftCatalogItem(id = "def_g3", name = "शाही ताज", category = "हॉट", emoji = "👑", coinCost = 100L),
-    GiftCatalogItem(id = "def_g4", name = "स्पोर्ट्स कार", category = "लग्ज़री", emoji = "🏎️", coinCost = 500L),
-    GiftCatalogItem(id = "def_g5", name = "डायमंड रिंग", category = "लग्ज़री", emoji = "💍", coinCost = 300L),
-    GiftCatalogItem(id = "def_g6", name = "प्राइवेट जेट", category = "लग्ज़री", emoji = "🛩️", coinCost = 999L),
-    GiftCatalogItem(id = "def_g7", name = "फायरवर्क शो", category = "वीडियो VIP", emoji = "🎆", coinCost = 750L),
-    GiftCatalogItem(id = "def_g8", name = "गोल्डन ड्रैगन", category = "वीडियो VIP", emoji = "🐉", coinCost = 1200L),
-    GiftCatalogItem(id = "def_g9", name = "लकी स्टार", category = "लकी", emoji = "🌟", coinCost = 20L),
-    GiftCatalogItem(id = "def_g10", name = "रॉकेट बूस्ट", category = "लकी", emoji = "🚀", coinCost = 150L),
-    GiftCatalogItem(id = "def_g11", name = "ट्रॉफी कप", category = "लकी", emoji = "🏆", coinCost = 250L),
-  )
+  val builtInGifts: List<GiftCatalogItem> = emptyList()
 }
 

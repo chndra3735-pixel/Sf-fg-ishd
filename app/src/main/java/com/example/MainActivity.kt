@@ -393,6 +393,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val giftUploadError by viewModel.giftUploadError.collectAsStateWithLifecycle()
   val levelConfigs by viewModel.levelConfigs.collectAsStateWithLifecycle()
   val claimedLevelTiers by viewModel.claimedLevelTiers.collectAsStateWithLifecycle()
+  val activeRoomPresence by viewModel.activeRoomPresence.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
@@ -540,6 +541,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone)
         },
         onClaimLevelTierReward = { lvl -> viewModel.claimLevelTierReward(lvl) },
+        livePresenceMembers = activeRoomPresence,
       )
       SnackbarHost(
         hostState = snackbarHostState,
