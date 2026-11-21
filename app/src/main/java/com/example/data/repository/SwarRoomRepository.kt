@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
+data class RoomGiftEventsSnapshot(
+  val events: List<GiftEvent>,
+  val isFromCache: Boolean,
+)
+
 class SwarRoomRepository(
   private val db: FirebaseFirestore,
   private val auth: FirebaseAuth = Firebase.auth,
@@ -1256,9 +1261,31 @@ class SwarRoomRepository(
     emitAll(
       query.snapshots()
         .map { snapshot ->
+          val fallbackNow = Timestamp.now()
           snapshot.toObjects(GiftEvent::class.java, ServerTimestampBehavior.ESTIMATE)
-            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
-            .take(40)
+            .sortedByDescending { it.createdAt ?: fallbackNow }
+            .take(80)
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "gift_events", uid); throw error }
+    )
+  }
+
+  fun observeRoomGiftEvents(roomId: String): Flow<RoomGiftEventsSnapshot> = flow {
+    val uid = requireUserId()
+    val query = db.collection("gift_events")
+      .whereEqualTo("roomId", roomId)
+      .whereEqualTo("isPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          val fallbackNow = Timestamp.now()
+          val items = snapshot.toObjects(GiftEvent::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.createdAt ?: fallbackNow }
+            .take(100)
+          RoomGiftEventsSnapshot(
+            events = items,
+            isFromCache = snapshot.metadata.isFromCache,
+          )
         }
         .catch { error -> handleFlowError(error, OperationType.LIST, "gift_events", uid); throw error }
     )
@@ -1359,6 +1386,7 @@ class SwarRoomRepository(
         coinCost = totalCost,
         quantity = safeQty.toLong(),
         isPublic = true,
+        createdAt = Timestamp.now(),
       )
     } catch (e: CancellationException) {
       throw e

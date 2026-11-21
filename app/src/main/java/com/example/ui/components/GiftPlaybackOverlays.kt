@@ -448,13 +448,26 @@ fun FullScreenGiftOverlay(
     mutableStateOf<Uri?>(if (cleanGiftUrl.startsWith("http", ignoreCase = true)) null else Uri.parse(cleanGiftUrl))
   }
 
+  var resolvedPlayableHttpUrl by remember(event.id, cleanGiftUrl) { mutableStateOf("") }
+  var triedRemoteStreamFallback by remember(event.id, cleanGiftUrl) { mutableStateOf(false) }
+
   LaunchedEffect(event.id, cleanGiftUrl) {
     if (event.giftMediaType == "video" && cleanGiftUrl.startsWith("http", ignoreCase = true)) {
-      val resolution = withTimeoutOrNull(12_000L) {
+      var resolution = withTimeoutOrNull(20_000L) {
         withContext(Dispatchers.IO) { VideoLinkResolver.resolvePlayableVideo(cleanGiftUrl) }
+      }
+      if (resolution == null || resolution is VideoLinkResolution.Failure) {
+        delay(600L)
+        val retryRes = withTimeoutOrNull(20_000L) {
+          withContext(Dispatchers.IO) { VideoLinkResolver.resolvePlayableVideo(cleanGiftUrl) }
+        }
+        if (retryRes != null && (resolution == null || retryRes is VideoLinkResolution.Success)) {
+          resolution = retryRes
+        }
       }
       when (resolution) {
         is VideoLinkResolution.Success -> {
+          resolvedPlayableHttpUrl = resolution.playableUrl
           if (resolution.thumbnailUrl.isNotBlank()) {
             fallbackThumbUrl = resolution.thumbnailUrl
           }
@@ -464,7 +477,7 @@ fun FullScreenGiftOverlay(
           if (resolution.isHlsStream) {
             resolvedVideoUri = Uri.parse(resolution.playableUrl)
           } else {
-            val cached = withTimeoutOrNull(8_000L) {
+            val cached = withTimeoutOrNull(25_000L) {
               withContext(Dispatchers.IO) {
                 SupabaseNetworkClient.cacheRemoteMediaFile(context.cacheDir, resolution.playableUrl)
               }
@@ -508,8 +521,8 @@ fun FullScreenGiftOverlay(
 
   LaunchedEffect(event.id, isVideoGift, isEmbedMode, isOverlayVisible, preparedDurationMs) {
     if (!isOverlayVisible) {
-      // Safety cap if background buffering stalls indefinitely
-      delay(30_000L)
+      // Generous underground preload cap for slow connections before automatic dismissal
+      delay(65_000L)
       onDismiss()
       return@LaunchedEffect
     }
@@ -774,12 +787,21 @@ fun FullScreenGiftOverlay(
                         onDismiss()
                       }
                       player.setOnErrorListener { _, what, extra ->
-                        val fallbackEmbed = resolvedEmbedUrl
-                        if (!fallbackEmbed.isNullOrBlank()) {
-                          embedFallbackUrl = fallbackEmbed
+                        if (playbackUri.scheme == "file" &&
+                          !triedRemoteStreamFallback &&
+                          resolvedPlayableHttpUrl.isNotBlank()
+                        ) {
+                          triedRemoteStreamFallback = true
+                          SupabaseNetworkClient.evictCachedMedia(context.cacheDir, resolvedPlayableHttpUrl)
+                          resolvedVideoUri = Uri.parse(resolvedPlayableHttpUrl)
                         } else {
-                          videoFailed = true
-                          onPlaybackMessage("यह वीडियो लिंक प्ले नहीं हो सका (कोड: $what/$extra)।")
+                          val fallbackEmbed = resolvedEmbedUrl
+                          if (!fallbackEmbed.isNullOrBlank()) {
+                            embedFallbackUrl = fallbackEmbed
+                          } else {
+                            videoFailed = true
+                            onPlaybackMessage("यह वीडियो लिंक प्ले नहीं हो सका (कोड: $what/$extra)।")
+                          }
                         }
                         true
                       }
@@ -827,10 +849,10 @@ fun FullScreenGiftOverlay(
         }
       }
 
-      // Watchdog: if MediaPlayer stalls preparing for >10s, fall back to Instagram embed or error cleanly
+      // Watchdog: if MediaPlayer stalls preparing for >25s, fall back to Instagram embed or error cleanly
       LaunchedEffect(event.id, playbackUri, isVideoPrepared) {
         if (playbackUri != null && !isVideoPrepared) {
-          delay(10_000L)
+          delay(25_000L)
           if (!isVideoPrepared) {
             runCatching { mediaPlayerRef?.stop() }
             runCatching { mediaPlayerRef?.release() }

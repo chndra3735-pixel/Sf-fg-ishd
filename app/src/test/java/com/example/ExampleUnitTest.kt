@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.data.model.GiftEvent
 import com.example.data.model.RoomMessage
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
@@ -273,5 +274,92 @@ class ExampleUnitTest {
     assertFalse(GitHubUpdateChecker.isNewerVersion("v1.0.5", "1.0.5", 5))
     assertFalse(GitHubUpdateChecker.isNewerVersion("v1.0.5", "1.0", 5))
     assertFalse(GitHubUpdateChecker.isNewerVersion("v1.0.3", "1.0.8", 8))
+  }
+
+  @Test
+  fun shouldPlayRoomGiftEvent_deliversInRoomRegardlessOfServerDelayOrClockSkewAndBlocksAfterExit() {
+    val deviceClockJoinedAtMs = 2_000_000L
+    // Simulate receiver device clock running 45 seconds ahead of Firestore server clock
+    val serverClockOffsetMs = -45_000L
+    val serverJoinApproxMs = deviceClockJoinedAtMs + serverClockOffsetMs
+
+    val liveGiftInRoom = GiftEvent(
+      id = "evt_live_1",
+      roomId = "room_alpha",
+      createdAt = Timestamp(Date(serverJoinApproxMs + 1_000L)),
+    )
+    val delayedGiftInRoom = GiftEvent(
+      id = "evt_delayed_2",
+      roomId = "room_alpha",
+      createdAt = Timestamp(Date(deviceClockJoinedAtMs - 180_000L)),
+    )
+    val ancientGiftFromBeforeJoin = GiftEvent(
+      id = "evt_old_history",
+      roomId = "room_alpha",
+      createdAt = Timestamp(Date(serverJoinApproxMs - 120_000L)),
+    )
+    val otherRoomGift = GiftEvent(
+      id = "evt_other_room",
+      roomId = "room_beta",
+      createdAt = Timestamp(Date(serverJoinApproxMs + 2_000L)),
+    )
+
+    // Calibrated clock allows gift on initial snapshot even when receiver phone clock is 45s ahead
+    assertTrue(
+      SwarRoomViewModel.shouldPlayRoomGiftEvent(
+        event = liveGiftInRoom,
+        activeRoomId = "room_alpha",
+        joinedAtLocalMs = deviceClockJoinedAtMs,
+        serverClockOffsetMs = serverClockOffsetMs,
+        hasServerClockCalibration = true,
+        isPostInitialRoomSnapshot = false,
+      )
+    )
+
+    // Once user is inside the room (post-initial snapshot), NO gift in active room is dropped regardless of delay/skew
+    assertTrue(
+      SwarRoomViewModel.shouldPlayRoomGiftEvent(
+        event = delayedGiftInRoom,
+        activeRoomId = "room_alpha",
+        joinedAtLocalMs = deviceClockJoinedAtMs,
+        serverClockOffsetMs = serverClockOffsetMs,
+        hasServerClockCalibration = true,
+        isPostInitialRoomSnapshot = true,
+      )
+    )
+
+    // Pre-existing historical gift from 2 minutes before join does NOT replay on initial room load
+    assertFalse(
+      SwarRoomViewModel.shouldPlayRoomGiftEvent(
+        event = ancientGiftFromBeforeJoin,
+        activeRoomId = "room_alpha",
+        joinedAtLocalMs = deviceClockJoinedAtMs,
+        serverClockOffsetMs = serverClockOffsetMs,
+        hasServerClockCalibration = true,
+        isPostInitialRoomSnapshot = false,
+      )
+    )
+
+    // Other room or exited room (activeRoomId = null) never plays
+    assertFalse(
+      SwarRoomViewModel.shouldPlayRoomGiftEvent(
+        event = otherRoomGift,
+        activeRoomId = "room_alpha",
+        joinedAtLocalMs = deviceClockJoinedAtMs,
+        serverClockOffsetMs = serverClockOffsetMs,
+        hasServerClockCalibration = true,
+        isPostInitialRoomSnapshot = true,
+      )
+    )
+    assertFalse(
+      SwarRoomViewModel.shouldPlayRoomGiftEvent(
+        event = liveGiftInRoom,
+        activeRoomId = null,
+        joinedAtLocalMs = 0L,
+        serverClockOffsetMs = serverClockOffsetMs,
+        hasServerClockCalibration = true,
+        isPostInitialRoomSnapshot = true,
+      )
+    )
   }
 }

@@ -55,6 +55,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -244,9 +245,14 @@ class SwarRoomViewModel(
   val activeFullScreenGift: StateFlow<GiftEvent?> = _activeFullScreenGift.asStateFlow()
 
   private val seenGiftEventIds = mutableSetOf<String>()
+  private val seenMarqueeEventIds = mutableSetOf<String>()
+  private val confirmedRemoteGiftEventIds = mutableSetOf<String>()
+  private val latestRoomRemoteEventIds = mutableSetOf<String>()
   private val pendingGiftQueue = ArrayDeque<GiftEvent>()
   private var pendingMarqueeGift: GiftEvent? = null
   private var initialGiftSnapshotHandled = false
+  private var activeRoomVisitToken = 0L
+  private var handledInitialRoomSnapshotToken = -1L
 
   // --- Active Voice Room ---
   private val _activeRoomId = MutableStateFlow<String?>(null)
@@ -257,6 +263,9 @@ class SwarRoomViewModel(
 
   @Volatile
   private var serverClockOffsetMs: Long = 0L
+
+  @Volatile
+  private var hasServerClockCalibration: Boolean = false
 
   @Volatile
   private var sawValidatedInternet: Boolean = false
@@ -298,6 +307,7 @@ class SwarRoomViewModel(
         val ownDoc = members.firstOrNull { it.userId == currentUserId }
         ownDoc?.lastSeenAt?.toDate()?.time?.let { ownServerMs ->
           serverClockOffsetMs = ownServerMs - System.currentTimeMillis()
+          hasServerClockCalibration = true
         }
         val estimatedServerNow = clockNow + serverClockOffsetMs
         members.filter { member ->
@@ -494,24 +504,16 @@ class SwarRoomViewModel(
         }
     }
 
-    // Observe cross-room gift broadcasts for the marquee strip & full-screen room playback
+    // Observe cross-room gift broadcasts for marquee strip & fallback room gift delivery
     viewModelScope.launch {
       repository.observeGlobalGiftEvents()
+        .retryWhen { _, attempt ->
+          delay((1_500L * (attempt + 1)).coerceAtMost(8_000L))
+          true
+        }
         .catch { /* logged by repository */ }
         .collect { events ->
-          val currentEventIds = events.asSequence().map { it.id }.toSet()
-          // If the currently displayed gift event was deleted from Firestore, dismiss immediately
-          val activeFull = _activeFullScreenGift.value
-          if (activeFull != null && activeFull.id.isNotBlank() &&
-            !activeFull.giftId.startsWith("entry_lv_") &&
-            activeFull.id !in currentEventIds
-          ) {
-            dismissFullScreenGift()
-          }
-          val activeMarquee = _latestMarqueeGift.value
-          if (activeMarquee != null && activeMarquee.id.isNotBlank() && activeMarquee.id !in currentEventIds) {
-            _latestMarqueeGift.value = null
-          }
+          events.forEach { if (it.id.isNotBlank()) confirmedRemoteGiftEventIds.add(it.id) }
 
           if (!initialGiftSnapshotHandled) {
             events.forEach { seenGiftEventIds.add(it.id) }
@@ -526,8 +528,14 @@ class SwarRoomViewModel(
             val newRoomEvents = if (activeId != null) {
               freshEvents
                 .filter { evt ->
-                  evt.roomId == activeId &&
-                    (evt.createdAt == null || joinedAt == 0L || evt.createdAt.toDate().time >= joinedAt - 5_000L)
+                  shouldPlayRoomGiftEvent(
+                    event = evt,
+                    activeRoomId = activeId,
+                    joinedAtLocalMs = joinedAt,
+                    serverClockOffsetMs = serverClockOffsetMs,
+                    hasServerClockCalibration = hasServerClockCalibration,
+                    isPostInitialRoomSnapshot = true,
+                  )
                 }
                 .reversed()
             } else {
@@ -539,6 +547,82 @@ class SwarRoomViewModel(
               ?.let { triggerOrQueueMarquee(it) }
           }
         }
+    }
+
+    // Dedicated resilient per-room gift event stream so seated & listening members never miss room gifts
+    viewModelScope.launch {
+      _activeRoomId.flatMapLatest { roomId ->
+        if (roomId == null) {
+          flowOf(null)
+        } else {
+          val visitToken = activeRoomVisitToken
+          repository.observeRoomGiftEvents(roomId)
+            .retryWhen { _, attempt ->
+              delay((1_200L * (attempt + 1)).coerceAtMost(6_000L))
+              true
+            }
+            .catch { /* logged by repository */ }
+            .map { snapshot -> Triple(visitToken, roomId, snapshot) }
+        }
+      }.collect { payload ->
+        if (payload == null) return@collect
+        val (visitToken, roomId, snapshot) = payload
+        if (_activeRoomId.value != roomId || visitToken != activeRoomVisitToken) return@collect
+
+        val currentRoomEventIds = snapshot.events.asSequence()
+          .map { it.id }
+          .filter { it.isNotBlank() }
+          .toSet()
+        latestRoomRemoteEventIds.clear()
+        latestRoomRemoteEventIds.addAll(currentRoomEventIds)
+        confirmedRemoteGiftEventIds.addAll(currentRoomEventIds)
+
+        // Dismiss currently playing gift only if it had synced to Firestore and was genuinely deleted
+        val activeFull = _activeFullScreenGift.value
+        if (!snapshot.isFromCache &&
+          currentRoomEventIds.size < 100 &&
+          activeFull != null &&
+          activeFull.id.isNotBlank() &&
+          activeFull.roomId == roomId &&
+          !activeFull.giftId.startsWith("entry_lv_") &&
+          activeFull.id in confirmedRemoteGiftEventIds &&
+          activeFull.id !in currentRoomEventIds
+        ) {
+          dismissFullScreenGift()
+        }
+
+        val hiddenIds = _hiddenGiftIds.value
+        val isPostInitial = handledInitialRoomSnapshotToken == visitToken
+        val joinedAt = _roomJoinedAtMs.value
+
+        val newEvents = snapshot.events
+          .filter { evt ->
+            evt.id.isNotBlank() &&
+              evt.roomId == roomId &&
+              evt.giftId !in hiddenIds &&
+              seenGiftEventIds.add(evt.id) &&
+              shouldPlayRoomGiftEvent(
+                event = evt,
+                activeRoomId = roomId,
+                joinedAtLocalMs = joinedAt,
+                serverClockOffsetMs = serverClockOffsetMs,
+                hasServerClockCalibration = hasServerClockCalibration,
+                isPostInitialRoomSnapshot = isPostInitial,
+              )
+          }
+          .reversed()
+
+        newEvents.forEach { evt ->
+          enqueueFullScreenGift(evt)
+          if (!evt.giftId.startsWith("entry_lv_")) {
+            triggerOrQueueMarquee(evt)
+          }
+        }
+
+        if (!snapshot.isFromCache && handledInitialRoomSnapshotToken != visitToken) {
+          handledInitialRoomSnapshotToken = visitToken
+        }
+      }
     }
 
     // Sync real-time microphone speaking activity onto user's claimed Firestore seat
@@ -604,11 +688,26 @@ class SwarRoomViewModel(
       _activeFullScreenGift.value = event
     } else {
       pendingGiftQueue.addLast(event)
+      prewarmQueuedGiftVideo(event)
+    }
+  }
+
+  private fun prewarmQueuedGiftVideo(event: GiftEvent) {
+    if (event.giftMediaType != "video") return
+    val cacheDir = appContext?.cacheDir ?: return
+    val cleanUrl = VideoLinkResolver.extractFirstHttpUrl(event.giftMediaUrl)
+    if (!cleanUrl.startsWith("http", ignoreCase = true)) return
+    viewModelScope.launch(Dispatchers.IO) {
+      val resolution = VideoLinkResolver.resolvePlayableVideo(cleanUrl)
+      if (resolution is VideoLinkResolution.Success && !resolution.isHlsStream) {
+        SupabaseNetworkClient.cacheRemoteMediaFile(cacheDir, resolution.playableUrl)
+      }
     }
   }
 
   private fun triggerOrQueueMarquee(event: GiftEvent) {
     if (event.giftId.startsWith("entry_lv_")) return
+    if (event.id.isNotBlank() && !seenMarqueeEventIds.add(event.id)) return
     if (_activeFullScreenGift.value == null) {
       _latestMarqueeGift.value = event
     } else {
@@ -771,6 +870,8 @@ class SwarRoomViewModel(
     // Always stop/clear any active or queued full-screen gift from the previous room
     _activeFullScreenGift.value = null
     pendingGiftQueue.clear()
+    latestRoomRemoteEventIds.clear()
+    activeRoomVisitToken++
     _isRoomMinimized.value = false
     val prevSeatHint = if (prevRoomId != null) {
       activeRoomSeats.value.firstOrNull { it.occupantUid == currentUserId }?.seatIndex?.toInt()
@@ -858,6 +959,8 @@ class SwarRoomViewModel(
     // Immediately cancel any full-screen gift playing for this room
     _activeFullScreenGift.value = null
     pendingGiftQueue.clear()
+    latestRoomRemoteEventIds.clear()
+    activeRoomVisitToken++
     _roomJoinedAtMs.value = 0L
     if (roomId == null) {
       _isRoomMinimized.value = false
@@ -932,6 +1035,8 @@ class SwarRoomViewModel(
     audioEngine.leaveRoomVoice()
     _activeFullScreenGift.value = null
     pendingGiftQueue.clear()
+    latestRoomRemoteEventIds.clear()
+    activeRoomVisitToken++
     _roomJoinedAtMs.value = 0L
     _isRoomMinimized.value = false
     _activeRoomId.value = null
@@ -2449,6 +2554,26 @@ class SwarRoomViewModel(
           }
         }
         true
+      }
+    }
+
+    fun shouldPlayRoomGiftEvent(
+      event: GiftEvent,
+      activeRoomId: String?,
+      joinedAtLocalMs: Long,
+      serverClockOffsetMs: Long,
+      hasServerClockCalibration: Boolean,
+      isPostInitialRoomSnapshot: Boolean,
+    ): Boolean {
+      if (activeRoomId.isNullOrBlank() || event.roomId != activeRoomId) return false
+      if (isPostInitialRoomSnapshot) return true
+      val createdMs = event.createdAt?.toDate()?.time ?: return true
+      if (joinedAtLocalMs <= 0L) return true
+      return if (hasServerClockCalibration) {
+        val estimatedServerJoinMs = joinedAtLocalMs + serverClockOffsetMs
+        createdMs >= estimatedServerJoinMs - 15_000L
+      } else {
+        createdMs >= joinedAtLocalMs - 300_000L
       }
     }
   }

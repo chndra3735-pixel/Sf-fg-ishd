@@ -172,17 +172,23 @@ object SupabaseNetworkClient {
         }
         val body = response.body ?: return@runCatching null
         val tmp = java.io.File(dir, "media_$key.tmp")
-        body.byteStream().use { input ->
-          tmp.outputStream().use { output ->
-            input.copyTo(output)
+        var moved = false
+        try {
+          body.byteStream().use { input ->
+            tmp.outputStream().use { output ->
+              input.copyTo(output)
+            }
           }
-        }
-        if (tmp.length() > 0L) {
-          tmp.renameTo(target)
-          target
-        } else {
-          tmp.delete()
-          null
+          if (tmp.length() > 0L && tmp.renameTo(target)) {
+            moved = true
+            target
+          } else {
+            null
+          }
+        } finally {
+          if (!moved && tmp.exists()) {
+            tmp.delete()
+          }
         }
       }
     }.getOrNull()
