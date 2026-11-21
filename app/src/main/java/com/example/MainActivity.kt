@@ -455,7 +455,16 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         )
         return
       }
-      if (auditProfile == null || !auditProfile.onboardingCompleted) {
+      val hasCapturedLocation = auditProfile != null &&
+        auditProfile.locationStatus == "captured" &&
+        auditProfile.locationLabel.isNotBlank() &&
+        !(kotlin.math.abs(auditProfile.locationLat) < 0.0001 && kotlin.math.abs(auditProfile.locationLng) < 0.0001)
+      val needsOnboarding = auditProfile == null ||
+        !auditProfile.onboardingCompleted ||
+        !hasCapturedLocation ||
+        auditProfile.ageYears < 13L ||
+        !auditProfile.termsAccepted
+      if (needsOnboarding) {
         Box(modifier = Modifier.fillMaxSize()) {
           val loadedUserProfile = (profileState as? UiState.Success)?.data
           FirstTimeOnboardingScreen(
@@ -470,6 +479,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
               viewModel.completeFirstTimeOnboarding(dobIso, locResult, termsAccepted)
             },
             onSignOut = signOutAction,
+            initialDobIso = auditProfile?.dobIso.orEmpty(),
           )
           SnackbarHost(
             hostState = snackbarHostState,

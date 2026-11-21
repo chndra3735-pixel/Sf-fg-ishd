@@ -23,6 +23,8 @@ import com.example.data.repository.MediaCompressor
 import com.example.ui.theme.SwarRoomTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -456,9 +458,54 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `first time onboarding gates submission on DOB age and conduct checkbox`() {
+  fun `network geo fallback parser extracts city location and rejects error responses`() {
+    val parsedOk = AuditDateLocationHelper.parseIpGeoJson(
+      """{"success":true,"latitude":26.8467,"longitude":80.9462,"city":"Lucknow","region":"Uttar Pradesh","country":"India"}"""
+    )
+    assertNotNull(parsedOk)
+    assertTrue(parsedOk!!.isValidCaptured)
+    assertEquals("Lucknow, Uttar Pradesh, India", parsedOk.label)
+    assertEquals(26.8467, parsedOk.lat, 0.0001)
+    assertEquals(80.9462, parsedOk.lng, 0.0001)
+
+    val parsedFailed = AuditDateLocationHelper.parseIpGeoJson("""{"success":false,"message":"reserved range"}""")
+    assertNull(parsedFailed)
+  }
+
+  @Test
+  fun `first time onboarding blocks submission when location is not captured`() {
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.FirstTimeOnboardingScreen(
+          userId = "u_noloc_1",
+          userEmail = "noloc@gmail.com",
+          displayName = "NoLoc User",
+          avatarUrl = "",
+          isSubmitting = false,
+          onSubmitOnboarding = { _, _, _ -> },
+          onSignOut = {},
+          initialDobIso = "1996-01-01",
+          autoCaptureLocation = false,
+          initialLocationResult = com.example.data.repository.CapturedLocationResult(
+            label = "GPS / नेटवर्क लोकेशन प्राप्त नहीं हो सकी",
+            lat = 0.0,
+            lng = 0.0,
+            status = "unavailable",
+          ),
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("onboarding_accept_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsNotEnabled()
+  }
+
+  @Test
+  fun `first time onboarding gates submission on captured location age input and accept button`() {
     var submittedDob = ""
     var submittedTerms = false
+    var submittedLocationStatus = ""
     composeTestRule.setContent {
       SwarRoomTheme {
         com.example.ui.components.FirstTimeOnboardingScreen(
@@ -467,24 +514,36 @@ class ExampleRobolectricTest {
           displayName = "रवि शर्मा",
           avatarUrl = "",
           isSubmitting = false,
-          onSubmitOnboarding = { dobIso, _, terms ->
+          onSubmitOnboarding = { dobIso, locResult, terms ->
             submittedDob = dobIso
+            submittedLocationStatus = locResult.status
             submittedTerms = terms
           },
           onSignOut = {},
-          initialDobIso = "2000-05-10",
+          initialDobIso = "",
           autoCaptureLocation = false,
+          initialLocationResult = com.example.data.repository.CapturedLocationResult(
+            label = "लखनऊ, उत्तर प्रदेश, भारत",
+            lat = 26.8467,
+            lng = 80.9462,
+            status = "captured",
+          ),
         )
       }
     }
     composeTestRule.waitForIdle()
-    composeTestRule.onNodeWithTag("onboarding_dob_value", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsNotEnabled()
-    composeTestRule.onNodeWithTag("onboarding_conduct_checkbox").performScrollTo().performClick()
+    composeTestRule.onNodeWithTag("onboarding_age_input").performScrollTo().performTextInput("25")
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("onboarding_dob_value", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+    // Still disabled until Accept is clicked
+    composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsNotEnabled()
+    composeTestRule.onNodeWithTag("onboarding_accept_button").performScrollTo().performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsEnabled().performClick()
     composeTestRule.waitForIdle()
-    assertEquals("2000-05-10", submittedDob)
+    assertEquals(AuditDateLocationHelper.dobIsoFromAgeYears(25), submittedDob)
+    assertEquals("captured", submittedLocationStatus)
     assertTrue(submittedTerms)
   }
 

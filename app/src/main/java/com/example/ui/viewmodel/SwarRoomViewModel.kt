@@ -1639,13 +1639,17 @@ class SwarRoomViewModel(
     termsAccepted: Boolean,
     onSuccess: () -> Unit = {},
   ) {
+    if (!locationResult.isValidCaptured) {
+      _events.tryEmit("बिना लोकेशन प्राप्त हुए अंदर प्रवेश की अनुमति नहीं है। कृपया पहले लाइव लोकेशन प्राप्त करें।")
+      return
+    }
     val age = AuditDateLocationHelper.calculateAgeYears(dobIso)
-    if (dobIso.isBlank() || age < 13) {
-      _events.tryEmit("कृपया मान्य जन्मतिथि चुनें (कम से कम 13 वर्ष आयु आवश्यक है)।")
+    if (dobIso.isBlank() || age !in 13..120) {
+      _events.tryEmit("कृपया मान्य जन्मतिथि और उम्र दर्ज करें (कम से कम 13 वर्ष आयु आवश्यक है)।")
       return
     }
     if (!termsAccepted) {
-      _events.tryEmit("कृपया आगे बढ़ने से पहले रूम आचार संहिता वाले बॉक्स को टिक करें।")
+      _events.tryEmit("कृपया आगे बढ़ने से पहले नियम Accept बटन / बॉक्स को टिक करें।")
       return
     }
     viewModelScope.launch {

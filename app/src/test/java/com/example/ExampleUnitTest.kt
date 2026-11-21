@@ -397,4 +397,16 @@ class ExampleUnitTest {
     assertEquals("45 सेकंड", AuditDateLocationHelper.formatDurationHindi(45L))
     assertTrue(AuditDateLocationHelper.dateKeyFromMillis(nowMs).matches(Regex("""^\d{4}-\d{2}-\d{2}$""")))
   }
+
+  @Test
+  fun auditDateLocationHelper_derivesDobFromAgeYears() {
+    val refCal = Calendar.getInstance().apply {
+      clear()
+      set(2026, Calendar.NOVEMBER, 21, 12, 0, 0)
+    }
+    val nowMs = refCal.timeInMillis
+    val derivedDob = AuditDateLocationHelper.dobIsoFromAgeYears(25, nowMs)
+    assertEquals("2001-01-01", derivedDob)
+    assertEquals(25, AuditDateLocationHelper.calculateAgeYears(derivedDob, nowMs))
+  }
 }
