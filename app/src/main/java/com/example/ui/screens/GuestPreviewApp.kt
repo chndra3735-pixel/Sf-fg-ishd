@@ -348,11 +348,11 @@ fun GuestPreviewSwarRoomApp(
             badgeTag = guestProfile.clubTag,
           )
         },
-        onAddCustomEmoji = { _, _, _, _, onDone ->
+        onAddCustomEmoji = { _, _, _, _, _, onDone ->
           onDone()
           scope.launch { snackbarHostState.showSnackbar("क्लाउड पर अपलोड करने के लिए Google साइन इन करें।") }
         },
-        onUpdateCustomEmoji = { _, _, _, _, _, _, onDone -> onDone() },
+        onUpdateCustomEmoji = { _, _, _, _, _, _, _, onDone -> onDone() },
         onDeleteCustomEmoji = { _, onDone -> onDone() },
         onSendGift = { gift, recipientUid, recipientName, quantity ->
           val totalCost = gift.coinCost * quantity

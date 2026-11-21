@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.repository.MediaCompressor
 import com.example.ui.theme.SwarRoomTheme
@@ -235,8 +236,8 @@ class ExampleRobolectricTest {
           onToggleMonitorLoopback = {},
           onSendMessage = { _, _ -> },
           onSendEmoji = {},
-          onAddCustomEmoji = { _, _, _, _, _ -> },
-          onUpdateCustomEmoji = { _, _, _, _, _, _, _ -> },
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
           onDeleteCustomEmoji = { _, _ -> },
           onSendGift = { _, _, _, _ -> },
           onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
@@ -329,5 +330,44 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("dismiss_app_update_button").performClick()
     composeTestRule.waitForIdle()
     assertTrue(dismissed)
+  }
+
+  @Test
+  fun `admin emoji upload opens link input and submit button`() {
+    var submittedLabel = ""
+    var submittedLink = ""
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.EmojiPanelSheet(
+          emojis = com.example.data.model.SwarCatalogDefaults.builtInEmojis,
+          isAdminUser = true,
+          isUploading = false,
+          onSelectEmoji = {},
+          onAddCustomEmoji = { label, _, _, _, emojiLinkUrl, onDone ->
+            submittedLabel = label
+            submittedLink = emojiLinkUrl
+            onDone()
+          },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, onDone -> onDone() },
+          onDeleteCustomEmoji = { _, onDone -> onDone() },
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("admin_add_emoji_button").assertIsDisplayed().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("emoji_link_input").assertExists()
+    composeTestRule.onNodeWithTag("submit_emoji_button").assertExists()
+    composeTestRule.onNodeWithTag("emoji_link_input")
+      .performScrollTo()
+      .performTextInput("https://example.com/party.gif")
+    composeTestRule.onNodeWithTag("emoji_name_input")
+      .performScrollTo()
+      .performTextInput("पार्टी इमोजी")
+    composeTestRule.onNodeWithTag("submit_emoji_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("https://example.com/party.gif", submittedLink)
+    assertEquals("पार्टी इमोजी", submittedLabel)
   }
 }

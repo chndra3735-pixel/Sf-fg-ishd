@@ -95,6 +95,13 @@ class SwarRoomViewModel(
     _giftUploadError.value = null
   }
 
+  private val _emojiUploadError = MutableStateFlow<String?>(null)
+  val emojiUploadError: StateFlow<String?> = _emojiUploadError.asStateFlow()
+
+  fun clearEmojiUploadError() {
+    _emojiUploadError.value = null
+  }
+
   val isSupabaseConfigured: Boolean
     get() = supabaseStorage.isConfigured()
 
@@ -1462,12 +1469,16 @@ class SwarRoomViewModel(
     category: String,
     symbol: String,
     imageUri: Uri?,
+    emojiLinkUrl: String = "",
     onSuccess: () -> Unit,
   ) {
     if (!isAdminUser) {
-      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही नया इमोजी जोड़ा जा सकता है।")
+      val msg = "केवल एडमिन Gmail (chndra3735@gmail.com) से ही नया इमोजी जोड़ा जा सकता है।"
+      _emojiUploadError.value = msg
+      _events.tryEmit(msg)
       return
     }
+    _emojiUploadError.value = null
     viewModelScope.launch {
       val context = appContext
       if (imageUri != null && context != null && runCatching { MediaCompressor.isZipArchive(context, imageUri) }.getOrDefault(false)) {
@@ -1475,7 +1486,9 @@ class SwarRoomViewModel(
         try {
           val entries = MediaCompressor.extractZipEntries(context, imageUri, maxCount = 20)
           if (entries.isEmpty()) {
-            _events.tryEmit("इस ZIP फ़ाइल में कोई मान्य GIF या इमेज (.gif, .png, .jpg, .webp) नहीं मिली।")
+            val msg = "इस ZIP फ़ाइल में कोई मान्य GIF या इमेज (.gif, .png, .jpg, .webp) नहीं मिली।"
+            _emojiUploadError.value = msg
+            _events.tryEmit(msg)
             return@launch
           }
           var addedCount = 0
@@ -1512,18 +1525,23 @@ class SwarRoomViewModel(
             entries.forEach { runCatching { it.tempFile.delete() } }
           }
           if (addedCount > 0) {
+            _emojiUploadError.value = null
             _events.tryEmit(
               if (addedCount == 1) "नया इमोजी सभी यूज़र्स के लिए जोड़ दिया गया! 🎉"
               else "$addedCount इमोजी ZIP से सफलतापूर्वक जोड़ दिए गए! 🎉"
             )
             onSuccess()
           } else {
-            _events.tryEmit(lastError ?: "ZIP इमोजी अपलोड विफल")
+            val msg = lastError ?: "ZIP इमोजी अपलोड विफल"
+            _emojiUploadError.value = msg
+            _events.tryEmit(msg)
           }
         } catch (e: CancellationException) {
           throw e
         } catch (e: Exception) {
-          _events.tryEmit(e.message ?: "ZIP फ़ाइल प्रोसेस करने में त्रुटि")
+          val msg = e.message ?: "ZIP फ़ाइल प्रोसेस करने में त्रुटि"
+          _emojiUploadError.value = msg
+          _events.tryEmit(msg)
         } finally {
           _isUploadingMedia.value = false
         }
@@ -1542,20 +1560,57 @@ class SwarRoomViewModel(
         _isUploadingMedia.value = false
         upload.onSuccess { uploadedImageUrl = it }
           .onFailure { err ->
-            _events.tryEmit(err.message ?: "इमोजी इमेज अपलोड विफल")
+            val msg = err.message ?: "इमोजी इमेज अपलोड विफल"
+            _emojiUploadError.value = msg
+            _events.tryEmit(msg)
             return@launch
           }
+      } else if (emojiLinkUrl.trim().isNotBlank()) {
+        val cleanEmojiLink = com.example.data.repository.VideoLinkResolver.extractFirstHttpUrl(emojiLinkUrl)
+        if (!cleanEmojiLink.startsWith("http://", ignoreCase = true) &&
+          !cleanEmojiLink.startsWith("https://", ignoreCase = true)
+        ) {
+          val msg = "कृपया https:// या http:// से शुरू होने वाला मान्य इमोजी लिंक दर्ज करें।"
+          _emojiUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
+        _isUploadingMedia.value = true
+        val resolvedEmoji = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+          com.example.data.repository.VideoLinkResolver.resolveImageUrl(cleanEmojiLink)
+        }
+        _isUploadingMedia.value = false
+        resolvedEmoji.onSuccess { resolvedUrl ->
+          uploadedImageUrl = resolvedUrl.takeIf { it.length <= 800 }.orEmpty()
+          if (uploadedImageUrl.isBlank()) {
+            val msg = "इमोजी लिंक बहुत लंबा है (800 अक्षरों से कम होना चाहिए) — कृपया सीधा GIF/इमेज लिंक डालें।"
+            _emojiUploadError.value = msg
+            _events.tryEmit(msg)
+            return@launch
+          }
+        }.onFailure { err ->
+          val msg = (err.message ?: "इमोजी लिंक पढ़ा नहीं जा सका।")
+            .replace("DP फोटो", "इमोजी इमेज/GIF")
+            .replace("DP लिंक", "इमोजी लिंक")
+          _emojiUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
       }
+
       repository.addEmojiToCatalog(
         label = label,
         category = category,
         symbol = symbol,
         imageUrl = uploadedImageUrl,
       ).onSuccess {
+        _emojiUploadError.value = null
         _events.tryEmit("नया इमोजी सभी यूज़र्स के लिए जोड़ दिया गया! 🎉")
         onSuccess()
       }.onFailure { err ->
-        _events.tryEmit(err.message ?: "इमोजी जोड़ने में त्रुटि")
+        val msg = err.message ?: "इमोजी जोड़ने में त्रुटि"
+        _emojiUploadError.value = msg
+        _events.tryEmit(msg)
       }
     }
   }
@@ -1698,17 +1753,23 @@ class SwarRoomViewModel(
     category: String,
     symbol: String,
     newImageUri: Uri?,
+    newEmojiLinkUrl: String = "",
     removeExistingImage: Boolean,
     onSuccess: () -> Unit,
   ) {
     if (!isAdminUser) {
-      _events.tryEmit("केवल एडमिन Gmail (chndra3735@gmail.com) से ही इमोजी अपडेट किया जा सकता है।")
+      val msg = "केवल एडमिन Gmail (chndra3735@gmail.com) से ही इमोजी अपडेट किया जा सकता है।"
+      _emojiUploadError.value = msg
+      _events.tryEmit(msg)
       return
     }
     if (existing.id.isBlank() || existing.id.startsWith("def_")) {
-      _events.tryEmit("डिफ़ॉल्ट इमोजी बदला नहीं जा सकता।")
+      val msg = "डिफ़ॉल्ट इमोजी बदला नहीं जा सकता।"
+      _emojiUploadError.value = msg
+      _events.tryEmit(msg)
       return
     }
+    _emojiUploadError.value = null
     viewModelScope.launch {
       val oldImageUrl = existing.imageUrl
       var finalImageUrl = if (removeExistingImage) "" else oldImageUrl
@@ -1723,10 +1784,45 @@ class SwarRoomViewModel(
         _isUploadingMedia.value = false
         upload.onSuccess { finalImageUrl = it }
           .onFailure { err ->
-            _events.tryEmit(err.message ?: "नई इमोजी इमेज अपलोड विफल")
+            val msg = err.message ?: "नई इमोजी इमेज अपलोड विफल"
+            _emojiUploadError.value = msg
+            _events.tryEmit(msg)
             return@launch
           }
+      } else if (!removeExistingImage && newEmojiLinkUrl.trim().isNotBlank() && newEmojiLinkUrl.trim() != oldImageUrl) {
+        val cleanEmojiLink = com.example.data.repository.VideoLinkResolver.extractFirstHttpUrl(newEmojiLinkUrl)
+        if (!cleanEmojiLink.startsWith("http://", ignoreCase = true) &&
+          !cleanEmojiLink.startsWith("https://", ignoreCase = true)
+        ) {
+          val msg = "कृपया https:// या http:// से शुरू होने वाला मान्य इमोजी लिंक दर्ज करें।"
+          _emojiUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
+        _isUploadingMedia.value = true
+        val resolvedEmoji = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+          com.example.data.repository.VideoLinkResolver.resolveImageUrl(cleanEmojiLink)
+        }
+        _isUploadingMedia.value = false
+        resolvedEmoji.onSuccess { resolvedUrl ->
+          val validated = resolvedUrl.takeIf { it.length <= 800 }.orEmpty()
+          if (validated.isBlank()) {
+            val msg = "इमोजी लिंक बहुत लंबा है (800 अक्षरों से कम होना चाहिए)।"
+            _emojiUploadError.value = msg
+            _events.tryEmit(msg)
+            return@launch
+          }
+          finalImageUrl = validated
+        }.onFailure { err ->
+          val msg = (err.message ?: "इमोजी लिंक पढ़ा नहीं जा सका।")
+            .replace("DP फोटो", "इमोजी इमेज/GIF")
+            .replace("DP लिंक", "इमोजी लिंक")
+          _emojiUploadError.value = msg
+          _events.tryEmit(msg)
+          return@launch
+        }
       }
+
       repository.updateEmojiInCatalog(
         emojiId = existing.id,
         label = label,
@@ -1734,6 +1830,7 @@ class SwarRoomViewModel(
         symbol = symbol,
         imageUrl = finalImageUrl,
       ).onSuccess {
+        _emojiUploadError.value = null
         if (oldImageUrl.isNotBlank() && oldImageUrl != finalImageUrl) {
           supabaseStorage.deleteMediaByPublicUrl(oldImageUrl)
             .onFailure { err -> Log.w(TAG, "Old emoji image delete warning", err) }
@@ -1741,7 +1838,9 @@ class SwarRoomViewModel(
         _events.tryEmit("इमोजी अपडेट हो गया! ✨")
         onSuccess()
       }.onFailure { err ->
-        _events.tryEmit(err.message ?: "इमोजी अपडेट करने में त्रुटि")
+        val msg = err.message ?: "इमोजी अपडेट करने में त्रुटि"
+        _emojiUploadError.value = msg
+        _events.tryEmit(msg)
       }
     }
   }

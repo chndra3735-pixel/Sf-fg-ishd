@@ -392,6 +392,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isAgoraConnected by viewModel.isAgoraConnected.collectAsStateWithLifecycle()
   val agoraStatusText by viewModel.agoraStatusText.collectAsStateWithLifecycle()
   val giftUploadError by viewModel.giftUploadError.collectAsStateWithLifecycle()
+  val emojiUploadError by viewModel.emojiUploadError.collectAsStateWithLifecycle()
   val levelConfigs by viewModel.levelConfigs.collectAsStateWithLifecycle()
   val claimedLevelTiers by viewModel.claimedLevelTiers.collectAsStateWithLifecycle()
   val activeRoomPresence by viewModel.activeRoomPresence.collectAsStateWithLifecycle()
@@ -474,11 +475,20 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onToggleMonitorLoopback = { viewModel.toggleMonitorLoopback() },
         onSendMessage = { text, type -> viewModel.sendRoomText(text, type) },
         onSendEmoji = { item -> viewModel.sendEmojiReaction(item) },
-        onAddCustomEmoji = { label, category, symbol, imageUri, onDone ->
-          viewModel.addCustomEmoji(label, category, symbol, imageUri, onDone)
+        onAddCustomEmoji = { label, category, symbol, imageUri, emojiLinkUrl, onDone ->
+          viewModel.addCustomEmoji(label, category, symbol, imageUri, emojiLinkUrl, onDone)
         },
-        onUpdateCustomEmoji = { existing, label, category, symbol, newImageUri, removeExisting, onDone ->
-          viewModel.updateCustomEmoji(existing, label, category, symbol, newImageUri, removeExisting, onDone)
+        onUpdateCustomEmoji = { existing, label, category, symbol, newImageUri, newEmojiLinkUrl, removeExisting, onDone ->
+          viewModel.updateCustomEmoji(
+            existing = existing,
+            label = label,
+            category = category,
+            symbol = symbol,
+            newImageUri = newImageUri,
+            newEmojiLinkUrl = newEmojiLinkUrl,
+            removeExistingImage = removeExisting,
+            onSuccess = onDone,
+          )
         },
         onDeleteCustomEmoji = { item, onDone ->
           viewModel.deleteCustomEmoji(item, onDone)
@@ -541,6 +551,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         agoraStatusText = agoraStatusText,
         giftUploadError = giftUploadError,
         onClearGiftUploadError = { viewModel.clearGiftUploadError() },
+        emojiUploadError = emojiUploadError,
+        onClearEmojiUploadError = { viewModel.clearEmojiUploadError() },
         levelConfigs = levelConfigs,
         claimedLevelTiers = claimedLevelTiers,
         onSaveLevelTierConfig = { lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone ->

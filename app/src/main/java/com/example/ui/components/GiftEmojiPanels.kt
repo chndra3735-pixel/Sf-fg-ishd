@@ -94,18 +94,28 @@ fun EmojiPanelSheet(
   isAdminUser: Boolean,
   isUploading: Boolean,
   onSelectEmoji: (EmojiCatalogItem) -> Unit,
-  onAddCustomEmoji: (label: String, category: String, symbol: String, imageUri: Uri?, onDone: () -> Unit) -> Unit,
+  onAddCustomEmoji: (
+    label: String,
+    category: String,
+    symbol: String,
+    imageUri: Uri?,
+    emojiLinkUrl: String,
+    onDone: () -> Unit,
+  ) -> Unit,
   onUpdateCustomEmoji: (
     existing: EmojiCatalogItem,
     label: String,
     category: String,
     symbol: String,
     newImageUri: Uri?,
+    newEmojiLinkUrl: String,
     removeExistingImage: Boolean,
     onDone: () -> Unit,
   ) -> Unit,
   onDeleteCustomEmoji: (item: EmojiCatalogItem, onDone: () -> Unit) -> Unit,
   onDismiss: () -> Unit,
+  emojiUploadError: String? = null,
+  onClearEmojiUploadError: () -> Unit = {},
 ) {
   val categories = SwarCatalogDefaults.emojiCategories
   var selectedCategoryIdx by remember { mutableIntStateOf(0) }
@@ -118,8 +128,10 @@ fun EmojiPanelSheet(
     emojis.filter { it.category == currentCategory }
   }
 
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   ModalBottomSheet(
     onDismissRequest = onDismiss,
+    sheetState = sheetState,
     containerColor = Color(0xFF1A1133),
     contentColor = Color.White,
   ) {
@@ -156,7 +168,10 @@ fun EmojiPanelSheet(
         // Admin-only '+' Icon (strictly visible only for chndra3735@gmail.com)
         if (isAdminUser) {
           IconButton(
-            onClick = { showAdminAddDialog = true },
+            onClick = {
+              onClearEmojiUploadError()
+              showAdminAddDialog = true
+            },
             modifier = Modifier
               .size(48.dp)
               .clip(CircleShape)
@@ -284,9 +299,14 @@ fun EmojiPanelSheet(
     AddEmojiAdminDialog(
       defaultCategory = currentCategory,
       isUploading = isUploading,
-      onDismiss = { showAdminAddDialog = false },
-      onSubmit = { label, category, symbol, imageUri ->
-        onAddCustomEmoji(label, category, symbol, imageUri) {
+      uploadError = emojiUploadError,
+      onDismiss = {
+        onClearEmojiUploadError()
+        showAdminAddDialog = false
+      },
+      onSubmit = { label, category, symbol, imageUri, emojiLinkUrl ->
+        onClearEmojiUploadError()
+        onAddCustomEmoji(label, category, symbol, imageUri, emojiLinkUrl) {
           showAdminAddDialog = false
         }
       },
@@ -298,9 +318,22 @@ fun EmojiPanelSheet(
     EditEmojiAdminDialog(
       existing = targetEditEmoji,
       isBusy = isUploading,
-      onDismiss = { editingEmoji = null },
-      onUpdate = { label, category, symbol, newImageUri, removeExistingImage ->
-        onUpdateCustomEmoji(targetEditEmoji, label, category, symbol, newImageUri, removeExistingImage) {
+      uploadError = emojiUploadError,
+      onDismiss = {
+        onClearEmojiUploadError()
+        editingEmoji = null
+      },
+      onUpdate = { label, category, symbol, newImageUri, newEmojiLinkUrl, removeExistingImage ->
+        onClearEmojiUploadError()
+        onUpdateCustomEmoji(
+          targetEditEmoji,
+          label,
+          category,
+          symbol,
+          newImageUri,
+          newEmojiLinkUrl,
+          removeExistingImage,
+        ) {
           editingEmoji = null
         }
       },
@@ -857,10 +890,18 @@ fun GiftPanelSheet(
 private fun AddEmojiAdminDialog(
   defaultCategory: String,
   isUploading: Boolean,
+  uploadError: String? = null,
   onDismiss: () -> Unit,
-  onSubmit: (label: String, category: String, symbol: String, imageUri: Uri?) -> Unit,
+  onSubmit: (
+    label: String,
+    category: String,
+    symbol: String,
+    imageUri: Uri?,
+    emojiLinkUrl: String,
+  ) -> Unit,
 ) {
   val context = LocalContext.current
+  var emojiLinkUrl by remember { mutableStateOf("") }
   var label by remember { mutableStateOf("") }
   var symbol by remember { mutableStateOf("✨") }
   var category by remember { mutableStateOf(defaultCategory) }
@@ -882,7 +923,7 @@ private fun AddEmojiAdminDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("नया इमोजी / GIF / ZIP जोड़ें") },
+    title = { Text("नया इमोजी जोड़ें (लिंक सेटअप)") },
     text = {
       Column(
         modifier = Modifier
@@ -890,20 +931,114 @@ private fun AddEmojiAdminDialog(
           .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        if (!uploadError.isNullOrBlank()) {
+          Surface(
+            color = Color(0x33FF3B30),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .border(1.dp, Color(0xFFFF5252), RoundedCornerShape(10.dp)),
+          ) {
+            Text(
+              text = uploadError,
+              style = MaterialTheme.typography.bodySmall,
+              color = Color(0xFFFF8A80),
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.padding(10.dp),
+            )
+          }
+        }
+
+        // 1. सबसे पहले: इमोजी / GIF का लिंक (URL)
+        OutlinedTextField(
+          value = emojiLinkUrl,
+          onValueChange = { emojiLinkUrl = it.take(750) },
+          leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
+          label = { Text("1. इमोजी / GIF लिंक (URL)") },
+          placeholder = { Text("https://... (.gif / .png / .webp / pin.it)") },
+          singleLine = true,
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("emoji_link_input"),
+        )
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          OutlinedButton(
+            onClick = {
+              documentPicker.launch(
+                arrayOf(
+                  "image/*",
+                  "image/gif",
+                  "application/zip",
+                  "application/x-zip-compressed",
+                )
+              )
+            },
+            modifier = Modifier
+              .weight(1f)
+              .height(48.dp)
+              .testTag("pick_emoji_media_button"),
+          ) {
+            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              if (pickedImageUri == null) "या GIF / ZIP / इमेज चुनें"
+              else "चयनित: ${pickedFileName.ifBlank { "मीडिया फ़ाइल" }} ✓",
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          val previewModel: Any? = if (!isPickedZip && pickedImageUri != null) {
+            pickedImageUri
+          } else {
+            emojiLinkUrl.trim().takeIf {
+              it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true)
+            }
+          }
+          if (previewModel != null) {
+            AsyncImage(
+              model = previewModel,
+              contentDescription = "चयनित इमोजी प्रीव्यू",
+              modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .border(1.5.dp, SwarCyan, CircleShape),
+              contentScale = ContentScale.Crop,
+            )
+          }
+        }
+
+        if (isPickedZip) {
+          Text(
+            text = "ZIP पैक तैयार है — अंदर मौजूद सभी GIF/इमेज ऑटो अपलोड होंगे।",
+            style = MaterialTheme.typography.bodySmall,
+            color = SwarMint,
+          )
+        }
+
         OutlinedTextField(
           value = label,
           onValueChange = { label = it.take(30) },
-          label = { Text("इमोजी का नाम") },
+          label = { Text("2. इमोजी का नाम") },
           placeholder = { Text("उदा. रॉयल धमाका") },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("emoji_name_input"),
         )
         OutlinedTextField(
           value = symbol,
           onValueChange = { symbol = it.take(16) },
-          label = { Text("इमोजी चिह्न (वैकल्पिक यदि GIF/ZIP चुनें)") },
+          label = { Text("इमोजी चिह्न (वैकल्पिक यदि लिंक/GIF डालें)") },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("emoji_symbol_input"),
         )
         Text("श्रेणी चुनें", style = MaterialTheme.typography.labelLarge)
         Row(
@@ -918,75 +1053,63 @@ private fun AddEmojiAdminDialog(
             )
           }
         }
-        OutlinedButton(
-          onClick = {
-            documentPicker.launch(
-              arrayOf(
-                "image/*",
-                "image/gif",
-                "application/zip",
-                "application/x-zip-compressed",
-              )
-            )
-          },
-          modifier = Modifier
-            .fillMaxWidth()
-            .testTag("pick_emoji_media_button"),
-        ) {
-          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            if (pickedImageUri == null) "GIF / ZIP / इमेज फ़ाइल चुनें"
-            else "चयनित: ${pickedFileName.ifBlank { "मीडिया फ़ाइल" }} ✓",
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
-        if (pickedImageUri != null) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+
+        if (emojiLinkUrl.isNotBlank()) {
+          Surface(
+            color = SwarMint.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(8.dp),
           ) {
-            if (!isPickedZip) {
-              AsyncImage(
-                model = pickedImageUri,
-                contentDescription = "चयनित इमोजी प्रीव्यू",
-                modifier = Modifier
-                  .size(48.dp)
-                  .clip(CircleShape)
-                  .border(1.dp, SwarCyan, CircleShape),
-                contentScale = ContentScale.Crop,
-              )
-            }
             Text(
-              text = if (isPickedZip) {
-                "ZIP पैक तैयार है — अंदर मौजूद सभी GIF/इमेज ऑटो अपलोड होंगे।"
-              } else {
-                "डीपी के गोल साइज में लाइव एनीमेशन प्रीव्यू तैयार है।"
-              },
+              text = "सबमिट करते ही यह इमोजी लिंक सभी यूज़र्स के इमोजी पैनल में लाइव दिखने लगेगा।",
               style = MaterialTheme.typography.bodySmall,
               color = SwarMint,
-              modifier = Modifier.weight(1f),
+              modifier = Modifier.padding(8.dp),
             )
           }
         }
-      }
-    },
-    confirmButton = {
-      Button(
-        onClick = {
-          onSubmit(
-            label.ifBlank { pickedFileName.substringBeforeLast('.').take(30).ifBlank { "नया इमोजी" } },
-            category,
-            symbol,
-            pickedImageUri,
+
+        Button(
+          onClick = {
+            val cleanLink = emojiLinkUrl.trim()
+            val fallbackLabel = when {
+              label.isNotBlank() -> label
+              pickedFileName.isNotBlank() -> pickedFileName.substringBeforeLast('.').take(30)
+              cleanLink.isNotBlank() -> "लिंक इमोजी"
+              else -> "नया इमोजी"
+            }.ifBlank { "नया इमोजी" }
+            val resolvedSymbol = if (cleanLink.isNotBlank() || pickedImageUri != null) {
+              symbol
+            } else {
+              symbol.ifBlank { "✨" }
+            }
+            onSubmit(
+              fallbackLabel,
+              category,
+              resolvedSymbol,
+              pickedImageUri,
+              cleanLink,
+            )
+          },
+          enabled = !isUploading &&
+            (emojiLinkUrl.isNotBlank() || pickedImageUri != null || symbol.isNotBlank()),
+          colors = ButtonDefaults.buttonColors(
+            containerColor = SwarCoral,
+            contentColor = Color.White,
+          ),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("submit_emoji_button"),
+        ) {
+          Text(
+            text = if (isUploading) "लोड व सेव हो रहा है..." else "सबमिट करें",
+            fontWeight = FontWeight.Bold,
           )
-        },
-        enabled = !isUploading && (symbol.isNotBlank() || pickedImageUri != null),
-      ) {
-        Text(if (isUploading) "अपलोड हो रहा है..." else "सेव करें")
+        }
       }
     },
+    confirmButton = {},
     dismissButton = {
       TextButton(onClick = onDismiss) { Text("रद्द करें") }
     },
@@ -1219,16 +1342,19 @@ private fun AddGiftAdminDialog(
 private fun EditEmojiAdminDialog(
   existing: EmojiCatalogItem,
   isBusy: Boolean,
+  uploadError: String? = null,
   onDismiss: () -> Unit,
   onUpdate: (
     label: String,
     category: String,
     symbol: String,
     newImageUri: Uri?,
+    newEmojiLinkUrl: String,
     removeExistingImage: Boolean,
   ) -> Unit,
   onDelete: () -> Unit,
 ) {
+  var emojiLinkUrl by remember(existing.id) { mutableStateOf(existing.imageUrl) }
   var label by remember(existing.id) { mutableStateOf(existing.label) }
   var symbol by remember(existing.id) { mutableStateOf(existing.symbol) }
   var category by remember(existing.id) {
@@ -1261,6 +1387,93 @@ private fun EditEmojiAdminDialog(
           .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        if (!uploadError.isNullOrBlank()) {
+          Surface(
+            color = Color(0x33FF3B30),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .border(1.dp, Color(0xFFFF5252), RoundedCornerShape(10.dp)),
+          ) {
+            Text(
+              text = uploadError,
+              style = MaterialTheme.typography.bodySmall,
+              color = Color(0xFFFF8A80),
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.padding(10.dp),
+            )
+          }
+        }
+
+        OutlinedTextField(
+          value = emojiLinkUrl,
+          onValueChange = {
+            emojiLinkUrl = it.take(750)
+            removeExistingImage = it.isBlank()
+          },
+          leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null, tint = SwarCyan) },
+          label = { Text("इमोजी / GIF लिंक (URL)") },
+          placeholder = { Text("https://... (.gif / .png / .webp / pin.it)") },
+          singleLine = true,
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("edit_emoji_link_input"),
+        )
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          OutlinedButton(
+            onClick = {
+              imagePicker.launch(
+                arrayOf("image/*", "image/gif", "application/zip", "application/x-zip-compressed")
+              )
+            },
+            modifier = Modifier
+              .weight(1f)
+              .height(48.dp),
+          ) {
+            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = when {
+                newImageUri != null -> "नया GIF / इमेज चयनित ✓"
+                existing.imageUrl.isNotBlank() && !removeExistingImage -> "या गैलरी से बदलें"
+                else -> "या GIF / इमेज चुनें"
+              },
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          val previewModel: Any? = newImageUri ?: emojiLinkUrl.trim().takeIf {
+            !removeExistingImage && (it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true))
+          }
+          if (previewModel != null) {
+            AsyncImage(
+              model = previewModel,
+              contentDescription = "इमोजी प्रीव्यू",
+              modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .border(1.5.dp, SwarCyan, CircleShape),
+              contentScale = ContentScale.Crop,
+            )
+          }
+        }
+        if (existing.imageUrl.isNotBlank() && !removeExistingImage && newImageUri == null) {
+          TextButton(
+            onClick = {
+              emojiLinkUrl = ""
+              removeExistingImage = true
+            },
+          ) {
+            Text("पुरानी इमेज हटाएं", color = SwarCoral)
+          }
+        }
+
         OutlinedTextField(
           value = label,
           onValueChange = { label = it.take(30) },
@@ -1288,29 +1501,6 @@ private fun EditEmojiAdminDialog(
             )
           }
         }
-        OutlinedButton(
-          onClick = {
-            imagePicker.launch(
-              arrayOf("image/*", "image/gif", "application/zip", "application/x-zip-compressed")
-            )
-          },
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            when {
-              newImageUri != null -> "नया GIF / इमेज चयनित ✓"
-              existing.imageUrl.isNotBlank() && !removeExistingImage -> "मौजूदा GIF / इमेज बदलें"
-              else -> "नया GIF / ZIP / इमेज चुनें"
-            }
-          )
-        }
-        if (existing.imageUrl.isNotBlank() && !removeExistingImage && newImageUri == null) {
-          TextButton(onClick = { removeExistingImage = true }) {
-            Text("पुरानी इमेज हटाएं", color = SwarCoral)
-          }
-        }
 
         Spacer(modifier = Modifier.height(4.dp))
         Button(
@@ -1332,7 +1522,7 @@ private fun EditEmojiAdminDialog(
     },
     confirmButton = {
       val hasAnyVisual = symbol.isNotBlank() || newImageUri != null ||
-        (existing.imageUrl.isNotBlank() && !removeExistingImage)
+        emojiLinkUrl.isNotBlank() || (existing.imageUrl.isNotBlank() && !removeExistingImage)
       Button(
         onClick = {
           onUpdate(
@@ -1340,12 +1530,14 @@ private fun EditEmojiAdminDialog(
             category,
             symbol,
             newImageUri,
+            emojiLinkUrl.trim(),
             removeExistingImage,
           )
         },
         enabled = !isBusy && hasAnyVisual,
+        modifier = Modifier.testTag("submit_edit_emoji_button"),
       ) {
-        Text(if (isBusy) "प्रक्रिया जारी..." else "अपडेट करें")
+        Text(if (isBusy) "प्रक्रिया जारी..." else "सबमिट / अपडेट करें")
       }
     },
     dismissButton = {

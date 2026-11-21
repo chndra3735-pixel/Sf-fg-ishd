@@ -194,8 +194,8 @@ fun VoiceRoomScreen(
   onToggleMonitorLoopback: () -> Unit,
   onSendMessage: (String, String) -> Unit,
   onSendEmoji: (EmojiCatalogItem) -> Unit,
-  onAddCustomEmoji: (String, String, String, Uri?, () -> Unit) -> Unit,
-  onUpdateCustomEmoji: (EmojiCatalogItem, String, String, String, Uri?, Boolean, () -> Unit) -> Unit,
+  onAddCustomEmoji: (String, String, String, Uri?, String, () -> Unit) -> Unit,
+  onUpdateCustomEmoji: (EmojiCatalogItem, String, String, String, Uri?, String, Boolean, () -> Unit) -> Unit,
   onDeleteCustomEmoji: (EmojiCatalogItem, () -> Unit) -> Unit,
   onSendGift: (GiftCatalogItem, String, String, Int) -> Unit,
   onAddCustomGift: (String, String, String, Long, Uri?, String, String, () -> Unit) -> Unit,
@@ -229,6 +229,8 @@ fun VoiceRoomScreen(
   agoraStatusText: String = "",
   giftUploadError: String? = null,
   onClearGiftUploadError: () -> Unit = {},
+  emojiUploadError: String? = null,
+  onClearEmojiUploadError: () -> Unit = {},
   levelConfigs: Map<Int, LevelTierConfig> = emptyMap(),
   claimedLevelTiers: Set<Int> = emptySet(),
   onSaveLevelTierConfig: (
@@ -1438,6 +1440,8 @@ fun VoiceRoomScreen(
       onUpdateCustomEmoji = onUpdateCustomEmoji,
       onDeleteCustomEmoji = onDeleteCustomEmoji,
       onDismiss = { showEmojiPanel = false },
+      emojiUploadError = emojiUploadError,
+      onClearEmojiUploadError = onClearEmojiUploadError,
     )
   }
 
