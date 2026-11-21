@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -74,6 +76,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
@@ -623,7 +627,7 @@ fun GiftPanelSheet(
           columns = GridCells.Fixed(4),
           modifier = Modifier
             .fillMaxWidth()
-            .height(240.dp),
+            .height(256.dp),
           contentPadding = PaddingValues(12.dp),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
           verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -632,6 +636,9 @@ fun GiftPanelSheet(
           val isPicked = selectedGift?.id == gift.id
           val isCustomGift = !gift.id.startsWith("def_")
           val borderColor = if (isPicked) SwarGold else Color(0x33FFFFFF)
+          val dpModel = gift.thumbnailUrl.ifBlank {
+            if (gift.mediaType == "image") gift.mediaUrl else ""
+          }
           Surface(
             color = if (isPicked) Color(0xFF352263) else Color(0xFF231642),
             shape = RoundedCornerShape(14.dp),
@@ -645,100 +652,113 @@ fun GiftPanelSheet(
                     if (isCustomGift) editingGift = gift else deletingDefaultGift = gift
                   }
                 },
-              ),
+              )
+              .testTag("gift_card_${gift.id}"),
           ) {
-            Box(modifier = Modifier.fillMaxWidth()) {
-              if (isAdminUser && isCustomGift) {
-                Box(
-                  modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(4.dp)
-                    .size(16.dp)
-                    .clip(CircleShape)
-                    .background(SwarCyan.copy(alpha = 0.25f)),
-                  contentAlignment = Alignment.Center,
-                ) {
-                  Icon(
-                    imageVector = Icons.Filled.Edit,
-                    contentDescription = "गिफ्ट एडिट या डिलीट करें",
-                    tint = SwarCyan,
-                    modifier = Modifier.size(10.dp),
-                  )
-                }
-              }
-
-              if (gift.mediaType == "video") {
-                Surface(
-                  color = SwarCoral,
-                  shape = RoundedCornerShape(bottomStart = 8.dp, topEnd = 14.dp),
-                  modifier = Modifier.align(Alignment.TopEnd),
-                ) {
-                  Text(
-                    text = "VIDEO",
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                  )
-                }
-              }
-
-              val dpModel = gift.thumbnailUrl.ifBlank {
-                if (gift.mediaType == "image") gift.mediaUrl else ""
-              }
-              Column(
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(5.dp),
+              horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+              // चौखंठा (Square) Gift DP container with Coins overlaid directly on the DP (no corner VIDEO label)
+              Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(vertical = 8.dp, horizontal = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                  .height(64.dp)
+                  .clip(RoundedCornerShape(10.dp))
+                  .background(Color(0x26FFFFFF))
+                  .border(
+                    width = if (isPicked) 1.5.dp else 0.8.dp,
+                    color = if (isPicked) SwarGold else Color(0x44FFFFFF),
+                    shape = RoundedCornerShape(10.dp),
+                  )
+                  .testTag("gift_dp_square_box_${gift.id}"),
               ) {
                 if (dpModel.isNotBlank()) {
                   AsyncImage(
                     model = dpModel,
                     contentDescription = gift.name,
-                    modifier = Modifier
-                      .size(46.dp)
-                      .clip(CircleShape)
-                      .border(
-                        width = if (isPicked) 2.dp else 1.dp,
-                        color = if (isPicked) SwarGold else Color(0x55FFFFFF),
-                        shape = CircleShape,
-                      ),
+                    modifier = Modifier.matchParentSize(),
                     contentScale = ContentScale.Crop,
                   )
                 } else {
-                  Box(
-                    modifier = Modifier
-                      .size(46.dp)
-                      .clip(CircleShape)
-                      .background(Color(0x22FFFFFF)),
-                    contentAlignment = Alignment.Center,
-                  ) {
-                    Text(text = gift.emoji.ifBlank { "🎁" }, fontSize = 26.sp)
-                  }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                  text = gift.name,
-                  style = MaterialTheme.typography.labelSmall,
-                  color = Color.White,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                  CoinEmblem(sizeDp = 12)
                   Text(
-                    text = "${gift.coinCost}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SwarGold,
-                    fontWeight = FontWeight.Bold,
+                    text = gift.emoji.ifBlank { "🎁" },
+                    fontSize = 30.sp,
+                    modifier = Modifier.align(Alignment.Center),
                   )
                 }
+
+                // Subtle bottom dark scrim so coins on top of DP stay sharp on bright DPs
+                Box(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .height(26.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                      Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color(0xB8090418))
+                      )
+                    ),
+                )
+
+                if (isAdminUser && isCustomGift) {
+                  Box(
+                    modifier = Modifier
+                      .align(Alignment.TopStart)
+                      .padding(4.dp)
+                      .size(16.dp)
+                      .clip(CircleShape)
+                      .background(Color(0xB3120926)),
+                    contentAlignment = Alignment.Center,
+                  ) {
+                    Icon(
+                      imageVector = Icons.Filled.Edit,
+                      contentDescription = "गिफ्ट एडिट या डिलीट करें",
+                      tint = SwarCyan,
+                      modifier = Modifier.size(10.dp),
+                    )
+                  }
+                }
+
+                // Coins overlay directly on the Gift DP
+                Surface(
+                  color = Color(0xCC120926),
+                  shape = RoundedCornerShape(8.dp),
+                  modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                    .border(0.8.dp, SwarGold.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+                    .testTag("gift_dp_coins_${gift.id}"),
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                  ) {
+                    CoinEmblem(sizeDp = 11)
+                    Text(
+                      text = "${gift.coinCost}",
+                      style = MaterialTheme.typography.labelSmall,
+                      fontSize = 10.sp,
+                      color = SwarGold,
+                      fontWeight = FontWeight.ExtraBold,
+                      maxLines = 1,
+                    )
+                  }
+                }
               }
+
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(
+                text = gift.name,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
             }
           }
         }
@@ -921,16 +941,40 @@ private fun AddEmojiAdminDialog(
     },
   )
 
-  AlertDialog(
+  Dialog(
     onDismissRequest = onDismiss,
-    title = { Text("नया इमोजी जोड़ें (लिंक सेटअप)") },
-    text = {
+    properties = DialogProperties(usePlatformDefaultWidth = false),
+  ) {
+    Surface(
+      shape = RoundedCornerShape(24.dp),
+      color = MaterialTheme.colorScheme.surface,
+      tonalElevation = 6.dp,
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 20.dp)
+        .widthIn(max = 460.dp)
+        .heightIn(max = 640.dp)
+        .testTag("add_emoji_admin_dialog"),
+    ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+          .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
+        Text(
+          text = "नया इमोजी जोड़ें (लिंक सेटअप)",
+          style = MaterialTheme.typography.titleLarge,
+          fontWeight = FontWeight.Bold,
+        )
+
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f, fill = false)
+            .verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
         if (!uploadError.isNullOrBlank()) {
           Surface(
             color = Color(0x33FF3B30),
@@ -1107,13 +1151,17 @@ private fun AddEmojiAdminDialog(
             fontWeight = FontWeight.Bold,
           )
         }
+        }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.End,
+        ) {
+          TextButton(onClick = onDismiss) { Text("रद्द करें") }
+        }
       }
-    },
-    confirmButton = {},
-    dismissButton = {
-      TextButton(onClick = onDismiss) { Text("रद्द करें") }
-    },
-  )
+    }
+  }
 }
 
 @Composable
@@ -1377,16 +1425,40 @@ private fun EditEmojiAdminDialog(
     },
   )
 
-  AlertDialog(
+  Dialog(
     onDismissRequest = onDismiss,
-    title = { Text("इमोजी अपडेट / डिलीट (एडमिन)") },
-    text = {
+    properties = DialogProperties(usePlatformDefaultWidth = false),
+  ) {
+    Surface(
+      shape = RoundedCornerShape(24.dp),
+      color = MaterialTheme.colorScheme.surface,
+      tonalElevation = 6.dp,
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 20.dp)
+        .widthIn(max = 460.dp)
+        .heightIn(max = 640.dp)
+        .testTag("edit_emoji_admin_dialog"),
+    ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+          .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
+        Text(
+          text = "इमोजी अपडेट / डिलीट (एडमिन)",
+          style = MaterialTheme.typography.titleLarge,
+          fontWeight = FontWeight.Bold,
+        )
+
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f, fill = false)
+            .verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
         if (!uploadError.isNullOrBlank()) {
           Surface(
             color = Color(0x33FF3B30),
@@ -1518,32 +1590,37 @@ private fun EditEmojiAdminDialog(
           Spacer(modifier = Modifier.width(8.dp))
           Text("इमोजी पैनल से डिलीट करें")
         }
+        }
+
+        val hasAnyVisual = symbol.isNotBlank() || newImageUri != null ||
+          emojiLinkUrl.isNotBlank() || (existing.imageUrl.isNotBlank() && !removeExistingImage)
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.End,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          TextButton(onClick = onDismiss) { Text("रद्द करें") }
+          Spacer(modifier = Modifier.width(8.dp))
+          Button(
+            onClick = {
+              onUpdate(
+                label.ifBlank { "कस्टम इमोजी" },
+                category,
+                symbol,
+                newImageUri,
+                emojiLinkUrl.trim(),
+                removeExistingImage,
+              )
+            },
+            enabled = !isBusy && hasAnyVisual,
+            modifier = Modifier.testTag("submit_edit_emoji_button"),
+          ) {
+            Text(if (isBusy) "प्रक्रिया जारी..." else "सबमिट / अपडेट करें")
+          }
+        }
       }
-    },
-    confirmButton = {
-      val hasAnyVisual = symbol.isNotBlank() || newImageUri != null ||
-        emojiLinkUrl.isNotBlank() || (existing.imageUrl.isNotBlank() && !removeExistingImage)
-      Button(
-        onClick = {
-          onUpdate(
-            label.ifBlank { "कस्टम इमोजी" },
-            category,
-            symbol,
-            newImageUri,
-            emojiLinkUrl.trim(),
-            removeExistingImage,
-          )
-        },
-        enabled = !isBusy && hasAnyVisual,
-        modifier = Modifier.testTag("submit_edit_emoji_button"),
-      ) {
-        Text(if (isBusy) "प्रक्रिया जारी..." else "सबमिट / अपडेट करें")
-      }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) { Text("रद्द करें") }
-    },
-  )
+    }
+  }
 
   if (showDeleteConfirm) {
     AlertDialog(

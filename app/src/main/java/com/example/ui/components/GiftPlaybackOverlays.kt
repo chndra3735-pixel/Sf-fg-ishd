@@ -57,7 +57,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.WorkspacePremium
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +73,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
@@ -429,6 +429,7 @@ fun FullScreenGiftOverlay(
   val context = LocalContext.current
   var videoFailed by remember(event.id) { mutableStateOf(false) }
   var isVideoPrepared by remember(event.id) { mutableStateOf(false) }
+  var isEmbedLoaded by remember(event.id) { mutableStateOf(false) }
   var preparedDurationMs by remember(event.id) { mutableStateOf<Long?>(null) }
   var fallbackThumbUrl by remember(event.id) { mutableStateOf("") }
   var embedFallbackUrl by remember(event.id) { mutableStateOf<String?>(null) }
@@ -499,7 +500,19 @@ fun FullScreenGiftOverlay(
     }
   }
 
-  LaunchedEffect(event.id, isVideoGift, isEmbedMode, preparedDurationMs) {
+  val isOverlayVisible = when {
+    isEmbedMode -> isEmbedLoaded
+    isVideoGift -> isVideoPrepared
+    else -> true
+  }
+
+  LaunchedEffect(event.id, isVideoGift, isEmbedMode, isOverlayVisible, preparedDurationMs) {
+    if (!isOverlayVisible) {
+      // Safety cap if background buffering stalls indefinitely
+      delay(30_000L)
+      onDismiss()
+      return@LaunchedEffect
+    }
     val autoDismissMs = when {
       isVideoGift -> preparedDurationMs?.let { (it + 2_000L).coerceIn(4_000L, 90_000L) } ?: 35_000L
       isEmbedMode -> 25_000L
@@ -519,21 +532,31 @@ fun FullScreenGiftOverlay(
 
   val blockTouchInteractionSource = remember { MutableInteractionSource() }
 
+  val overlayBg = when {
+    !isOverlayVisible -> Color.Transparent
+    isVideoGift || isEmbedMode -> Color.Black
+    else -> Color(0xD90E0622)
+  }
+
   Box(
     modifier = Modifier
       .fillMaxSize()
-      .background(if (isVideoGift || isEmbedMode) Color.Black else Color(0xD90E0622))
-      // Consume touches without closing the room video when touched anywhere on screen
-      .clickable(
-        interactionSource = blockTouchInteractionSource,
-        indication = null,
-        onClick = { if (!isVideoGift && !isEmbedMode) onDismiss() },
+      .background(overlayBg)
+      .then(
+        if (isOverlayVisible) {
+          Modifier.clickable(
+            interactionSource = blockTouchInteractionSource,
+            indication = null,
+            onClick = { if (!isVideoGift && !isEmbedMode) onDismiss() },
+          )
+        } else {
+          Modifier
+        }
       )
       .testTag("fullscreen_gift_overlay"),
   ) {
     if (isEmbedMode && embedFallbackUrl != null) {
       var webViewRef by remember(event.id) { mutableStateOf<WebView?>(null) }
-      var isEmbedLoaded by remember(event.id) { mutableStateOf(false) }
 
       AndroidView(
         factory = { ctx ->
@@ -557,18 +580,12 @@ fun FullScreenGiftOverlay(
             var embedTerminated = false
             webChromeClient = object : WebChromeClient() {
               override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                if (!embedTerminated && newProgress >= 75) {
+                if (!embedTerminated && newProgress >= 95) {
                   isEmbedLoaded = true
                 }
               }
             }
             webViewClient = object : WebViewClient() {
-              override fun onPageCommitVisible(view: WebView?, url: String?) {
-                if (!embedTerminated) {
-                  isEmbedLoaded = true
-                }
-              }
-
               override fun onPageFinished(view: WebView?, url: String?) {
                 if (embedTerminated) return
                 isEmbedLoaded = true
@@ -625,35 +642,24 @@ fun FullScreenGiftOverlay(
             webViewRef = this
           }
         },
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+          .fillMaxSize()
+          .alpha(if (isEmbedLoaded) 1f else 0f),
       )
 
-      if (!isEmbedLoaded) {
-        Column(
-          modifier = Modifier.align(Alignment.Center),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(10.dp),
+      if (isEmbedLoaded) {
+        IconButton(
+          onClick = onDismiss,
+          modifier = Modifier
+            .align(Alignment.TopEnd)
+            .statusBarsPadding()
+            .padding(16.dp)
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(Color(0x99000000)),
         ) {
-          CircularProgressIndicator(color = SwarGold)
-          Text(
-            text = "वीडियो लोड हो रहा है...",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.White,
-          )
+          Icon(Icons.Filled.Close, contentDescription = "गिफ्ट बंद करें", tint = Color.White)
         }
-      }
-
-      IconButton(
-        onClick = onDismiss,
-        modifier = Modifier
-          .align(Alignment.TopEnd)
-          .statusBarsPadding()
-          .padding(16.dp)
-          .size(48.dp)
-          .clip(CircleShape)
-          .background(Color(0x99000000)),
-      ) {
-        Icon(Icons.Filled.Close, contentDescription = "गिफ्ट बंद करें", tint = Color.White)
       }
 
       DisposableEffect(event.id, embedFallbackUrl) {
@@ -752,15 +758,17 @@ fun FullScreenGiftOverlay(
                         post { applyFitTransform(this@apply, vw, vh) }
                       }
                       player.setOnPreparedListener { mp ->
-                        isVideoPrepared = true
                         currentVideoWidth = mp.videoWidth
                         currentVideoHeight = mp.videoHeight
-                        post { applyFitTransform(this@apply, mp.videoWidth, mp.videoHeight) }
                         val dur = mp.duration.toLong()
                         if (dur > 0L) {
                           preparedDurationMs = dur
                         }
                         mp.start()
+                        post {
+                          applyFitTransform(this@apply, mp.videoWidth, mp.videoHeight)
+                          isVideoPrepared = true
+                        }
                       }
                       player.setOnCompletionListener {
                         onDismiss()
@@ -812,22 +820,9 @@ fun FullScreenGiftOverlay(
                 }
               }
             },
-            modifier = Modifier.fillMaxSize(),
-          )
-        }
-      }
-
-      if (playbackUri == null || !isVideoPrepared) {
-        Column(
-          modifier = Modifier.align(Alignment.Center),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-          CircularProgressIndicator(color = SwarGold)
-          Text(
-            text = "वीडियो लोड हो रहा है...",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.White,
+            modifier = Modifier
+              .fillMaxSize()
+              .alpha(if (isVideoPrepared) 1f else 0f),
           )
         }
       }
@@ -934,7 +929,7 @@ fun FullScreenGiftOverlay(
       }
     }
 
-    if (event.giftId.startsWith("entry_lv_")) {
+    if (isOverlayVisible && event.giftId.startsWith("entry_lv_")) {
       Surface(
         color = Color(0xCC1C0D38),
         shape = RoundedCornerShape(20.dp),

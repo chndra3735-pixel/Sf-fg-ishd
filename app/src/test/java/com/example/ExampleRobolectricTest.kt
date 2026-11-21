@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -369,5 +370,80 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     assertEquals("https://example.com/party.gif", submittedLink)
     assertEquals("पार्टी इमोजी", submittedLabel)
+  }
+
+  @Test
+  fun `gift panel renders square DP card with coins overlay and no VIDEO corner badge`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_gift_grid",
+      ownerId = "admin_1",
+      ownerName = "Chandra",
+      title = "Gift Grid Room",
+      roomCode = "445566",
+    )
+    val videoGift = com.example.data.model.GiftCatalogItem(
+      id = "g_royal_car",
+      name = "रॉयल कार",
+      category = com.example.data.model.SwarCatalogDefaults.giftCategories.first(),
+      emoji = "🚗",
+      thumbnailUrl = "https://example.com/car_dp.png",
+      mediaUrl = "https://example.com/car_video.mp4",
+      mediaType = "video",
+      coinCost = 999L,
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.GiftPanelSheet(
+          room = room,
+          seats = emptyList(),
+          gifts = listOf(videoGift),
+          userCoins = 5000L,
+          isAdminUser = true,
+          isUploading = false,
+          onClaimBonusCoins = {},
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, onDone -> onDone() },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
+          onDeleteCustomGift = { _, onDone -> onDone() },
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("gift_card_g_royal_car").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("gift_dp_square_box_g_royal_car", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("gift_dp_coins_g_royal_car", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithText("999", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithText("रॉयल कार", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithText("VIDEO", useUnmergedTree = true).assertDoesNotExist()
+  }
+
+  @Test
+  fun `fullscreen gift overlay loads video silently in background without loading spinner text`() {
+    val videoEvent = com.example.data.model.GiftEvent(
+      id = "evt_bg_preload",
+      roomId = "room_1",
+      roomTitle = "Room 1",
+      senderUid = "u1",
+      senderName = "Chandra",
+      recipientUid = "u2",
+      recipientName = "Guest",
+      giftId = "g1",
+      giftName = "रॉयल जेट",
+      giftEmoji = "✈️",
+      giftMediaUrl = "https://example.com/jet.mp4",
+      giftMediaType = "video",
+      coinCost = 500L,
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.FullScreenGiftOverlay(
+          event = videoEvent,
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithText("वीडियो लोड हो रहा है...").assertDoesNotExist()
   }
 }
