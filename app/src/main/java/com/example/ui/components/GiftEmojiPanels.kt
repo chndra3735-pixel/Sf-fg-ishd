@@ -655,110 +655,94 @@ fun GiftPanelSheet(
               )
               .testTag("gift_card_${gift.id}"),
           ) {
-            Column(
+            // चौखंठा (Square) Gift DP container with Coins overlaid directly on the DP (no corner VIDEO label, no bottom text)
+            Box(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(5.dp),
-              horizontalAlignment = Alignment.CenterHorizontally,
+                .height(78.dp)
+                .padding(4.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0x26FFFFFF))
+                .border(
+                  width = if (isPicked) 1.5.dp else 0.8.dp,
+                  color = if (isPicked) SwarGold else Color(0x44FFFFFF),
+                  shape = RoundedCornerShape(10.dp),
+                )
+                .testTag("gift_dp_square_box_${gift.id}"),
             ) {
-              // चौखंठा (Square) Gift DP container with Coins overlaid directly on the DP (no corner VIDEO label)
+              if (dpModel.isNotBlank()) {
+                AsyncImage(
+                  model = dpModel,
+                  contentDescription = gift.name,
+                  modifier = Modifier.matchParentSize(),
+                  contentScale = ContentScale.Crop,
+                )
+              } else {
+                Text(
+                  text = gift.emoji.ifBlank { "🎁" },
+                  fontSize = 32.sp,
+                  modifier = Modifier.align(Alignment.Center),
+                )
+              }
+
+              // Subtle bottom dark scrim so coins on top of DP stay sharp on bright DPs
               Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .height(64.dp)
-                  .clip(RoundedCornerShape(10.dp))
-                  .background(Color(0x26FFFFFF))
-                  .border(
-                    width = if (isPicked) 1.5.dp else 0.8.dp,
-                    color = if (isPicked) SwarGold else Color(0x44FFFFFF),
-                    shape = RoundedCornerShape(10.dp),
-                  )
-                  .testTag("gift_dp_square_box_${gift.id}"),
-              ) {
-                if (dpModel.isNotBlank()) {
-                  AsyncImage(
-                    model = dpModel,
-                    contentDescription = gift.name,
-                    modifier = Modifier.matchParentSize(),
-                    contentScale = ContentScale.Crop,
-                  )
-                } else {
-                  Text(
-                    text = gift.emoji.ifBlank { "🎁" },
-                    fontSize = 30.sp,
-                    modifier = Modifier.align(Alignment.Center),
-                  )
-                }
+                  .height(28.dp)
+                  .align(Alignment.BottomCenter)
+                  .background(
+                    Brush.verticalGradient(
+                      colors = listOf(Color.Transparent, Color(0xC4090418))
+                    )
+                  ),
+              )
 
-                // Subtle bottom dark scrim so coins on top of DP stay sharp on bright DPs
+              if (isAdminUser && isCustomGift) {
                 Box(
                   modifier = Modifier
-                    .fillMaxWidth()
-                    .height(26.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                      Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color(0xB8090418))
-                      )
-                    ),
-                )
-
-                if (isAdminUser && isCustomGift) {
-                  Box(
-                    modifier = Modifier
-                      .align(Alignment.TopStart)
-                      .padding(4.dp)
-                      .size(16.dp)
-                      .clip(CircleShape)
-                      .background(Color(0xB3120926)),
-                    contentAlignment = Alignment.Center,
-                  ) {
-                    Icon(
-                      imageVector = Icons.Filled.Edit,
-                      contentDescription = "गिफ्ट एडिट या डिलीट करें",
-                      tint = SwarCyan,
-                      modifier = Modifier.size(10.dp),
-                    )
-                  }
-                }
-
-                // Coins overlay directly on the Gift DP
-                Surface(
-                  color = Color(0xCC120926),
-                  shape = RoundedCornerShape(8.dp),
-                  modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-                    .border(0.8.dp, SwarGold.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
-                    .testTag("gift_dp_coins_${gift.id}"),
+                    .align(Alignment.TopStart)
+                    .padding(4.dp)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xB3120926)),
+                  contentAlignment = Alignment.Center,
                 ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                  ) {
-                    CoinEmblem(sizeDp = 11)
-                    Text(
-                      text = "${gift.coinCost}",
-                      style = MaterialTheme.typography.labelSmall,
-                      fontSize = 10.sp,
-                      color = SwarGold,
-                      fontWeight = FontWeight.ExtraBold,
-                      maxLines = 1,
-                    )
-                  }
+                  Icon(
+                    imageVector = Icons.Filled.Edit,
+                    contentDescription = "गिफ्ट एडिट या डिलीट करें",
+                    tint = SwarCyan,
+                    modifier = Modifier.size(10.dp),
+                  )
                 }
               }
 
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(
-                text = gift.name,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
+              // Coins overlay directly on the Gift DP
+              Surface(
+                color = Color(0xCC120926),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                  .align(Alignment.BottomCenter)
+                  .padding(horizontal = 4.dp, vertical = 4.dp)
+                  .border(0.8.dp, SwarGold.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+                  .testTag("gift_dp_coins_${gift.id}"),
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                  CoinEmblem(sizeDp = 11)
+                  Text(
+                    text = "${gift.coinCost}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 10.sp,
+                    color = SwarGold,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                  )
+                }
+              }
             }
           }
         }

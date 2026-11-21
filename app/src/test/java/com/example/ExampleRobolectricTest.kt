@@ -383,7 +383,7 @@ class ExampleRobolectricTest {
     )
     val videoGift = com.example.data.model.GiftCatalogItem(
       id = "g_royal_car",
-      name = "रॉयल कार",
+      name = "स्पेशल गिफ्ट",
       category = com.example.data.model.SwarCatalogDefaults.giftCategories.first(),
       emoji = "🚗",
       thumbnailUrl = "https://example.com/car_dp.png",
@@ -414,7 +414,7 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("gift_dp_square_box_g_royal_car", useUnmergedTree = true).assertIsDisplayed()
     composeTestRule.onNodeWithTag("gift_dp_coins_g_royal_car", useUnmergedTree = true).assertIsDisplayed()
     composeTestRule.onNodeWithText("999", useUnmergedTree = true).assertIsDisplayed()
-    composeTestRule.onNodeWithText("रॉयल कार", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithText("स्पेशल गिफ्ट", useUnmergedTree = true).assertDoesNotExist()
     composeTestRule.onNodeWithText("VIDEO", useUnmergedTree = true).assertDoesNotExist()
   }
 
