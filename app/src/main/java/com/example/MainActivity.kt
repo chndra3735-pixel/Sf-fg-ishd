@@ -462,7 +462,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
       val needsOnboarding = auditProfile == null ||
         !auditProfile.onboardingCompleted ||
         !hasCapturedLocation ||
-        auditProfile.ageYears < 13L ||
+        auditProfile.ageYears < 18L ||
         !auditProfile.termsAccepted
       if (needsOnboarding) {
         Box(modifier = Modifier.fillMaxSize()) {

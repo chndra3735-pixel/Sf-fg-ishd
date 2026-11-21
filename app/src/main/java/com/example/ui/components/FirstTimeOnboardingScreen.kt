@@ -130,7 +130,13 @@ fun FirstTimeOnboardingScreen(
   }
   val enteredAge = ageInputText.toIntOrNull() ?: 0
   val isLocationCaptured = locationResult.isValidCaptured
-  val isDobAndAgeValid = selectedDobIso.isNotBlank() && calculatedAge in 13..120 && enteredAge in 13..120
+  val isDobAndAgeValid = selectedDobIso.isNotBlank() && calculatedAge in 18..120 && enteredAge in 18..120
+
+  LaunchedEffect(isDobAndAgeValid) {
+    if (!isDobAndAgeValid && termsAccepted) {
+      termsAccepted = false
+    }
+  }
 
   val captureLocationNow: () -> Unit = {
     if (!isCapturingLocation) {
@@ -192,7 +198,7 @@ fun FirstTimeOnboardingScreen(
 
   val missingItems = buildList {
     if (!isLocationCaptured) add("लाइव लोकेशन")
-    if (!isDobAndAgeValid) add("जन्मतिथि / उम्र (13+ वर्ष)")
+    if (!isDobAndAgeValid) add("जन्मतिथि / उम्र (18+ वर्ष)")
     if (!termsAccepted) add("Accept बटन / टिक बॉक्स")
   }
   val canSubmit = isLocationCaptured && isDobAndAgeValid && termsAccepted && !isSubmitting
@@ -458,13 +464,13 @@ fun FirstTimeOnboardingScreen(
                 Text(
                   text = "जन्मतिथि: ${AuditDateLocationHelper.formatDobDisplay(selectedDobIso)} • आयु: $calculatedAge वर्ष",
                   style = MaterialTheme.typography.bodySmall,
-                  color = if (calculatedAge in 13..120) Color(0xFF1B873F) else SwarCoral,
+                  color = if (calculatedAge in 18..120) Color(0xFF1B873F) else SwarCoral,
                   fontWeight = FontWeight.SemiBold,
                   modifier = Modifier.testTag("onboarding_dob_value"),
                 )
               } else {
                 Text(
-                  text = "अपनी उम्र लिखें या नीचे कैलेंडर से जन्मतिथि चुनें",
+                  text = "कम से कम 18 वर्ष उम्र लिखें या नीचे कैलेंडर से जन्मतिथि चुनें",
                   style = MaterialTheme.typography.bodySmall,
                   color = Color(0xFF5F667A),
                 )
@@ -478,21 +484,21 @@ fun FirstTimeOnboardingScreen(
               val digits = raw.filter { it.isDigit() }.take(3)
               ageInputText = digits
               val parsedAge = digits.toIntOrNull()
-              if (parsedAge != null && parsedAge in 13..120) {
+              if (parsedAge != null && parsedAge in 18..120) {
                 if (selectedDobIso.isBlank() ||
                   AuditDateLocationHelper.calculateAgeYears(selectedDobIso) != parsedAge
                 ) {
                   selectedDobIso = AuditDateLocationHelper.dobIsoFromAgeYears(parsedAge)
                 }
-              } else if (digits.isBlank()) {
+              } else if (digits.isBlank() || (parsedAge != null && parsedAge !in 18..120)) {
                 selectedDobIso = ""
               }
             },
-            label = { Text("उम्र डालें (वर्षों में, जैसे 25)") },
-            placeholder = { Text("न्यूनतम 13 वर्ष") },
+            label = { Text("उम्र डालें (18+ वर्ष, जैसे 25)") },
+            placeholder = { Text("न्यूनतम 18 वर्ष (18+)") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = ageInputText.isNotBlank() && enteredAge !in 13..120,
+            isError = ageInputText.isNotBlank() && enteredAge !in 18..120,
             colors = OutlinedTextFieldDefaults.colors(
               focusedTextColor = Color(0xFF171A23),
               unfocusedTextColor = Color(0xFF171A23),
@@ -506,11 +512,11 @@ fun FirstTimeOnboardingScreen(
               .testTag("onboarding_age_input"),
           )
 
-          if ((ageInputText.isNotBlank() && enteredAge !in 13..120) ||
-            (selectedDobIso.isNotBlank() && calculatedAge !in 13..120)
+          if ((ageInputText.isNotBlank() && enteredAge !in 18..120) ||
+            (selectedDobIso.isNotBlank() && calculatedAge !in 18..120)
           ) {
             Text(
-              text = "इस ऐप का उपयोग करने के लिए उम्र 13 से 120 वर्ष के बीच होनी चाहिए।",
+              text = "इस ऐप का उपयोग करने के लिए उम्र 18+ (18 से 120 वर्ष) होनी अनिवार्य है।",
               style = MaterialTheme.typography.labelSmall,
               color = SwarCoral,
             )
@@ -535,19 +541,19 @@ fun FirstTimeOnboardingScreen(
         }
       }
 
-      // 3. Room Conduct Checkbox + Mandatory Accept Action
+      // 3. Room Conduct Checkbox + Mandatory Accept Action (Active only when Age is 18+)
       Surface(
         shape = RoundedCornerShape(18.dp),
         color = Color.White,
         modifier = Modifier
           .fillMaxWidth()
           .border(
-            width = if (termsAccepted) 1.5.dp else 1.dp,
-            color = if (termsAccepted) Color(0xFF1B873F) else Color(0xFFE0E5F0),
+            width = if (termsAccepted && isDobAndAgeValid) 1.5.dp else 1.dp,
+            color = if (termsAccepted && isDobAndAgeValid) Color(0xFF1B873F) else Color(0xFFE0E5F0),
             shape = RoundedCornerShape(18.dp),
           )
           .clip(RoundedCornerShape(18.dp))
-          .clickable { termsAccepted = !termsAccepted }
+          .clickable(enabled = isDobAndAgeValid) { termsAccepted = !termsAccepted }
           .testTag("onboarding_conduct_row"),
       ) {
         Column(
@@ -559,8 +565,9 @@ fun FirstTimeOnboardingScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
             Checkbox(
-              checked = termsAccepted,
-              onCheckedChange = { termsAccepted = it },
+              checked = termsAccepted && isDobAndAgeValid,
+              onCheckedChange = { if (isDobAndAgeValid) termsAccepted = it },
+              enabled = isDobAndAgeValid,
               colors = CheckboxDefaults.colors(
                 checkedColor = Color(0xFF1B873F),
                 checkmarkColor = Color.White,
@@ -569,35 +576,49 @@ fun FirstTimeOnboardingScreen(
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Text(
-                text = "3. रूम नियम व प्रवेश अनुमति (Accept करें)",
+                text = "3. रूम नियम व प्रवेश अनुमति (18+ होने पर Accept करें)",
                 style = MaterialTheme.typography.titleSmall,
                 color = Color(0xFF171A23),
                 fontWeight = FontWeight.Bold,
               )
               Text(
-                text = "मैं सहमत हूँ कि रूम में किसी भी प्रकार की अभद्र भाषा, गाली-गलौज या दुर्व्यवहार करने पर एडमिन द्वारा मेरा अकाउंट ब्लॉक कर दिया जाएगा और लोकेशन व चैट ऑडिट सुरक्षित रहेगा।",
+                text = "मैं प्रमाणित करता/करती हूँ कि मेरी उम्र 18+ वर्ष है और रूम में किसी भी प्रकार की अभद्र भाषा, गाली-गलौज या दुर्व्यवहार करने पर एडमिन द्वारा मेरा अकाउंट ब्लॉक कर दिया जाएगा।",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF424A5E),
               )
             }
           }
+          if (!isDobAndAgeValid) {
+            Text(
+              text = "पहले ऊपर 18+ उम्र और जन्मतिथि दर्ज करें, तभी Accept बटन काम करेगा।",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFFC62828),
+              fontWeight = FontWeight.SemiBold,
+            )
+          }
           OutlinedButton(
-            onClick = { termsAccepted = !termsAccepted },
+            onClick = { if (isDobAndAgeValid) termsAccepted = !termsAccepted },
+            enabled = isDobAndAgeValid,
             colors = ButtonDefaults.outlinedButtonColors(
-              containerColor = if (termsAccepted) Color(0xFFE8F5E9) else Color(0xFFF5F7FB),
-              contentColor = if (termsAccepted) Color(0xFF1B873F) else Color(0xFF171A23),
+              containerColor = if (termsAccepted && isDobAndAgeValid) Color(0xFFE8F5E9) else Color(0xFFF5F7FB),
+              contentColor = if (termsAccepted && isDobAndAgeValid) Color(0xFF1B873F) else Color(0xFF171A23),
+              disabledContainerColor = Color(0xFFF0F2F7),
+              disabledContentColor = Color(0xFF9AA3B5),
             ),
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier
               .fillMaxWidth()
               .testTag("onboarding_accept_button"),
           ) {
-            if (termsAccepted) {
+            if (termsAccepted && isDobAndAgeValid) {
               Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
               Spacer(modifier = Modifier.width(6.dp))
               Text("Accept किया गया ✓", fontWeight = FontWeight.Bold)
             } else {
-              Text("Accept करें (स्वीकार करें)", fontWeight = FontWeight.Bold)
+              Text(
+                text = if (isDobAndAgeValid) "Accept करें (स्वीकार करें)" else "18+ उम्र डालने पर Accept खुलेगा",
+                fontWeight = FontWeight.Bold,
+              )
             }
           }
         }

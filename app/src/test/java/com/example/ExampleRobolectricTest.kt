@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserActivityLog
@@ -532,13 +533,20 @@ class ExampleRobolectricTest {
       }
     }
     composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("onboarding_accept_button").performScrollTo().assertIsNotEnabled()
     composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsNotEnabled()
-    composeTestRule.onNodeWithTag("onboarding_age_input").performScrollTo().performTextInput("25")
+    // Under-18 age must keep Accept button and submit button locked
+    composeTestRule.onNodeWithTag("onboarding_age_input").performScrollTo().performTextInput("16")
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("onboarding_accept_button").performScrollTo().assertIsNotEnabled()
+    composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsNotEnabled()
+    // Entering 18+ age unlocks Accept button
+    composeTestRule.onNodeWithTag("onboarding_age_input").performScrollTo().performTextReplacement("25")
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("onboarding_dob_value", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
     // Still disabled until Accept is clicked
     composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsNotEnabled()
-    composeTestRule.onNodeWithTag("onboarding_accept_button").performScrollTo().performClick()
+    composeTestRule.onNodeWithTag("onboarding_accept_button").performScrollTo().assertIsEnabled().performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsEnabled().performClick()
     composeTestRule.waitForIdle()

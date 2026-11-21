@@ -1644,8 +1644,8 @@ class SwarRoomViewModel(
       return
     }
     val age = AuditDateLocationHelper.calculateAgeYears(dobIso)
-    if (dobIso.isBlank() || age !in 13..120) {
-      _events.tryEmit("कृपया मान्य जन्मतिथि और उम्र दर्ज करें (कम से कम 13 वर्ष आयु आवश्यक है)।")
+    if (dobIso.isBlank() || age !in 18..120) {
+      _events.tryEmit("कृपया 18+ उम्र और मान्य जन्मतिथि दर्ज करें (कम से कम 18 वर्ष आयु आवश्यक है)।")
       return
     }
     if (!termsAccepted) {
