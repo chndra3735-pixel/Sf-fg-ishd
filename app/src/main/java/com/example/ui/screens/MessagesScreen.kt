@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,10 +50,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.example.data.model.Conversation
 import com.example.data.model.DirectMessage
 import com.example.ui.components.UserAvatar
@@ -65,6 +72,8 @@ fun MessagesScreen(
   onOpenConversation: (String) -> Unit,
   onCloseConversation: () -> Unit,
   onSendDirectMessage: (Conversation, String) -> Unit,
+  isUploadingMedia: Boolean = false,
+  onSendDirectImage: (Conversation, Uri) -> Unit = { _, _ -> },
 ) {
   val conversations = (conversationsState as? UiState.Success)?.data.orEmpty()
   val activeConversation = conversations.firstOrNull { it.id == activeConversationId }
@@ -74,8 +83,10 @@ fun MessagesScreen(
       conversation = activeConversation,
       messages = directMessages,
       currentUserId = currentUserId,
+      isUploadingMedia = isUploadingMedia,
       onBack = onCloseConversation,
       onSend = { text -> onSendDirectMessage(activeConversation, text) },
+      onSendImage = { uri -> onSendDirectImage(activeConversation, uri) },
     )
     return
   }
@@ -197,8 +208,10 @@ private fun DirectChatThreadView(
   conversation: Conversation,
   messages: List<DirectMessage>,
   currentUserId: String,
+  isUploadingMedia: Boolean,
   onBack: () -> Unit,
   onSend: (String) -> Unit,
+  onSendImage: (Uri) -> Unit,
 ) {
   BackHandler(onBack = onBack)
 
@@ -207,6 +220,11 @@ private fun DirectChatThreadView(
   val otherAvatar = conversation.participantAvatars[otherUid].orEmpty()
   var inputText by remember { mutableStateOf("") }
   val listState = rememberLazyListState()
+
+  val photoPicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri -> uri?.let(onSendImage) },
+  )
 
   LaunchedEffect(messages.size) {
     if (messages.isNotEmpty()) {
@@ -269,12 +287,24 @@ private fun DirectChatThreadView(
             ),
             modifier = Modifier.widthIn(max = 280.dp),
           ) {
-            Text(
-              text = msg.text,
-              style = MaterialTheme.typography.bodyMedium,
-              color = if (isMine) SwarDeepNight else MaterialTheme.colorScheme.onSurface,
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+              if (msg.mediaUrl.isNotBlank()) {
+                AsyncImage(
+                  model = msg.mediaUrl,
+                  contentDescription = "इनबॉक्स फ़ोटो / DP",
+                  contentScale = ContentScale.Crop,
+                  modifier = Modifier
+                    .size(180.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+              }
+              Text(
+                text = msg.text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (isMine) SwarDeepNight else MaterialTheme.colorScheme.onSurface,
+              )
+            }
           }
         }
       }
@@ -284,9 +314,30 @@ private fun DirectChatThreadView(
       modifier = Modifier
         .fillMaxWidth()
         .background(MaterialTheme.colorScheme.surface)
-        .padding(horizontal = 12.dp, vertical = 8.dp),
+        .padding(horizontal = 10.dp, vertical = 8.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
+      IconButton(
+        onClick = {
+          photoPicker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+          )
+        },
+        enabled = !isUploadingMedia,
+        modifier = Modifier
+          .size(48.dp)
+          .testTag("dm_pick_image_button"),
+      ) {
+        if (isUploadingMedia) {
+          CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = SwarCyan)
+        } else {
+          Icon(
+            imageVector = Icons.Filled.PhotoLibrary,
+            contentDescription = "DP / फ़ोटो भेजें",
+            tint = Color(0xFF006CB5),
+          )
+        }
+      }
       OutlinedTextField(
         value = inputText,
         onValueChange = { inputText = it.take(1000) },

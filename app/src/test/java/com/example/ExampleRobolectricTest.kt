@@ -4,13 +4,21 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.model.SwarUserIdentity
+import com.example.data.model.UserActivityLog
+import com.example.data.model.UserAuditProfile
+import com.example.data.repository.AuditDateLocationHelper
 import com.example.data.repository.MediaCompressor
 import com.example.ui.theme.SwarRoomTheme
 import kotlinx.coroutines.runBlocking
@@ -445,5 +453,188 @@ class ExampleRobolectricTest {
     }
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithText("वीडियो लोड हो रहा है...").assertDoesNotExist()
+  }
+
+  @Test
+  fun `first time onboarding gates submission on DOB age and conduct checkbox`() {
+    var submittedDob = ""
+    var submittedTerms = false
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.FirstTimeOnboardingScreen(
+          userId = "u_onboard_1",
+          userEmail = "singer1@gmail.com",
+          displayName = "रवि शर्मा",
+          avatarUrl = "",
+          isSubmitting = false,
+          onSubmitOnboarding = { dobIso, _, terms ->
+            submittedDob = dobIso
+            submittedTerms = terms
+          },
+          onSignOut = {},
+          initialDobIso = "2000-05-10",
+          autoCaptureLocation = false,
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("onboarding_dob_value", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsNotEnabled()
+    composeTestRule.onNodeWithTag("onboarding_conduct_checkbox").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("onboarding_submit_button").performScrollTo().assertIsEnabled().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("2000-05-10", submittedDob)
+    assertTrue(submittedTerms)
+  }
+
+  @Test
+  fun `admin user audit dialog searches by ID filters by date displays chats DPs and toggles block`() {
+    val todayKey = AuditDateLocationHelper.dateKeyFromMillis()
+    val numA = SwarUserIdentity.numericIdForUid("u_alpha")
+    val numB = SwarUserIdentity.numericIdForUid("u_beta")
+    val profiles = listOf(
+      UserAuditProfile(
+        id = "u_alpha",
+        userId = "u_alpha",
+        numericId = numA,
+        userEmail = "alpha@gmail.com",
+        displayName = "अमित सिंह",
+        dobIso = "2001-08-15",
+        ageYears = 25L,
+        locationLabel = "जयपुर, राजस्थान",
+        locationStatus = "captured",
+        termsAccepted = true,
+        onboardingCompleted = true,
+        isBlockedByAdmin = false,
+      ),
+      UserAuditProfile(
+        id = "u_beta",
+        userId = "u_beta",
+        numericId = numB,
+        userEmail = "beta@gmail.com",
+        displayName = "प्रिया वर्मा",
+        dobIso = "2002-01-20",
+        ageYears = 24L,
+        locationLabel = "दिल्ली",
+        locationStatus = "captured",
+        termsAccepted = true,
+        onboardingCompleted = true,
+        isBlockedByAdmin = false,
+      ),
+    )
+    val logs = listOf(
+      UserActivityLog(
+        id = "log_visit_1",
+        userId = "u_alpha",
+        numericId = numA,
+        userEmail = "alpha@gmail.com",
+        userName = "अमित सिंह",
+        activityType = "room_visit",
+        roomId = "room_101",
+        roomTitle = "भजन संध्या",
+        roomCode = "112233",
+        dateKey = todayKey,
+        enteredAtMs = 1_760_000_000_000L,
+        exitedAtMs = 1_760_000_600_000L,
+        durationSeconds = 600L,
+      ),
+      UserActivityLog(
+        id = "log_chat_1",
+        userId = "u_alpha",
+        numericId = numA,
+        userEmail = "alpha@gmail.com",
+        userName = "अमित सिंह",
+        activityType = "room_chat",
+        roomId = "room_101",
+        roomTitle = "भजन संध्या",
+        textContent = "नमस्ते सभी को!",
+        dateKey = todayKey,
+        enteredAtMs = 1_760_000_100_000L,
+      ),
+      UserActivityLog(
+        id = "log_dm_dp_1",
+        userId = "u_alpha",
+        numericId = numA,
+        userEmail = "alpha@gmail.com",
+        userName = "अमित सिंह",
+        activityType = "inbox_media",
+        conversationId = "u_alpha_u_beta",
+        targetUid = "u_beta",
+        targetNumericId = numB,
+        targetName = "प्रिया वर्मा",
+        textContent = "📷 फोटो / DP भेजा",
+        mediaUrl = "https://example.com/sent_dp.jpg",
+        dateKey = todayKey,
+        enteredAtMs = 1_760_000_200_000L,
+      ),
+    )
+
+    var blockedTargetUid = ""
+    var blockedState = false
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.AdminUserAuditDialog(
+          auditProfiles = profiles,
+          activityLogs = logs,
+          isPurgingExpired = false,
+          onPurgeExpiredLogs = {},
+          onToggleUserBlock = { uid, _, blocked ->
+            blockedTargetUid = uid
+            blockedState = blocked
+          },
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("admin_user_audit_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("audit_filter_today").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_search_input").performTextInput(numA)
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_user_card_$numA").assertIsDisplayed().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onAllNodesWithText("भजन संध्या", substring = true).onFirst().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("audit_tab_room_chats").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithText("नमस्ते सभी को!").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("audit_tab_inbox").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_inbox_dp_log_dm_dp_1").assertExists()
+    composeTestRule.onNodeWithTag("audit_toggle_block_button").performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("u_alpha", blockedTargetUid)
+    assertTrue(blockedState)
+  }
+
+  @Test
+  fun `profile screen shows admin audit setting only to admin and opens audit dialog`() {
+    val profile = com.example.data.model.UserProfile(
+      id = "admin_1",
+      userId = "admin_1",
+      displayName = "Chandra",
+      coins = 5_000L,
+    )
+    var purged = false
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.ProfileScreen(
+          profileState = com.example.ui.viewmodel.UiState.Success(profile),
+          isUploadingMedia = false,
+          isSupabaseConfigured = true,
+          onUploadAvatarDp = {},
+          onUpdateProfile = { _, _, _, _, _ -> },
+          onSignOut = {},
+          isAdminUser = true,
+          onPurgeExpiredAuditLogs = { purged = true },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("profile_admin_audit_row").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertTrue(purged)
+    composeTestRule.onNodeWithTag("admin_user_audit_dialog").assertIsDisplayed()
   }
 }

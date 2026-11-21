@@ -13,6 +13,9 @@ import com.example.data.model.MomentPost
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
+import com.example.data.model.SwarUserIdentity
+import com.example.data.model.UserActivityLog
+import com.example.data.model.UserAuditProfile
 import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
 import com.example.data.remote.OperationType
@@ -925,9 +928,15 @@ class SwarRoomRepository(
     participantUids: List<String>,
     senderName: String,
     text: String,
+    mediaUrl: String = "",
+    mediaType: String = "text",
   ): Result<Unit> = runCatching {
     val uid = requireUserId()
-    val cleanText = text.trim().take(1000)
+    val cleanMediaUrl = mediaUrl.trim().take(800)
+    val safeMediaType = if (mediaType == "image" && cleanMediaUrl.isNotBlank()) "image" else "text"
+    val cleanText = text.trim().take(1000).ifBlank {
+      if (safeMediaType == "image") "📷 फोटो / DP भेजा" else ""
+    }
     require(cleanText.isNotEmpty()) { "Message cannot be empty" }
     val msgId = "dm_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val convoRef = db.collection("conversations").document(conversationId)
@@ -942,6 +951,8 @@ class SwarRoomRepository(
         "senderUid" to uid,
         "senderName" to senderName.take(40).ifBlank { "User" },
         "text" to cleanText,
+        "mediaUrl" to cleanMediaUrl,
+        "mediaType" to safeMediaType,
         "createdAt" to FieldValue.serverTimestamp(),
       ),
     )
@@ -1622,6 +1633,273 @@ class SwarRoomRepository(
       handleFirestoreError(e, OperationType.WRITE, docRef.path)
       throw e
     }
+  }
+
+  // --- First-Time Onboarding, Audit Profiles & 7-Month Activity Logs ---
+
+  fun observeOwnAuditProfile(uid: String): Flow<UserAuditProfile?> = flow {
+    val docRef = db.collection("user_audit_profiles").document(uid)
+    emitAll(
+      docRef.snapshots()
+        .map { snapshot ->
+          if (snapshot.exists()) {
+            snapshot.toObject(UserAuditProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+          } else {
+            null
+          }
+        }
+        .catch { error -> handleFlowError(error, OperationType.GET, docRef.path, uid); throw error }
+    )
+  }
+
+  suspend fun saveOnboardingAuditProfile(
+    userEmail: String,
+    displayName: String,
+    avatarUrl: String,
+    dobIso: String,
+    locationLabel: String,
+    locationLat: Double,
+    locationLng: Double,
+    locationStatus: String,
+    termsAccepted: Boolean,
+    onboardingCompleted: Boolean,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("user_audit_profiles").document(uid)
+    val safeName = displayName.trim().take(40).ifBlank { "Swar User" }
+    val numericId = SwarUserIdentity.numericIdForUid(uid).take(20)
+    val safeEmail = userEmail.trim().take(120)
+    val safeAvatar = avatarUrl.trim().take(600)
+    val cleanDob = dobIso.trim().take(20)
+    val computedAge = AuditDateLocationHelper.calculateAgeYears(cleanDob).toLong().coerceIn(0L, 130L)
+    val safeLocationStatus = if (locationStatus in listOf("pending", "captured", "denied", "unavailable")) {
+      locationStatus
+    } else {
+      "unavailable"
+    }
+    val safeLat = locationLat.coerceIn(-90.0, 90.0)
+    val safeLng = locationLng.coerceIn(-180.0, 180.0)
+    val safeLabel = locationLabel.trim().take(240)
+
+    try {
+      val existing = docRef.get().await()
+      if (existing.exists()) {
+        docRef.update(
+          mapOf(
+            "numericId" to numericId,
+            "userEmail" to safeEmail,
+            "displayName" to safeName,
+            "avatarUrl" to safeAvatar,
+            "dobIso" to cleanDob,
+            "ageYears" to computedAge,
+            "locationLabel" to safeLabel,
+            "locationLat" to safeLat,
+            "locationLng" to safeLng,
+            "locationStatus" to safeLocationStatus,
+            "termsAccepted" to termsAccepted,
+            "onboardingCompleted" to onboardingCompleted,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        ).await()
+      } else {
+        docRef.set(
+          mapOf(
+            "userId" to uid,
+            "numericId" to numericId,
+            "userEmail" to safeEmail,
+            "displayName" to safeName,
+            "avatarUrl" to safeAvatar,
+            "dobIso" to cleanDob,
+            "ageYears" to computedAge,
+            "locationLabel" to safeLabel,
+            "locationLat" to safeLat,
+            "locationLng" to safeLng,
+            "locationStatus" to safeLocationStatus,
+            "termsAccepted" to termsAccepted,
+            "onboardingCompleted" to onboardingCompleted,
+            "isBlockedByAdmin" to false,
+            "firstLoginAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        ).await()
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun syncAuditProfileIdentity(
+    userEmail: String,
+    displayName: String,
+    avatarUrl: String,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("user_audit_profiles").document(uid)
+    val snap = docRef.get().await()
+    if (!snap.exists()) return@runCatching
+    docRef.update(
+      mapOf(
+        "numericId" to SwarUserIdentity.numericIdForUid(uid).take(20),
+        "userEmail" to userEmail.trim().take(120),
+        "displayName" to displayName.trim().take(40).ifBlank { "Swar User" },
+        "avatarUrl" to avatarUrl.trim().take(600),
+        "updatedAt" to FieldValue.serverTimestamp(),
+      ),
+    ).await()
+  }
+
+  suspend fun setUserBlockedByAdmin(
+    targetUid: String,
+    blocked: Boolean,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("user_audit_profiles").document(targetUid)
+    try {
+      docRef.update(
+        mapOf(
+          "isBlockedByAdmin" to blocked,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun createActivityLog(
+    userEmail: String,
+    userName: String,
+    userAvatarUrl: String,
+    activityType: String,
+    roomId: String = "",
+    roomTitle: String = "",
+    roomCode: String = "",
+    conversationId: String = "",
+    targetUid: String = "",
+    targetNumericId: String = "",
+    targetName: String = "",
+    textContent: String = "",
+    mediaUrl: String = "",
+    enteredAtMs: Long = System.currentTimeMillis(),
+    exitedAtMs: Long = 0L,
+    durationSeconds: Long = 0L,
+  ): Result<String> = runCatching {
+    val uid = requireUserId()
+    val safeType = if (activityType in listOf("room_visit", "room_chat", "inbox_chat", "inbox_media")) {
+      activityType
+    } else {
+      "room_visit"
+    }
+    val logId = "log_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val docRef = db.collection("user_activity_logs").document(logId)
+    val nowMs = System.currentTimeMillis()
+    val payload = mapOf(
+      "userId" to uid,
+      "numericId" to SwarUserIdentity.numericIdForUid(uid).take(20),
+      "userEmail" to userEmail.trim().take(120),
+      "userName" to userName.trim().take(40).ifBlank { "Swar User" },
+      "userAvatarUrl" to userAvatarUrl.trim().take(600),
+      "activityType" to safeType,
+      "roomId" to roomId.take(128),
+      "roomTitle" to roomTitle.trim().take(60),
+      "roomCode" to roomCode.trim().take(16),
+      "conversationId" to conversationId.take(260),
+      "targetUid" to targetUid.take(128),
+      "targetNumericId" to targetNumericId.take(20),
+      "targetName" to targetName.trim().take(40),
+      "textContent" to textContent.trim().take(1000),
+      "mediaUrl" to mediaUrl.trim().take(800),
+      "dateKey" to AuditDateLocationHelper.dateKeyFromMillis(enteredAtMs.takeIf { it > 0L } ?: nowMs),
+      "enteredAtMs" to enteredAtMs.coerceAtLeast(0L),
+      "exitedAtMs" to exitedAtMs.coerceAtLeast(0L),
+      "durationSeconds" to durationSeconds.coerceIn(0L, 8640000L),
+      "createdAt" to FieldValue.serverTimestamp(),
+      "expiresAt" to AuditDateLocationHelper.sevenMonthsExpiryTimestamp(nowMs),
+    )
+    try {
+      docRef.set(payload).await()
+      logId
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateRoomVisitDuration(
+    logId: String,
+    exitedAtMs: Long,
+    durationSeconds: Long,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("user_activity_logs").document(logId)
+    try {
+      docRef.update(
+        mapOf(
+          "exitedAtMs" to exitedAtMs.coerceAtLeast(0L),
+          "durationSeconds" to durationSeconds.coerceIn(0L, 8640000L),
+        ),
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  fun observeAllAuditProfilesAsAdmin(): Flow<List<UserAuditProfile>> = flow {
+    val uid = requireUserId()
+    val colRef = db.collection("user_audit_profiles")
+    emitAll(
+      colRef.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(UserAuditProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.updatedAt ?: it.firstLoginAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "user_audit_profiles", uid); throw error }
+    )
+  }
+
+  fun observeAllActivityLogsAsAdmin(): Flow<List<UserActivityLog>> = flow {
+    val uid = requireUserId()
+    val colRef = db.collection("user_activity_logs")
+    emitAll(
+      colRef.snapshots()
+        .map { snapshot ->
+          val nowMs = System.currentTimeMillis()
+          snapshot.toObjects(UserActivityLog::class.java, ServerTimestampBehavior.ESTIMATE)
+            .filter { AuditDateLocationHelper.isWithinSevenMonths(it.expiresAt, it.createdAt, nowMs) }
+            .sortedByDescending {
+              maxOf(it.enteredAtMs, it.createdAt?.toDate()?.time ?: 0L)
+            }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "user_activity_logs", uid); throw error }
+    )
+  }
+
+  suspend fun purgeExpiredActivityLogs(): Result<Int> = runCatching {
+    requireUserId()
+    val now = Timestamp.now()
+    val expiredSnapshot = db.collection("user_activity_logs")
+      .whereLessThanOrEqualTo("expiresAt", now)
+      .get()
+      .await()
+    if (expiredSnapshot.isEmpty) return@runCatching 0
+    val refs = expiredSnapshot.documents.map { it.reference }
+    refs.chunked(400).forEach { chunk ->
+      val batch = db.batch()
+      chunk.forEach { batch.delete(it) }
+      batch.commit().await()
+    }
+    refs.size
   }
 
   private companion object {

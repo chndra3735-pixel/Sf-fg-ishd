@@ -4,6 +4,7 @@ import com.example.data.model.GiftEvent
 import com.example.data.model.RoomMessage
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
+import com.example.data.repository.AuditDateLocationHelper
 import com.example.data.repository.GitHubUpdateChecker
 import com.example.data.repository.VideoLinkResolution
 import com.example.data.repository.VideoLinkResolver
@@ -11,6 +12,7 @@ import com.example.ui.viewmodel.SwarRoomViewModel
 import com.google.firebase.Timestamp
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.Calendar
 import java.util.Date
 
 /**
@@ -361,5 +363,38 @@ class ExampleUnitTest {
         isPostInitialRoomSnapshot = true,
       )
     )
+  }
+
+  @Test
+  fun auditDateLocationHelper_calculatesAgeAndFormatsDob() {
+    val refCal = Calendar.getInstance().apply {
+      clear()
+      set(2026, Calendar.NOVEMBER, 21, 12, 0, 0)
+    }
+    val nowMs = refCal.timeInMillis
+    assertEquals(26, AuditDateLocationHelper.calculateAgeYears("2000-05-10", nowMs))
+    assertEquals(25, AuditDateLocationHelper.calculateAgeYears("2000-12-25", nowMs))
+    assertEquals(0, AuditDateLocationHelper.calculateAgeYears("2030-01-01", nowMs))
+    assertEquals("10/05/2000", AuditDateLocationHelper.formatDobDisplay("2000-05-10"))
+  }
+
+  @Test
+  fun auditDateLocationHelper_sevenMonthRetentionAndDurationFormatting() {
+    val nowMs = 1_760_000_000_000L
+    val sevenMonthsOut = AuditDateLocationHelper.sevenMonthsExpiryTimestamp(nowMs)
+    assertTrue(AuditDateLocationHelper.isWithinSevenMonths(sevenMonthsOut, Timestamp(Date(nowMs)), nowMs))
+
+    val expiredTimestamp = Timestamp(Date(nowMs - 1_000L))
+    assertFalse(AuditDateLocationHelper.isWithinSevenMonths(expiredTimestamp, null, nowMs))
+
+    val oldCreated = Calendar.getInstance().apply {
+      timeInMillis = nowMs
+      add(Calendar.MONTH, -8)
+    }.time
+    assertFalse(AuditDateLocationHelper.isWithinSevenMonths(null, Timestamp(oldCreated), nowMs))
+
+    assertEquals("2 घंटा 15 मिनट", AuditDateLocationHelper.formatDurationHindi(2 * 3600L + 15 * 60L))
+    assertEquals("45 सेकंड", AuditDateLocationHelper.formatDurationHindi(45L))
+    assertTrue(AuditDateLocationHelper.dateKeyFromMillis(nowMs).matches(Regex("""^\d{4}-\d{2}-\d{2}$""")))
   }
 }

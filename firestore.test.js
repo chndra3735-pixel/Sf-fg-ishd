@@ -404,3 +404,132 @@ test("Only verified admin can configure app_config/update; signed-in users can r
   await assertFails(unauth.collection("app_config").doc("update").get());
 });
 
+// 8. Private User Audit Profiles (Onboarding, Location, DOB, Conduct Checkbox, Admin Block) & 7-Month Activity Logs
+test("Users save own onboarding audit profile & 7-month logs; ONLY verified admin can list/read all users and audit logs", async () => {
+  const verifiedAdmin = testEnv.authenticatedContext(ADMIN_UID, {
+    email: ADMIN_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID, {
+    email: "alice@gmail.com",
+    email_verified: true,
+  }).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID, {
+    email: "bob@gmail.com",
+    email_verified: true,
+  }).firestore();
+
+  const auditProfilePayload = {
+    userId: ALICE_UID,
+    numericId: "1234567890",
+    userEmail: "alice@gmail.com",
+    displayName: "Alice",
+    avatarUrl: "https://lh3.googleusercontent.com/alice.jpg",
+    dobIso: "2001-08-15",
+    ageYears: 25,
+    locationLabel: "Lucknow, Uttar Pradesh, India",
+    locationLat: 26.85,
+    locationLng: 80.95,
+    locationStatus: "captured",
+    termsAccepted: true,
+    onboardingCompleted: true,
+    isBlockedByAdmin: false,
+    firstLoginAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  // Alice creates her own audit profile; cannot self-block or spoof Bob
+  await assertSucceeds(alice.collection("user_audit_profiles").doc(ALICE_UID).set(auditProfilePayload));
+  await assertFails(
+    alice.collection("user_audit_profiles").doc(ALICE_UID).update({
+      isBlockedByAdmin: true,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(bob.collection("user_audit_profiles").doc(ALICE_UID).get());
+  await assertFails(bob.collection("user_audit_profiles").get());
+
+  // Verified admin can list, inspect, and moderate block state
+  await assertSucceeds(verifiedAdmin.collection("user_audit_profiles").get());
+  await assertSucceeds(
+    verifiedAdmin.collection("user_audit_profiles").doc(ALICE_UID).update({
+      isBlockedByAdmin: true,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // 7-month retained activity log creation & duration update
+  const sevenMonthsOut = new Date(Date.now() + 210 * 24 * 60 * 60 * 1000);
+  const tooLongExpiry = new Date(Date.now() + 260 * 24 * 60 * 60 * 1000);
+  const visitLogPayload = {
+    userId: ALICE_UID,
+    numericId: "1234567890",
+    userEmail: "alice@gmail.com",
+    userName: "Alice",
+    userAvatarUrl: "https://lh3.googleusercontent.com/alice.jpg",
+    activityType: "room_visit",
+    roomId: "room_1",
+    roomTitle: "Music Room",
+    roomCode: "112233",
+    conversationId: "",
+    targetUid: "",
+    targetNumericId: "",
+    targetName: "",
+    textContent: "",
+    mediaUrl: "",
+    dateKey: "2026-11-21",
+    enteredAtMs: Date.now() - 60000,
+    exitedAtMs: 0,
+    durationSeconds: 0,
+    createdAt: serverTimestamp(),
+    expiresAt: sevenMonthsOut,
+  };
+
+  await assertSucceeds(alice.collection("user_activity_logs").doc("visit_1").set(visitLogPayload));
+  await assertSucceeds(
+    alice.collection("user_activity_logs").doc("visit_1").update({
+      exitedAtMs: Date.now(),
+      durationSeconds: 120,
+    })
+  );
+  // Expiry > 225 days rejected
+  await assertFails(
+    alice.collection("user_activity_logs").doc("visit_bad_exp").set({
+      ...visitLogPayload,
+      expiresAt: tooLongExpiry,
+    })
+  );
+  // Non-admin cannot read/list/delete activity logs; only admin can
+  await assertFails(alice.collection("user_activity_logs").doc("visit_1").get());
+  await assertFails(bob.collection("user_activity_logs").get());
+  await assertFails(alice.collection("user_activity_logs").doc("visit_1").delete());
+  await assertSucceeds(verifiedAdmin.collection("user_activity_logs").get());
+  await assertSucceeds(verifiedAdmin.collection("user_activity_logs").doc("visit_1").delete());
+
+  // Inbox DM image media write
+  const convoId = `${ALICE_UID}_${BOB_UID}`;
+  await assertSucceeds(
+    alice.collection("conversations").doc(convoId).set({
+      participantUids: [ALICE_UID, BOB_UID],
+      participantNames: { [ALICE_UID]: "Alice", [BOB_UID]: "Bob" },
+      participantAvatars: { [ALICE_UID]: "", [BOB_UID]: "" },
+      lastMessage: "DP भेजा",
+      lastSenderUid: ALICE_UID,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(
+    alice.collection("conversations").doc(convoId).collection("messages").doc("dm_img_1").set({
+      conversationId: convoId,
+      participantUids: [ALICE_UID, BOB_UID],
+      senderUid: ALICE_UID,
+      senderName: "Alice",
+      text: "📷 फोटो / DP भेजा",
+      mediaUrl: "https://proj.supabase.co/storage/v1/object/public/swarroom-media/dm/pic.jpg",
+      mediaType: "image",
+      createdAt: serverTimestamp(),
+    })
+  );
+});
+

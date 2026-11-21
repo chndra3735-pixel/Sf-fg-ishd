@@ -104,6 +104,8 @@
         "senderUid": { "type": "string" },
         "senderName": { "type": "string" },
         "text": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["text", "image"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["conversationId", "participantUids", "senderUid", "senderName", "text", "createdAt"]
@@ -237,6 +239,59 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["githubRepoUrl", "updatedByUid", "updatedAt"]
+    },
+    "UserAuditProfile": {
+      "title": "UserAuditProfile",
+      "description": "Private onboarding & audit metadata (Gmail, Google DP, 10-digit numeric ID, DOB, first-time location, room conduct acceptance, and admin block state).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "numericId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "displayName": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "dobIso": { "type": "string" },
+        "ageYears": { "type": "integer" },
+        "locationLabel": { "type": "string" },
+        "locationLat": { "type": "number" },
+        "locationLng": { "type": "number" },
+        "locationStatus": { "type": "string", "enum": ["pending", "captured", "denied", "unavailable"] },
+        "termsAccepted": { "type": "boolean" },
+        "onboardingCompleted": { "type": "boolean" },
+        "isBlockedByAdmin": { "type": "boolean" },
+        "firstLoginAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "numericId", "userEmail", "displayName", "avatarUrl", "dobIso", "ageYears", "locationLabel", "locationLat", "locationLng", "locationStatus", "termsAccepted", "onboardingCompleted", "isBlockedByAdmin", "firstLoginAt", "updatedAt"]
+    },
+    "UserActivityLog": {
+      "title": "UserActivityLog",
+      "description": "7-month retained audit log of user room visits/duration, room chats, inbox messages, and inbox DP photos (auto-expires after 7 months).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "numericId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatarUrl": { "type": "string" },
+        "activityType": { "type": "string", "enum": ["room_visit", "room_chat", "inbox_chat", "inbox_media"] },
+        "roomId": { "type": "string" },
+        "roomTitle": { "type": "string" },
+        "roomCode": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "targetUid": { "type": "string" },
+        "targetNumericId": { "type": "string" },
+        "targetName": { "type": "string" },
+        "textContent": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "enteredAtMs": { "type": "integer" },
+        "exitedAtMs": { "type": "integer" },
+        "durationSeconds": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "numericId", "userEmail", "userName", "userAvatarUrl", "activityType", "roomId", "roomTitle", "roomCode", "conversationId", "targetUid", "targetNumericId", "targetName", "textContent", "mediaUrl", "dateKey", "enteredAtMs", "exitedAtMs", "durationSeconds", "createdAt", "expiresAt"]
     }
   },
   "firestore": {
@@ -295,6 +350,14 @@
     "/app_config/{configId}": {
       "schema": { "$ref": "#/entities/AppUpdateConfig" },
       "description": "Global admin-managed app configuration such as the GitHub repository link for release updates."
+    },
+    "/user_audit_profiles/{userId}": {
+      "schema": { "$ref": "#/entities/UserAuditProfile" },
+      "description": "Private user onboarding, DOB, location, Gmail, and admin moderation state."
+    },
+    "/user_activity_logs/{logId}": {
+      "schema": { "$ref": "#/entities/UserActivityLog" },
+      "description": "7-month retained room visit duration, room chat, and inbox chat/DP activity logs for Admin inspection."
     }
   }
 }

@@ -97,9 +97,11 @@ import com.example.data.repository.SupabaseStorageRepository
 import com.example.data.repository.SwarRoomRepository
 import com.example.ui.auth.authStateFlow
 import com.example.ui.auth.signOut
+import com.example.ui.components.AccountBlockedScreen
 import com.example.ui.components.AppUpdateAvailableDialog
 import com.example.ui.components.CreateMomentDialog
 import com.example.ui.components.CreateRoomDialog
+import com.example.ui.components.FirstTimeOnboardingScreen
 import com.example.ui.components.MinimizedRoomFloatingBar
 import com.example.ui.screens.GuestPreviewSwarRoomApp
 import com.example.ui.screens.LobbyScreen
@@ -401,6 +403,11 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
   val updateCheckError by viewModel.updateCheckError.collectAsStateWithLifecycle()
   val showUpdatePrompt by viewModel.showUpdatePrompt.collectAsStateWithLifecycle()
+  val ownAuditProfileState by viewModel.ownAuditProfile.collectAsStateWithLifecycle()
+  val isSubmittingOnboarding by viewModel.isSubmittingOnboarding.collectAsStateWithLifecycle()
+  val adminAuditProfiles by viewModel.adminAuditProfiles.collectAsStateWithLifecycle()
+  val adminActivityLogs by viewModel.adminActivityLogs.collectAsStateWithLifecycle()
+  val isPurgingExpiredLogs by viewModel.isPurgingExpiredLogs.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
@@ -417,6 +424,108 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   LaunchedEffect(viewModel) {
     viewModel.events.collect { message ->
       snackbarHostState.showSnackbar(message)
+    }
+  }
+
+  val auditProfile = (ownAuditProfileState as? UiState.Success)?.data
+  val signOutAction = {
+    viewModel.leaveActiveRoom {
+      signOut(credentialManager, scope)
+    }
+  }
+
+  when (ownAuditProfileState) {
+    is UiState.Loading -> {
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(Brush.verticalGradient(listOf(SwarDeepNight, SwarStageIndigo))),
+        contentAlignment = Alignment.Center,
+      ) {
+        androidx.compose.material3.CircularProgressIndicator(color = SwarCyan)
+      }
+      return
+    }
+    is UiState.Success -> {
+      if (auditProfile?.isBlockedByAdmin == true) {
+        AccountBlockedScreen(
+          userId = user.uid,
+          userEmail = user.email.orEmpty(),
+          onSignOut = signOutAction,
+        )
+        return
+      }
+      if (auditProfile == null || !auditProfile.onboardingCompleted) {
+        Box(modifier = Modifier.fillMaxSize()) {
+          val loadedUserProfile = (profileState as? UiState.Success)?.data
+          FirstTimeOnboardingScreen(
+            userId = user.uid,
+            userEmail = user.email.orEmpty(),
+            displayName = loadedUserProfile?.displayName?.ifBlank { user.displayName.orEmpty() }
+              ?: user.displayName.orEmpty(),
+            avatarUrl = loadedUserProfile?.avatarUrl?.ifBlank { user.photoUrl?.toString().orEmpty() }
+              ?: user.photoUrl?.toString().orEmpty(),
+            isSubmitting = isSubmittingOnboarding,
+            onSubmitOnboarding = { dobIso, locResult, termsAccepted ->
+              viewModel.completeFirstTimeOnboarding(dobIso, locResult, termsAccepted)
+            },
+            onSignOut = signOutAction,
+          )
+          SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+              .align(Alignment.BottomCenter)
+              .safeDrawingPadding()
+              .padding(16.dp),
+          )
+        }
+        return
+      }
+    }
+    is UiState.Error -> {
+      val errMsg = (ownAuditProfileState as UiState.Error).message
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(Brush.verticalGradient(listOf(SwarDeepNight, SwarStageIndigo)))
+          .safeDrawingPadding()
+          .padding(24.dp),
+        contentAlignment = Alignment.Center,
+      ) {
+        Surface(
+          shape = RoundedCornerShape(22.dp),
+          color = Color.White,
+          modifier = Modifier.fillMaxWidth().widthIn(max = 440.dp),
+        ) {
+          Column(
+            modifier = Modifier.padding(22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Icon(Icons.Filled.CloudOff, contentDescription = null, tint = SwarCoral, modifier = Modifier.size(40.dp))
+            Text(
+              text = "खाता सत्यापन लोड नहीं हो सका",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.Bold,
+              color = Color(0xFF171A23),
+            )
+            Text(
+              text = errMsg,
+              style = MaterialTheme.typography.bodySmall,
+              color = Color(0xFF5D657A),
+              textAlign = TextAlign.Center,
+            )
+            Button(
+              onClick = signOutAction,
+              colors = ButtonDefaults.buttonColors(containerColor = SwarCoral, contentColor = Color.White),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text("साइन आउट करें", fontWeight = FontWeight.Bold)
+            }
+          }
+        }
+      }
+      return
     }
   }
 
@@ -681,6 +790,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           onOpenConversation = { viewModel.openConversation(it) },
           onCloseConversation = { viewModel.closeConversation() },
           onSendDirectMessage = { convo, text -> viewModel.sendDirectMessage(convo, text) },
+          isUploadingMedia = isUploadingMedia,
+          onSendDirectImage = { convo, uri -> viewModel.sendDirectImageMessage(convo, uri) },
         )
         MainTab.PROFILE -> ProfileScreen(
           profileState = profileState,
@@ -710,6 +821,13 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           updateCheckError = updateCheckError,
           onCheckForAppUpdate = { viewModel.checkForAppUpdate(manual = true) },
           onSaveGithubRepoLink = { link -> viewModel.saveGithubRepoLink(link) },
+          adminAuditProfiles = adminAuditProfiles,
+          adminActivityLogs = adminActivityLogs,
+          isPurgingExpiredLogs = isPurgingExpiredLogs,
+          onPurgeExpiredAuditLogs = { viewModel.refreshAndPurgeExpiredAuditLogs() },
+          onToggleUserBlockByAdmin = { uid, name, blocked ->
+            viewModel.setUserBlockedByAdmin(uid, name, blocked)
+          },
         )
       }
 

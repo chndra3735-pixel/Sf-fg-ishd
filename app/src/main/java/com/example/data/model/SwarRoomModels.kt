@@ -93,6 +93,8 @@ data class DirectMessage(
   val senderUid: String = "",
   val senderName: String = "",
   val text: String = "",
+  val mediaUrl: String = "",
+  val mediaType: String = "text",
   @ServerTimestamp val createdAt: Timestamp? = null,
 )
 
@@ -205,6 +207,55 @@ data class AppUpdateConfig(
   val githubRepoUrl: String = "",
   val updatedByUid: String = "",
   @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class UserAuditProfile(
+  @DocumentId val id: String = "",
+  val userId: String = "",
+  val numericId: String = "",
+  val userEmail: String = "",
+  val displayName: String = "",
+  val avatarUrl: String = "",
+  val dobIso: String = "",
+  val ageYears: Long = 0L,
+  val locationLabel: String = "",
+  val locationLat: Double = 0.0,
+  val locationLng: Double = 0.0,
+  val locationStatus: String = "pending",
+  @get:PropertyName("termsAccepted") @field:PropertyName("termsAccepted") val termsAccepted: Boolean = false,
+  @get:PropertyName("onboardingCompleted") @field:PropertyName("onboardingCompleted") val onboardingCompleted: Boolean = false,
+  @get:PropertyName("isBlockedByAdmin") @field:PropertyName("isBlockedByAdmin") val isBlockedByAdmin: Boolean = false,
+  @ServerTimestamp val firstLoginAt: Timestamp? = null,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class UserActivityLog(
+  @DocumentId val id: String = "",
+  val userId: String = "",
+  val numericId: String = "",
+  val userEmail: String = "",
+  val userName: String = "",
+  val userAvatarUrl: String = "",
+  val activityType: String = "room_visit",
+  val roomId: String = "",
+  val roomTitle: String = "",
+  val roomCode: String = "",
+  val conversationId: String = "",
+  val targetUid: String = "",
+  val targetNumericId: String = "",
+  val targetName: String = "",
+  val textContent: String = "",
+  val mediaUrl: String = "",
+  val dateKey: String = "",
+  val enteredAtMs: Long = 0L,
+  val exitedAtMs: Long = 0L,
+  val durationSeconds: Long = 0L,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+  val expiresAt: Timestamp? = null,
 )
 
 object SwarCatalogDefaults {

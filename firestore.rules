@@ -119,6 +119,8 @@ service cloud.firestore {
              data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128 &&
              data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 40 &&
              data.text is string && data.text.size() >= 1 && data.text.size() <= 1000 &&
+             (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() <= 800)) &&
+             (!('mediaType' in data) || data.mediaType in ['text', 'image']) &&
              isValidTimestamp(data.createdAt);
     }
 
@@ -213,6 +215,51 @@ service cloud.firestore {
       return data.githubRepoUrl is string && data.githubRepoUrl.size() <= 400 &&
              data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
              isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidUserAuditProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.numericId is string && data.numericId.size() >= 4 && data.numericId.size() <= 20 &&
+             data.userEmail is string && data.userEmail.size() <= 120 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40 &&
+             data.avatarUrl is string && data.avatarUrl.size() <= 600 &&
+             data.dobIso is string && data.dobIso.size() <= 20 &&
+             data.ageYears is int && data.ageYears >= 0 && data.ageYears <= 130 &&
+             data.locationLabel is string && data.locationLabel.size() <= 240 &&
+             data.locationLat is number && data.locationLat >= -90.0 && data.locationLat <= 90.0 &&
+             data.locationLng is number && data.locationLng >= -180.0 && data.locationLng <= 180.0 &&
+             data.locationStatus in ['pending', 'captured', 'denied', 'unavailable'] &&
+             data.termsAccepted is bool &&
+             data.onboardingCompleted is bool &&
+             data.isBlockedByAdmin is bool &&
+             isValidTimestamp(data.firstLoginAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidUserActivityLog(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.numericId is string && data.numericId.size() >= 4 && data.numericId.size() <= 20 &&
+             data.userEmail is string && data.userEmail.size() <= 120 &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 40 &&
+             data.userAvatarUrl is string && data.userAvatarUrl.size() <= 600 &&
+             data.activityType in ['room_visit', 'room_chat', 'inbox_chat', 'inbox_media'] &&
+             data.roomId is string && data.roomId.size() <= 128 &&
+             data.roomTitle is string && data.roomTitle.size() <= 60 &&
+             data.roomCode is string && data.roomCode.size() <= 16 &&
+             data.conversationId is string && data.conversationId.size() <= 260 &&
+             data.targetUid is string && data.targetUid.size() <= 128 &&
+             data.targetNumericId is string && data.targetNumericId.size() <= 20 &&
+             data.targetName is string && data.targetName.size() <= 40 &&
+             data.textContent is string && data.textContent.size() <= 1000 &&
+             data.mediaUrl is string && data.mediaUrl.size() <= 800 &&
+             data.dateKey is string && data.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             data.enteredAtMs is int && data.enteredAtMs >= 0 &&
+             data.exitedAtMs is int && data.exitedAtMs >= 0 &&
+             data.durationSeconds is int && data.durationSeconds >= 0 && data.durationSeconds <= 8640000 &&
+             isValidTimestamp(data.createdAt) &&
+             data.expiresAt is timestamp &&
+             data.expiresAt >= request.time &&
+             data.expiresAt <= request.time + duration.value(225, 'd');
     }
 
     // --- Collection Rules ---
@@ -410,7 +457,7 @@ service cloud.firestore {
                          incoming().senderUid == request.auth.uid &&
                          request.auth.uid in incoming().participantUids &&
                          incoming().keys().hasAll(['conversationId', 'participantUids', 'senderUid', 'senderName', 'text', 'createdAt']) &&
-                         incoming().keys().hasOnly(['conversationId', 'participantUids', 'senderUid', 'senderName', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['conversationId', 'participantUids', 'senderUid', 'senderName', 'text', 'mediaUrl', 'mediaType', 'createdAt']) &&
                          isValidDirectMessage(incoming()) &&
                          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantUids;
 
@@ -556,6 +603,61 @@ service cloud.firestore {
                                isValidAppUpdateConfig(incoming());
 
       allow delete: if isAdmin() && configId == 'update';
+    }
+
+    // 11. Private User Onboarding, Location, DOB, Terms & Admin Block Profile
+    match /user_audit_profiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) &&
+                    (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().isBlockedByAdmin == false &&
+                       incoming().keys().hasAll(['userId', 'numericId', 'userEmail', 'displayName', 'avatarUrl', 'dobIso', 'ageYears', 'locationLabel', 'locationLat', 'locationLng', 'locationStatus', 'termsAccepted', 'onboardingCompleted', 'isBlockedByAdmin', 'firstLoginAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'numericId', 'userEmail', 'displayName', 'avatarUrl', 'dobIso', 'ageYears', 'locationLabel', 'locationLat', 'locationLng', 'locationStatus', 'termsAccepted', 'onboardingCompleted', 'isBlockedByAdmin', 'firstLoginAt', 'updatedAt']) &&
+                       isValidUserAuditProfile(incoming());
+
+      allow update: if isValidId(userId) &&
+                       isValidUserAuditProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().firstLoginAt == existing().firstLoginAt && (
+                         (isSignedIn() &&
+                          request.auth.uid == userId &&
+                          incoming().isBlockedByAdmin == existing().isBlockedByAdmin &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['numericId', 'userEmail', 'displayName', 'avatarUrl', 'dobIso', 'ageYears', 'locationLabel', 'locationLat', 'locationLng', 'locationStatus', 'termsAccepted', 'onboardingCompleted', 'updatedAt'])) ||
+                         (isAdmin() &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['isBlockedByAdmin', 'updatedAt']))
+                       );
+
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // 12. 7-Month Retained Activity & Chat/Inbox/DP Logs (User writes own; ONLY Admin can read/inspect/purge)
+    match /user_activity_logs/{logId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isSignedIn() &&
+                       isValidId(logId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'numericId', 'userEmail', 'userName', 'userAvatarUrl', 'activityType', 'roomId', 'roomTitle', 'roomCode', 'conversationId', 'targetUid', 'targetNumericId', 'targetName', 'textContent', 'mediaUrl', 'dateKey', 'enteredAtMs', 'exitedAtMs', 'durationSeconds', 'createdAt', 'expiresAt']) &&
+                       incoming().keys().hasOnly(['userId', 'numericId', 'userEmail', 'userName', 'userAvatarUrl', 'activityType', 'roomId', 'roomTitle', 'roomCode', 'conversationId', 'targetUid', 'targetNumericId', 'targetName', 'textContent', 'mediaUrl', 'dateKey', 'enteredAtMs', 'exitedAtMs', 'durationSeconds', 'createdAt', 'expiresAt']) &&
+                       isValidUserActivityLog(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(logId) &&
+                       existing().userId == request.auth.uid &&
+                       existing().activityType == 'room_visit' &&
+                       isValidUserActivityLog(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().activityType == existing().activityType &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().expiresAt == existing().expiresAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['exitedAtMs', 'durationSeconds']);
+
+      allow delete: if isAdmin() && isValidId(logId);
     }
   }
 }

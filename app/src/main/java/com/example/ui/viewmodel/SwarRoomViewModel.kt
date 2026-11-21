@@ -27,9 +27,13 @@ import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
+import com.example.data.model.UserActivityLog
+import com.example.data.model.UserAuditProfile
 import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
 import com.example.data.repository.AppUpdateInfo
+import com.example.data.repository.AuditDateLocationHelper
+import com.example.data.repository.CapturedLocationResult
 import com.example.data.repository.GitHubUpdateChecker
 import com.example.data.repository.MediaCompressor
 import com.example.data.repository.SupabaseNetworkClient
@@ -111,6 +115,32 @@ class SwarRoomViewModel(
       .map<UserProfile?, UiState<UserProfile?>> { UiState.Success(it) }
       .catch { error -> emit(UiState.Error(unwrapFirestoreMessage(error, "प्रोफ़ाइल लोड नहीं हो सकी"))) }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), UiState.Loading)
+
+  val ownAuditProfile: StateFlow<UiState<UserAuditProfile?>> =
+    repository.observeOwnAuditProfile(currentUserId)
+      .map<UserAuditProfile?, UiState<UserAuditProfile?>> { UiState.Success(it) }
+      .catch { error -> emit(UiState.Error(unwrapFirestoreMessage(error, "ऑडिट प्रोफ़ाइल लोड नहीं हो सकी"))) }
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), UiState.Loading)
+
+  val adminAuditProfiles: StateFlow<List<UserAuditProfile>> =
+    if (isAdminUser) {
+      repository.observeAllAuditProfilesAsAdmin().catch { emit(emptyList()) }
+    } else {
+      flowOf(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+
+  val adminActivityLogs: StateFlow<List<UserActivityLog>> =
+    if (isAdminUser) {
+      repository.observeAllActivityLogsAsAdmin().catch { emit(emptyList()) }
+    } else {
+      flowOf(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+
+  private val _isSubmittingOnboarding = MutableStateFlow(false)
+  val isSubmittingOnboarding: StateFlow<Boolean> = _isSubmittingOnboarding.asStateFlow()
+
+  private val _isPurgingExpiredLogs = MutableStateFlow(false)
+  val isPurgingExpiredLogs: StateFlow<Boolean> = _isPurgingExpiredLogs.asStateFlow()
 
   val rooms: StateFlow<UiState<List<VoiceRoom>>> =
     repository.observePublicRooms()
@@ -258,6 +288,14 @@ class SwarRoomViewModel(
   private val _activeRoomId = MutableStateFlow<String?>(null)
   val activeRoomId: StateFlow<String?> = _activeRoomId.asStateFlow()
 
+  @Volatile
+  private var activeVisitLogId: String? = null
+
+  @Volatile
+  private var activeVisitEnteredAtMs: Long = 0L
+
+  private var heartbeatTickCount: Int = 0
+
   private val _roomJoinedAtMs = MutableStateFlow(0L)
   private val _presenceClockMs = MutableStateFlow(System.currentTimeMillis())
 
@@ -384,16 +422,25 @@ class SwarRoomViewModel(
     viewModelScope.launch {
       _activeRoomId.collectLatest { roomId ->
         if (roomId == null) return@collectLatest
+        heartbeatTickCount = 0
         while (isActive && _activeRoomId.value == roomId) {
           delay(HEARTBEAT_INTERVAL_MS)
           if (_activeRoomId.value != roomId) break
-          _presenceClockMs.value = System.currentTimeMillis()
+          heartbeatTickCount++
+          val nowMs = System.currentTimeMillis()
+          _presenceClockMs.value = nowMs
           if (!isNetworkConnected()) {
             leaveRoomOnNetworkLoss()
             break
           }
           val profile = currentProfileOrDefault()
           runCatching { repository.touchRoomPresenceHeartbeat(roomId, profile) }
+          val visitLogId = activeVisitLogId
+          val enteredMs = activeVisitEnteredAtMs
+          if (heartbeatTickCount % 4 == 0 && !visitLogId.isNullOrBlank() && enteredMs > 0L) {
+            val durSec = ((nowMs - enteredMs) / 1000L).coerceAtLeast(1L)
+            runCatching { repository.updateRoomVisitDuration(visitLogId, nowMs, durSec) }
+          }
           val seats = activeRoomSeats.value
           val mySeat = seats.firstOrNull { it.occupantUid == currentUserId }
           if (mySeat != null) {
@@ -420,6 +467,12 @@ class SwarRoomViewModel(
 
     viewModelScope.launch {
       repository.ensureUserProfile(initialDisplayName, initialAvatarUrl)
+    }
+
+    if (isAdminUser) {
+      viewModelScope.launch {
+        runCatching { repository.purgeExpiredActivityLogs() }
+      }
     }
 
     // Observe claimed level rewards & auto-award newly unlocked level coins once per tier
@@ -643,11 +696,18 @@ class SwarRoomViewModel(
         }
     }
 
-    // Keep own profile synced in memberProfiles cache and prefetch profiles of seated room members
+    // Keep own profile synced in memberProfiles cache and audit profile identity
     viewModelScope.launch {
       userProfile.collect { state ->
         val mine = (state as? UiState.Success)?.data ?: return@collect
         _memberProfiles.update { it + (currentUserId to mine) }
+        runCatching {
+          repository.syncAuditProfileIdentity(
+            userEmail = currentUserEmail,
+            displayName = mine.displayName,
+            avatarUrl = mine.avatarUrl,
+          )
+        }
       }
     }
     viewModelScope.launch {
@@ -903,6 +963,7 @@ class SwarRoomViewModel(
     )
     viewModelScope.launch {
       if (prevRoomId != null) {
+        flushActiveRoomVisitDuration()
         vacateRoomPresence(prevRoomId, prevSeatHint)
       }
       if (incrementListenerCount) {
@@ -914,6 +975,9 @@ class SwarRoomViewModel(
       val profile = currentProfileOrDefault()
       if (room != null) {
         runCatching { repository.upsertRoomPresence(room, profile) }
+        if (_activeRoomId.value == roomId) {
+          startRoomVisitAuditLog(room = room, enteredAtMs = nowMs)
+        }
       }
       if (room != null && room.ownerId == currentUserId) {
         runCatching { repository.ensureMinimumSeats(room, 22) }
@@ -987,6 +1051,7 @@ class SwarRoomViewModel(
     _activeRoomId.value = null
     viewModelScope.launch {
       try {
+        flushActiveRoomVisitDuration()
         if (vacateRoomPresence(roomId, seatHint)) {
           SeatPresenceTracker.clearPendingCleanup(appContext)
         }
@@ -1042,10 +1107,50 @@ class SwarRoomViewModel(
     _activeRoomId.value = null
     _events.tryEmit("नेटवर्क कनेक्शन कट गया — आप रूम से बाहर आ गए हैं।")
     viewModelScope.launch(Dispatchers.IO) {
+      flushActiveRoomVisitDuration()
       if (vacateRoomPresence(roomId, seatHint)) {
         SeatPresenceTracker.clearPendingCleanup(appContext)
       }
     }
+  }
+
+  private suspend fun startRoomVisitAuditLog(
+    room: VoiceRoom,
+    enteredAtMs: Long,
+  ) {
+    val profile = currentProfileOrDefault()
+    repository.createActivityLog(
+      userEmail = currentUserEmail,
+      userName = profile.displayName,
+      userAvatarUrl = profile.avatarUrl,
+      activityType = "room_visit",
+      roomId = room.id,
+      roomTitle = room.title,
+      roomCode = room.roomCode,
+      enteredAtMs = enteredAtMs,
+      exitedAtMs = enteredAtMs,
+      durationSeconds = 0L,
+    ).onSuccess { createdLogId ->
+      if (_activeRoomId.value == room.id) {
+        activeVisitLogId = createdLogId
+        activeVisitEnteredAtMs = enteredAtMs
+      } else {
+        val exitedMs = System.currentTimeMillis()
+        val durSec = ((exitedMs - enteredAtMs) / 1000L).coerceAtLeast(1L)
+        runCatching { repository.updateRoomVisitDuration(createdLogId, exitedMs, durSec) }
+      }
+    }
+  }
+
+  private suspend fun flushActiveRoomVisitDuration() {
+    val logId = activeVisitLogId ?: return
+    val enteredMs = activeVisitEnteredAtMs
+    activeVisitLogId = null
+    activeVisitEnteredAtMs = 0L
+    if (enteredMs <= 0L) return
+    val exitedMs = System.currentTimeMillis()
+    val durSec = ((exitedMs - enteredMs) / 1000L).coerceAtLeast(1L)
+    runCatching { repository.updateRoomVisitDuration(logId, exitedMs, durSec) }
   }
 
   private suspend fun vacateRoomPresence(roomId: String, seatHint: Int?): Boolean {
@@ -1374,13 +1479,30 @@ class SwarRoomViewModel(
   fun sendRoomText(text: String, messageType: String = "text") {
     val room = activeRoom.value ?: return
     if (text.isBlank()) return
+    val profile = currentProfileOrDefault()
     viewModelScope.launch {
       repository.sendRoomMessage(
         room = room,
-        sender = currentProfileOrDefault(),
+        sender = profile,
         text = text,
         messageType = messageType,
-      ).onFailure {
+      ).onSuccess {
+        if (messageType in listOf("text", "emoji")) {
+          runCatching {
+            repository.createActivityLog(
+              userEmail = currentUserEmail,
+              userName = profile.displayName,
+              userAvatarUrl = profile.avatarUrl,
+              activityType = "room_chat",
+              roomId = room.id,
+              roomTitle = room.title,
+              roomCode = room.roomCode,
+              textContent = text,
+              enteredAtMs = System.currentTimeMillis(),
+            )
+          }
+        }
+      }.onFailure {
         _events.tryEmit("संदेश भेजा नहीं जा सका")
       }
     }
@@ -1429,14 +1551,175 @@ class SwarRoomViewModel(
 
   fun sendDirectMessage(conversation: Conversation, text: String) {
     if (text.isBlank()) return
+    val profile = currentProfileOrDefault()
+    val targetUid = conversation.participantUids.firstOrNull { it != currentUserId }.orEmpty()
+    val targetName = conversation.participantNames[targetUid].orEmpty().ifBlank { "Swar Friend" }
+    val targetNumericId = if (targetUid.isNotBlank()) SwarUserIdentity.numericIdForUid(targetUid) else ""
     viewModelScope.launch {
       repository.sendDirectMessage(
         conversationId = conversation.id,
         participantUids = conversation.participantUids,
-        senderName = currentProfileOrDefault().displayName,
+        senderName = profile.displayName,
         text = text,
-      ).onFailure {
+      ).onSuccess {
+        runCatching {
+          repository.createActivityLog(
+            userEmail = currentUserEmail,
+            userName = profile.displayName,
+            userAvatarUrl = profile.avatarUrl,
+            activityType = "inbox_chat",
+            conversationId = conversation.id,
+            targetUid = targetUid,
+            targetNumericId = targetNumericId,
+            targetName = targetName,
+            textContent = text,
+            enteredAtMs = System.currentTimeMillis(),
+          )
+        }
+      }.onFailure {
         _events.tryEmit("संदेश भेजा नहीं जा सका")
+      }
+    }
+  }
+
+  fun sendDirectImageMessage(conversation: Conversation, imageUri: Uri) {
+    val profile = currentProfileOrDefault()
+    val targetUid = conversation.participantUids.firstOrNull { it != currentUserId }.orEmpty()
+    val targetName = conversation.participantNames[targetUid].orEmpty().ifBlank { "Swar Friend" }
+    val targetNumericId = if (targetUid.isNotBlank()) SwarUserIdentity.numericIdForUid(targetUid) else ""
+    viewModelScope.launch {
+      _isUploadingMedia.value = true
+      val upload = supabaseStorage.uploadMediaFromUri(
+        uri = imageUri,
+        folder = "dm_media",
+        uid = currentUserId,
+        isVideo = false,
+      )
+      _isUploadingMedia.value = false
+      upload.onSuccess { publicUrl ->
+        val caption = "📷 फोटो / DP भेजा"
+        repository.sendDirectMessage(
+          conversationId = conversation.id,
+          participantUids = conversation.participantUids,
+          senderName = profile.displayName,
+          text = caption,
+          mediaUrl = publicUrl,
+          mediaType = "image",
+        ).onSuccess {
+          runCatching {
+            repository.createActivityLog(
+              userEmail = currentUserEmail,
+              userName = profile.displayName,
+              userAvatarUrl = profile.avatarUrl,
+              activityType = "inbox_media",
+              conversationId = conversation.id,
+              targetUid = targetUid,
+              targetNumericId = targetNumericId,
+              targetName = targetName,
+              textContent = caption,
+              mediaUrl = publicUrl,
+              enteredAtMs = System.currentTimeMillis(),
+            )
+          }
+          _events.tryEmit("फ़ोटो / DP इनबॉक्स में भेजा गया!")
+        }.onFailure {
+          _events.tryEmit("फ़ोटो संदेश भेजा नहीं जा सका")
+        }
+      }.onFailure { err ->
+        _events.tryEmit(err.message ?: "फ़ोटो अपलोड विफल")
+      }
+    }
+  }
+
+  // --- First-Time Onboarding & Admin Audit Report / Block Management ---
+
+  fun completeFirstTimeOnboarding(
+    dobIso: String,
+    locationResult: CapturedLocationResult,
+    termsAccepted: Boolean,
+    onSuccess: () -> Unit = {},
+  ) {
+    val age = AuditDateLocationHelper.calculateAgeYears(dobIso)
+    if (dobIso.isBlank() || age < 13) {
+      _events.tryEmit("कृपया मान्य जन्मतिथि चुनें (कम से कम 13 वर्ष आयु आवश्यक है)।")
+      return
+    }
+    if (!termsAccepted) {
+      _events.tryEmit("कृपया आगे बढ़ने से पहले रूम आचार संहिता वाले बॉक्स को टिक करें।")
+      return
+    }
+    viewModelScope.launch {
+      _isSubmittingOnboarding.value = true
+      try {
+        val profile = currentProfileOrDefault()
+        repository.saveOnboardingAuditProfile(
+          userEmail = currentUserEmail,
+          displayName = profile.displayName.ifBlank { initialDisplayName },
+          avatarUrl = profile.avatarUrl.ifBlank { initialAvatarUrl },
+          dobIso = dobIso,
+          locationLabel = locationResult.label,
+          locationLat = locationResult.lat,
+          locationLng = locationResult.lng,
+          locationStatus = locationResult.status,
+          termsAccepted = true,
+          onboardingCompleted = true,
+        ).onSuccess {
+          _events.tryEmit("सत्यापन पूरा हुआ! SwarRoom में आपका स्वागत है 🎉")
+          onSuccess()
+        }.onFailure { err ->
+          _events.tryEmit(err.message ?: "जानकारी सहेजने में त्रुटि हुई")
+        }
+      } finally {
+        _isSubmittingOnboarding.value = false
+      }
+    }
+  }
+
+  fun setUserBlockedByAdmin(
+    targetUid: String,
+    targetName: String,
+    blocked: Boolean,
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन ही यूज़र को ब्लॉक/अनब्लॉक कर सकते हैं।")
+      return
+    }
+    if (targetUid == currentUserId) {
+      _events.tryEmit("आप स्वयं को ब्लॉक नहीं कर सकते।")
+      return
+    }
+    viewModelScope.launch {
+      repository.setUserBlockedByAdmin(targetUid, blocked)
+        .onSuccess {
+          val safeName = targetName.ifBlank { "यूज़र" }
+          _events.tryEmit(
+            if (blocked) "$safeName को एडमिन द्वारा ब्लॉक कर दिया गया।" else "$safeName को अनब्लॉक कर दिया गया।"
+          )
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "ब्लॉक स्थिति बदलने में त्रुटि")
+        }
+    }
+  }
+
+  fun refreshAndPurgeExpiredAuditLogs() {
+    if (!isAdminUser || _isPurgingExpiredLogs.value) return
+    viewModelScope.launch {
+      _isPurgingExpiredLogs.value = true
+      try {
+        repository.purgeExpiredActivityLogs()
+          .onSuccess { deletedCount ->
+            if (deletedCount > 0) {
+              _events.tryEmit("7 महीने से पुराने $deletedCount लॉग्स ऑटो-डिलीट किए गए।")
+            } else {
+              _events.tryEmit("7 माह डेटा अपडेटेड है (कोई एक्सपायर लॉग नहीं मिला)।")
+            }
+          }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "पुराने लॉग हटाने में त्रुटि")
+          }
+      } finally {
+        _isPurgingExpiredLogs.value = false
       }
     }
   }
@@ -2502,6 +2785,17 @@ class SwarRoomViewModel(
 
   override fun onCleared() {
     super.onCleared()
+    val pendingLogId = activeVisitLogId
+    val enteredMs = activeVisitEnteredAtMs
+    activeVisitLogId = null
+    activeVisitEnteredAtMs = 0L
+    if (!pendingLogId.isNullOrBlank() && enteredMs > 0L) {
+      val exitedMs = System.currentTimeMillis()
+      val durSec = ((exitedMs - enteredMs) / 1000L).coerceAtLeast(1L)
+      kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        runCatching { repository.updateRoomVisitDuration(pendingLogId, exitedMs, durSec) }
+      }
+    }
     registeredNetworkCallback?.let { cb ->
       runCatching { registeredConnectivityManager?.unregisterNetworkCallback(cb) }
     }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Backpack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ContentCopy
@@ -79,8 +80,11 @@ import com.example.data.model.GiftCatalogItem
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
+import com.example.data.model.UserActivityLog
+import com.example.data.model.UserAuditProfile
 import com.example.data.model.UserProfile
 import com.example.data.repository.AppUpdateInfo
+import com.example.ui.components.AdminUserAuditDialog
 import com.example.ui.components.AppUpdateCenterDialog
 import com.example.ui.components.FamilyCrestEmblem
 import com.example.ui.components.FramedUserAvatar
@@ -141,6 +145,11 @@ fun ProfileScreen(
   updateCheckError: String? = null,
   onCheckForAppUpdate: () -> Unit = {},
   onSaveGithubRepoLink: (String) -> Unit = {},
+  adminAuditProfiles: List<UserAuditProfile> = emptyList(),
+  adminActivityLogs: List<UserActivityLog> = emptyList(),
+  isPurgingExpiredLogs: Boolean = false,
+  onPurgeExpiredAuditLogs: () -> Unit = {},
+  onToggleUserBlockByAdmin: (targetUid: String, targetName: String, blocked: Boolean) -> Unit = { _, _, _ -> },
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
   var showWalletDialog by remember { mutableStateOf(false) }
@@ -148,6 +157,7 @@ fun ProfileScreen(
   var showLevelDialog by remember { mutableStateOf(false) }
   var showLanguageDialog by remember { mutableStateOf(false) }
   var showUpdateCenterDialog by remember { mutableStateOf(false) }
+  var showAdminAuditDialog by remember { mutableStateOf(false) }
   var selectedLanguage by remember { mutableStateOf("हिंदी (डिफ़ॉल्ट)") }
   var activeFeatureInfo by remember { mutableStateOf<ProfileInfoPayload?>(null) }
 
@@ -599,6 +609,22 @@ fun ProfileScreen(
           onClick = { showUpdateCenterDialog = true },
           modifier = Modifier.testTag("profile_app_update_row"),
         )
+        if (isAdminUser) {
+          MenuHairlineDivider()
+          ProfileMenuRow(
+            title = "यूज़र एक्टिविटी और ऑडिट (7 माह)",
+            icon = Icons.Filled.AdminPanelSettings,
+            iconTint = Color.White,
+            iconBgColor = Color(0xFF4C3585),
+            showNewBadge = true,
+            trailingText = "${adminAuditProfiles.size} यूज़र्स",
+            onClick = {
+              onPurgeExpiredAuditLogs()
+              showAdminAuditDialog = true
+            },
+            modifier = Modifier.testTag("profile_admin_audit_row"),
+          )
+        }
       }
     }
 
@@ -718,6 +744,17 @@ fun ProfileScreen(
       onCheckForUpdate = onCheckForAppUpdate,
       onSaveGithubRepoLink = onSaveGithubRepoLink,
       onDismiss = { showUpdateCenterDialog = false },
+    )
+  }
+
+  if (showAdminAuditDialog && isAdminUser) {
+    AdminUserAuditDialog(
+      auditProfiles = adminAuditProfiles,
+      activityLogs = adminActivityLogs,
+      isPurgingExpired = isPurgingExpiredLogs,
+      onPurgeExpiredLogs = onPurgeExpiredAuditLogs,
+      onToggleUserBlock = onToggleUserBlockByAdmin,
+      onDismiss = { showAdminAuditDialog = false },
     )
   }
 }
