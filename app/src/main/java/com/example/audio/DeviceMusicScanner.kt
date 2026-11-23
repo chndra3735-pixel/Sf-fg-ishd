@@ -43,7 +43,7 @@ object DeviceMusicScanner {
 
   fun hasAudioReadPermission(context: Context): Boolean {
     return ContextCompat.checkSelfPermission(
-      context,
+      context.applicationContext,
       requiredAudioReadPermission(),
     ) == PackageManager.PERMISSION_GRANTED
   }
@@ -63,7 +63,7 @@ object DeviceMusicScanner {
 
   fun takePersistableFolderPermission(context: Context, treeUri: Uri) {
     runCatching {
-      context.contentResolver.takePersistableUriPermission(
+      context.applicationContext.contentResolver.takePersistableUriPermission(
         treeUri,
         Intent.FLAG_GRANT_READ_URI_PERMISSION,
       )
@@ -76,14 +76,19 @@ object DeviceMusicScanner {
   ): List<DeviceMusicTrack> = withContext(Dispatchers.IO) {
     val ctx = context.applicationContext
     val tracks = mutableListOf<DeviceMusicTrack>()
-    val seenKeys = HashSet<String>()
+    val seenIds = HashSet<String>()
+    val seenUris = HashSet<String>()
+    val seenMediaSignatures = HashSet<String>()
 
     fun addTrackIfUnique(track: DeviceMusicTrack) {
       if (tracks.size >= MAX_TRACKS) return
-      val dedupKey = "${track.uri}|${track.title.lowercase(Locale.ROOT)}|${track.durationMs}"
-      if (seenKeys.add(track.uri.toString()) && seenKeys.add(dedupKey)) {
-        tracks.add(track)
+      if (!seenIds.add(track.id)) return
+      if (!seenUris.add(track.uri.toString())) return
+      if (track.durationMs > 0L) {
+        val sig = "${track.title.lowercase(Locale.ROOT)}|${track.artist.lowercase(Locale.ROOT)}|${track.durationMs}"
+        if (!seenMediaSignatures.add(sig)) return
       }
+      tracks.add(track)
     }
 
     if (hasAudioReadPermission(ctx)) {
@@ -94,9 +99,8 @@ object DeviceMusicScanner {
             runCatching { MediaStore.Audio.Media.getContentUri(vol) }.getOrNull()?.let { add(vol to it) }
           }
         }
-        val defaultUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        if (none { it.second == defaultUri }) {
-          add("external" to defaultUri)
+        if (isEmpty()) {
+          add("external" to MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
         }
       }
 
@@ -170,47 +174,53 @@ object DeviceMusicScanner {
         }
 
         while (cursor.moveToNext() && result.size < MAX_TRACKS) {
-          val id = cursor.getLong(idCol)
-          val rawName = if (nameCol >= 0) cursor.getString(nameCol).orEmpty() else ""
-          val rawTitle = if (titleCol >= 0) cursor.getString(titleCol).orEmpty() else ""
-          val displayTitle = rawTitle.trim().ifBlank {
-            rawName.substringBeforeLast('.').trim()
-          }.ifBlank { "ऑडियो ट्रैक #$id" }.take(64)
+          runCatching {
+            val id = cursor.getLong(idCol)
+            val rawName = if (nameCol >= 0) cursor.getString(nameCol).orEmpty() else ""
+            val rawTitle = if (titleCol >= 0) cursor.getString(titleCol).orEmpty() else ""
+            val displayTitle = rawTitle.trim().ifBlank {
+              rawName.substringBeforeLast('.').trim()
+            }.ifBlank { "ऑडियो ट्रैक #$id" }.take(64)
 
-          val rawArtist = if (artistCol >= 0) cursor.getString(artistCol).orEmpty().trim() else ""
-          val cleanArtist = if (rawArtist.equals("<unknown>", ignoreCase = true) || rawArtist.isBlank()) {
-            ""
-          } else {
-            rawArtist.take(40)
+            val rawArtist = if (artistCol >= 0) cursor.getString(artistCol).orEmpty().trim() else ""
+            val cleanArtist = if (rawArtist.equals("<unknown>", ignoreCase = true) || rawArtist.isBlank()) {
+              ""
+            } else {
+              rawArtist.take(40)
+            }
+
+            val durationMs = if (durationCol >= 0) cursor.getLong(durationCol).coerceAtLeast(0L) else 0L
+            val resolvedVolume = if (volCol >= 0) {
+              cursor.getString(volCol).orEmpty().ifBlank { volumeName }
+            } else {
+              volumeName
+            }
+            val relPath = if (relPathCol >= 0) cursor.getString(relPathCol).orEmpty() else ""
+            val dataPath = if (dataCol >= 0) cursor.getString(dataCol).orEmpty() else ""
+
+            val folderLabel = when {
+              relPath.isNotBlank() -> relPath.trimEnd('/').substringAfterLast('/').ifBlank { "Music" }
+              dataPath.isNotBlank() -> dataPath.substringBeforeLast('/').substringAfterLast('/').ifBlank { "Storage" }
+              else -> "Music"
+            }
+            val isSdCard = (resolvedVolume.isNotBlank() &&
+              resolvedVolume != "external_primary" &&
+              resolvedVolume != "external") ||
+              (dataPath.contains("/storage/") && !dataPath.contains("/storage/emulated/"))
+
+            val trackUri = ContentUris.withAppendedId(collectionUri, id)
+            result.add(
+              DeviceMusicTrack(
+                id = "ms_${resolvedVolume}_$id",
+                uri = trackUri,
+                title = displayTitle,
+                artist = cleanArtist,
+                folderName = if (isSdCard) "SD कार्ड • $folderLabel" else folderLabel,
+                durationMs = durationMs,
+                isFromSdCard = isSdCard,
+              ),
+            )
           }
-
-          val durationMs = if (durationCol >= 0) cursor.getLong(durationCol).coerceAtLeast(0L) else 0L
-          val resolvedVolume = if (volCol >= 0) cursor.getString(volCol).orEmpty() else volumeName
-          val relPath = if (relPathCol >= 0) cursor.getString(relPathCol).orEmpty() else ""
-          val dataPath = if (dataCol >= 0) cursor.getString(dataCol).orEmpty() else ""
-
-          val folderLabel = when {
-            relPath.isNotBlank() -> relPath.trimEnd('/').substringAfterLast('/').ifBlank { "Music" }
-            dataPath.isNotBlank() -> dataPath.substringBeforeLast('/').substringAfterLast('/').ifBlank { "Storage" }
-            else -> "Music"
-          }
-          val isSdCard = (resolvedVolume.isNotBlank() &&
-            resolvedVolume != "external_primary" &&
-            resolvedVolume != "external") ||
-            (dataPath.contains("/storage/") && !dataPath.contains("/storage/emulated/"))
-
-          val trackUri = ContentUris.withAppendedId(collectionUri, id)
-          result.add(
-            DeviceMusicTrack(
-              id = "ms_${resolvedVolume}_$id",
-              uri = trackUri,
-              title = displayTitle,
-              artist = cleanArtist,
-              folderName = if (isSdCard) "SD कार्ड • $folderLabel" else folderLabel,
-              durationMs = durationMs,
-              isFromSdCard = isSdCard,
-            ),
-          )
         }
       }
     }.onFailure { err ->
@@ -259,7 +269,7 @@ object DeviceMusicScanner {
                 .ifBlank { "SD कार्ड फ़ोल्डर" }
               collected.add(
                 DeviceMusicTrack(
-                  id = "saf_${childId.hashCode()}",
+                  id = "saf_${treeUri.toString().hashCode().toUInt()}_$childId",
                   uri = fileUri,
                   title = cleanTitle.ifBlank { "ऑडियो ट्रैक" },
                   artist = "",

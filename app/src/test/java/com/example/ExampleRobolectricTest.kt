@@ -1487,4 +1487,69 @@ class ExampleRobolectricTest {
     assertEquals("t2", selectedTrackId)
     composeTestRule.onNodeWithTag("memory_card_music_dialog").assertDoesNotExist()
   }
+
+  @Test
+  fun `memory card music dialog handles duplicate track ids and missing permission without crashing`() {
+    val duplicateTracks = listOf(
+      com.example.audio.DeviceMusicTrack(
+        id = "ms_external_primary_42",
+        uri = Uri.parse("content://media/external_primary/audio/media/42"),
+        title = "सफर गीत",
+        artist = "गायक एक",
+        folderName = "Music",
+        durationMs = 180_000L,
+      ),
+      com.example.audio.DeviceMusicTrack(
+        id = "ms_external_primary_42",
+        uri = Uri.parse("content://media/external/audio/media/42"),
+        title = "सफर गीत",
+        artist = "गायक एक",
+        folderName = "Music",
+        durationMs = 180_000L,
+      ),
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.RoomSettingsSheet(
+          room = com.example.data.model.VoiceRoom(
+            id = "room_dup_music",
+            ownerId = "host_1",
+            ownerName = "होस्ट",
+            title = "सेफ म्यूजिक",
+            roomCode = "101010",
+          ),
+          isHost = true,
+          isUploadingMedia = false,
+          isMonitorLoopbackOn = false,
+          isAgoraConnected = false,
+          agoraStatusText = "",
+          userProfiles = emptyMap(),
+          livePresenceMembers = emptyList(),
+          seats = emptyList(),
+          kickLogs = emptyList(),
+          roomMusicState = com.example.audio.RoomMusicState(),
+          scannedMusicTracks = duplicateTracks,
+          isScanningMusic = false,
+          onToggleMonitorLoopback = {},
+          onUpdateIdentity = { _, _, _, _ -> },
+          onUpdateTheme = { _, _, _ -> },
+          onAddManagerById = {},
+          onRemoveManager = {},
+          onUpdateRoomPinLock = { _, _ -> },
+          onResizeRoomSeats = {},
+          onPickMusicUri = {},
+          onToggleMusicPlayPause = {},
+          onStopMusic = {},
+          onMusicVolumeChange = {},
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_settings_pick_music_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("memory_card_music_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("music_grant_permission_button").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("music_library_list").assertIsDisplayed()
+  }
 }

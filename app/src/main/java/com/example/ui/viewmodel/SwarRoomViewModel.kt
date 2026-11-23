@@ -1883,8 +1883,10 @@ class SwarRoomViewModel(
     viewModelScope.launch {
       _isScanningMusic.value = true
       try {
-        val savedTrees = musicTreePrefs?.getStringSet("tree_uris", emptySet()).orEmpty()
-        val found = DeviceMusicScanner.scanAllDeviceMusic(ctx, savedTrees)
+        val savedTrees = musicTreePrefs?.getStringSet("tree_uris", emptySet()).orEmpty().toSet()
+        val found = runCatching {
+          DeviceMusicScanner.scanAllDeviceMusic(ctx, savedTrees)
+        }.getOrElse { emptyList() }
         _scannedMusicTracks.value = found
         _hasScannedMusicOnce.value = true
       } finally {
@@ -1896,7 +1898,7 @@ class SwarRoomViewModel(
   fun addAndScanMusicFolderTree(treeUri: Uri) {
     val ctx = appContext?.applicationContext ?: return
     DeviceMusicScanner.takePersistableFolderPermission(ctx, treeUri)
-    val existing = musicTreePrefs?.getStringSet("tree_uris", emptySet()).orEmpty()
+    val existing = musicTreePrefs?.getStringSet("tree_uris", emptySet()).orEmpty().toSet()
     musicTreePrefs?.edit()?.putStringSet("tree_uris", existing + treeUri.toString())?.apply()
     scanAllMemoryCardMusic()
   }

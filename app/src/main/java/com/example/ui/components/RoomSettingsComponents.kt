@@ -443,11 +443,13 @@ fun RoomSettingsSheet(
         scannedTracksCount = scannedMusicTracks.size,
         isScanningMusic = isScanningMusic,
         onPickMusicClick = {
+          showMusicLibraryDialog = true
           if (DeviceMusicScanner.hasAudioReadPermission(context)) {
             onScanMemoryCardMusic()
-            showMusicLibraryDialog = true
           } else {
-            audioPermissionLauncher.launch(DeviceMusicScanner.requiredAudioReadPermission())
+            runCatching {
+              audioPermissionLauncher.launch(DeviceMusicScanner.requiredAudioReadPermission())
+            }
           }
         },
         onTogglePlayPause = onToggleMusicPlayPause,
@@ -520,10 +522,12 @@ fun RoomSettingsSheet(
       isPlaying = roomMusicState.isPlaying,
       onRescan = onScanMemoryCardMusic,
       onRequestAudioPermission = {
-        audioPermissionLauncher.launch(DeviceMusicScanner.requiredAudioReadPermission())
+        runCatching {
+          audioPermissionLauncher.launch(DeviceMusicScanner.requiredAudioReadPermission())
+        }
       },
-      onPickFolderTreeClick = { folderTreePicker.launch(null) },
-      onPickSingleFileClick = { musicPicker.launch(arrayOf("audio/*")) },
+      onPickFolderTreeClick = { runCatching { folderTreePicker.launch(null) } },
+      onPickSingleFileClick = { runCatching { musicPicker.launch(arrayOf("audio/*")) } },
       onSelectTrack = { track ->
         onPlayScannedMusicTrack(track)
         showMusicLibraryDialog = false

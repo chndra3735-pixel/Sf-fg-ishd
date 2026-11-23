@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -729,11 +729,11 @@ internal fun MemoryCardMusicLibraryDialog(
             LazyColumn(
               modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 310.dp)
+                .heightIn(max = 260.dp)
                 .testTag("music_library_list"),
               verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-              items(filteredTracks, key = { it.id }) { track ->
+              itemsIndexed(filteredTracks, key = { index, track -> "${track.id}#$index" }) { _, track ->
                 val isCurrent = activeTrackUri == track.uri.toString()
                 Surface(
                   color = if (isCurrent) Color(0x3300E5B4) else Color(0x1BFFFFFF),

@@ -171,7 +171,13 @@ class RoomMusicPlayer(
 
   private fun copyUriToTempTrack(ctx: Context, uri: Uri): File {
     val dir = File(ctx.cacheDir, "room_music").apply { mkdirs() }
-    val ext = ctx.contentResolver.getType(uri)?.substringAfterLast('/')?.take(8)?.ifBlank { "mp3" } ?: "mp3"
+    val ext = ctx.contentResolver.getType(uri)
+      ?.substringAfterLast('/')
+      ?.substringBefore(';')
+      ?.filter { it.isLetterOrDigit() }
+      ?.take(8)
+      ?.ifBlank { "mp3" }
+      ?: "mp3"
     val outFile = File(dir, "active_track.$ext")
     ctx.contentResolver.openInputStream(uri)?.use { input ->
       outFile.outputStream().use { output ->
