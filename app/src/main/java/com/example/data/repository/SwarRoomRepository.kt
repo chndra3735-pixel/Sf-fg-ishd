@@ -10,6 +10,8 @@ import com.example.data.model.GiftEvent
 import com.example.data.model.LevelRewardClaim
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
+import com.example.data.model.NumericIdLookup
+import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
@@ -213,9 +215,9 @@ class SwarRoomRepository(
     val uid = requireUserId()
     val roomId = "room_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val roomRef = db.collection("rooms").document(roomId)
-    val validatedSeats = if (seatCount in listOf(8, 12, 20, 22)) seatCount else 22
+    val validatedSeats = seatCount.coerceIn(1, 22)
     val roomCode = (100000..999999).random().toString()
-    val safeTheme = if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset")) backgroundTheme else "stadium"
+    val safeTheme = if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset", "custom")) backgroundTheme else "stadium"
 
     val batch = db.batch()
     val roomPayload = mapOf(
@@ -227,11 +229,15 @@ class SwarRoomRepository(
       "category" to category.trim().take(24).ifBlank { "लोकप्रिय" },
       "coverUrl" to coverUrl.take(600),
       "backgroundTheme" to safeTheme,
+      "themeBackgroundUrl" to "",
       "clubTag" to clubTag.trim().take(16).ifBlank { hostProfile.clubTag.ifBlank { "SWAR" } },
       "welcomeNotice" to welcomeNotice.trim().take(200).ifBlank {
         "SwarRoom में आपका स्वागत है। कृपया एक दूसरे का सम्मान करें और सभ्य तरीके से चैट करें।"
       },
       "seatCount" to validatedSeats.toLong(),
+      "managerUids" to emptyList<String>(),
+      "isPinLocked" to false,
+      "roomPin" to "",
       "listenerCount" to 1L,
       "isLive" to true,
       "isPublic" to true,
@@ -324,17 +330,26 @@ class SwarRoomRepository(
     backgroundTheme: String,
     welcomeNotice: String,
     coverUrl: String? = null,
+    themeBackgroundUrl: String? = null,
   ): Result<Unit> = runCatching {
     requireUserId()
     val docRef = db.collection("rooms").document(roomId)
+    val safeTheme = if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset", "custom")) {
+      backgroundTheme
+    } else {
+      "stadium"
+    }
     val updates = mutableMapOf<String, Any>(
       "title" to title.trim().take(60).ifBlank { "लाइव वॉइस रूम" },
-      "backgroundTheme" to if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset")) backgroundTheme else "stadium",
+      "backgroundTheme" to safeTheme,
       "welcomeNotice" to welcomeNotice.trim().take(200),
       "updatedAt" to FieldValue.serverTimestamp(),
     )
     if (coverUrl != null) {
-      updates["coverUrl"] = coverUrl.take(600)
+      updates["coverUrl"] = coverUrl.trim().take(600)
+    }
+    if (themeBackgroundUrl != null) {
+      updates["themeBackgroundUrl"] = themeBackgroundUrl.trim().take(800)
     }
     try {
       docRef.update(updates).await()
@@ -342,6 +357,268 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateRoomIdentity(
+    roomId: String,
+    title: String,
+    welcomeNotice: String,
+    coverUrl: String? = null,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    val updates = mutableMapOf<String, Any>(
+      "title" to title.trim().take(60).ifBlank { "लाइव वॉइस रूम" },
+      "welcomeNotice" to welcomeNotice.trim().take(200),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    if (coverUrl != null) {
+      updates["coverUrl"] = coverUrl.trim().take(600)
+    }
+    try {
+      docRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateRoomTheme(
+    roomId: String,
+    backgroundTheme: String,
+    themeBackgroundUrl: String,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    val safeTheme = if (backgroundTheme in listOf("stadium", "aurora", "neon", "sunset", "custom")) {
+      backgroundTheme
+    } else {
+      "stadium"
+    }
+    val updates = mapOf(
+      "backgroundTheme" to safeTheme,
+      "themeBackgroundUrl" to themeBackgroundUrl.trim().take(800),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateRoomManagers(
+    roomId: String,
+    managerUids: List<String>,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    val sanitized = managerUids
+      .map { it.trim() }
+      .filter { it.isNotBlank() }
+      .distinct()
+      .take(5)
+    try {
+      docRef.update(
+        mapOf(
+          "managerUids" to sanitized,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateRoomPinLock(
+    roomId: String,
+    isPinLocked: Boolean,
+    roomPin: String,
+  ): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("rooms").document(roomId)
+    val cleanPin = roomPin.filter { it.isDigit() }.take(8)
+    require(!isPinLocked || cleanPin.length in 4..8) {
+      "रूम लॉक करने के लिए 4 से 8 अंकों का पिन कोड डालें।"
+    }
+    try {
+      docRef.update(
+        mapOf(
+          "isPinLocked" to isPinLocked,
+          "roomPin" to if (isPinLocked) cleanPin else "",
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun resizeRoomSeats(
+    room: VoiceRoom,
+    newSeatCount: Int,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    require(room.ownerId == uid) { "केवल रूम होस्ट ही सीटों की संख्या बदल सकते हैं।" }
+    val safeCount = newSeatCount.coerceIn(1, 22)
+    val roomRef = db.collection("rooms").document(room.id)
+    val seatsCollection = roomRef.collection("seats")
+    val existing = seatsCollection.whereEqualTo("isRoomPublic", room.isPublic).get().await()
+    val existingIndices = existing.documents
+      .mapNotNull { it.getLong("seatIndex")?.toInt() }
+      .toSet()
+
+    val batch = db.batch()
+    batch.update(
+      roomRef,
+      mapOf(
+        "seatCount" to safeCount.toLong(),
+        "updatedAt" to FieldValue.serverTimestamp(),
+      ),
+    )
+
+    for (index in 0 until safeCount) {
+      if (index !in existingIndices) {
+        val seatRef = seatsCollection.document("seat_$index")
+        val seatPayload = mapOf(
+          "roomId" to room.id,
+          "roomOwnerId" to room.ownerId,
+          "isRoomPublic" to room.isPublic,
+          "seatIndex" to index.toLong(),
+          "occupantUid" to "",
+          "occupantName" to "",
+          "occupantAvatarUrl" to "",
+          "isLocked" to false,
+          "isMuted" to false,
+          "isSpeaking" to false,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        )
+        batch.set(seatRef, seatPayload)
+      }
+    }
+
+    existing.documents.forEach { doc ->
+      val idx = doc.getLong("seatIndex")?.toInt() ?: 0
+      if (idx >= safeCount) {
+        batch.delete(doc.reference)
+      }
+    }
+
+    try {
+      batch.commit().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, roomRef.path)
+      throw e
+    }
+  }
+
+  suspend fun upsertNumericIdLookup(
+    displayName: String,
+    avatarUrl: String,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val numericId = SwarUserIdentity.numericIdForUid(uid)
+    val docRef = db.collection("numeric_id_lookup").document(numericId)
+    val payload = mapOf(
+      "userId" to uid,
+      "numericId" to numericId,
+      "displayName" to displayName.trim().take(40).ifBlank { "Swar User" },
+      "avatarUrl" to avatarUrl.trim().take(600),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun findUserByNumericId(numericId: String): NumericIdLookup? {
+    requireUserId()
+    val cleanId = numericId.filter { it.isDigit() }
+    if (cleanId.length != 10) return null
+    val docRef = db.collection("numeric_id_lookup").document(cleanId)
+    return try {
+      val snap = docRef.get().await()
+      if (snap.exists()) snap.toObject(NumericIdLookup::class.java, ServerTimestampBehavior.ESTIMATE)
+      else null
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.GET, docRef.path)
+      null
+    }
+  }
+
+  fun observeRoomKickLogs(roomId: String): Flow<List<RoomKickLog>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("rooms").document(roomId).collection("kick_logs")
+      .whereEqualTo("isRoomPublic", true)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(RoomKickLog::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.kickedAtMs }
+            .take(80)
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "rooms/$roomId/kick_logs", uid); throw error }
+    )
+  }
+
+  suspend fun createRoomKickLog(
+    room: VoiceRoom,
+    actor: UserProfile,
+    actorRole: String,
+    targetUid: String,
+    targetName: String,
+    targetAvatarUrl: String,
+    reason: String = "रूम से बाहर किया गया",
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val safeRole = if (actorRole == "manager") "manager" else "owner"
+    val logId = "kick_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val docRef = db.collection("rooms").document(room.id).collection("kick_logs").document(logId)
+    val payload = mapOf(
+      "roomId" to room.id,
+      "roomOwnerId" to room.ownerId,
+      "isRoomPublic" to room.isPublic,
+      "actorUid" to uid,
+      "actorNumericId" to SwarUserIdentity.numericIdForUid(uid).take(20),
+      "actorName" to actor.displayName.trim().take(40).ifBlank { "Admin" },
+      "actorAvatarUrl" to actor.avatarUrl.trim().take(600),
+      "actorRole" to safeRole,
+      "targetUid" to targetUid.trim().take(128),
+      "targetNumericId" to SwarUserIdentity.numericIdForUid(targetUid).take(20),
+      "targetName" to targetName.trim().take(40).ifBlank { "Member" },
+      "targetAvatarUrl" to targetAvatarUrl.trim().take(600),
+      "reason" to reason.trim().take(200),
+      "kickedAtMs" to System.currentTimeMillis(),
+      "createdAt" to FieldValue.serverTimestamp(),
+    )
+    try {
+      docRef.set(payload).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
       throw e
     }
   }
@@ -552,8 +829,9 @@ class SwarRoomRepository(
   suspend fun vacateUserSeatsInRoom(
     roomId: String,
     seatIndexHint: Int? = null,
+    targetUid: String? = null,
   ): Result<Int> = runCatching {
-    val uid = requireUserId()
+    val uid = targetUid?.takeIf { it.isNotBlank() } ?: requireUserId()
     val seatsCollection = db.collection("rooms").document(roomId).collection("seats")
     val emptyUpdates = mapOf(
       "occupantUid" to "",
@@ -1456,6 +1734,7 @@ class SwarRoomRepository(
     avatarFrameUrl: String,
     rewardCoins: Long,
     profileBadgeUrl: String,
+    typingBannerUrl: String = "",
   ): Result<Unit> = runCatching {
     val uid = requireUserId()
     require(badgeLevel in VALID_TIER_LEVELS) { "अमान्य स्तर चयनित है।" }
@@ -1466,6 +1745,7 @@ class SwarRoomRepository(
       "avatarFrameUrl" to avatarFrameUrl.trim().take(800),
       "rewardCoins" to rewardCoins.coerceIn(0L, 999999L),
       "profileBadgeUrl" to profileBadgeUrl.trim().take(800),
+      "typingBannerUrl" to typingBannerUrl.trim().take(800),
       "updatedByUid" to uid,
       "updatedAt" to FieldValue.serverTimestamp(),
     )

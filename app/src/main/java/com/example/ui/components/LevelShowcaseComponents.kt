@@ -82,6 +82,7 @@ import com.example.data.model.UserLevelInfo
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarGold
 import com.example.ui.theme.SwarMint
+import com.example.ui.theme.SwarViolet
 
 @Composable
 fun OrnateWingedLevelCrest(
@@ -332,6 +333,21 @@ fun LevelTierLargeCard(
             }
           }
         }
+        if (config.typingBannerUrl.isNotBlank()) {
+          Surface(
+            color = SwarViolet.copy(alpha = 0.25f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.border(0.8.dp, SwarViolet.copy(alpha = 0.6f), RoundedCornerShape(8.dp)),
+          ) {
+            Text(
+              text = "पट्टी",
+              fontSize = 8.sp,
+              color = Color.White,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+            )
+          }
+        }
         if (config.rewardCoins > 0L) {
           Surface(
             color = SwarGold.copy(alpha = 0.2f),
@@ -524,8 +540,10 @@ fun LevelCardsShowcaseDialog(
     rewardCoins: Long,
     badgeLink: String,
     badgeUri: Uri?,
+    typingBannerLink: String,
+    typingBannerUri: Uri?,
     onDone: () -> Unit,
-  ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
+  ) -> Unit = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
   onClaimTierReward: (Int) -> Unit = {},
 ) {
   val tiers = SwarUserIdentity.levelTiers

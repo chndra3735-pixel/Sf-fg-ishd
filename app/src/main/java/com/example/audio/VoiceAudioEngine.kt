@@ -335,12 +335,46 @@ class VoiceAudioEngine(private val appContext: Context) {
     _isAgoraConnected.value = false
     if (isAgoraConfigured) {
       runCatching {
+        rtcEngine?.stopAudioMixing()
         rtcEngine?.muteLocalAudioStream(true)
         rtcEngine?.leaveChannel()
       }
     }
     stopCapture()
     _agoraStatusText.value = if (isAgoraConfigured) "Agora लाइव वॉइस तैयार" else "Agora App ID आवश्यक है"
+  }
+
+  val canBroadcastMixingAudio: Boolean
+    get() = isAgoraConfigured && _isAgoraConnected.value && currentIsBroadcaster && rtcEngine != null
+
+  fun startMusicMixing(filePath: String, volumePercent: Int): Boolean {
+    val engine = rtcEngine ?: return false
+    if (!canBroadcastMixingAudio) return false
+    return runCatching {
+      val rc = engine.startAudioMixing(filePath, false, 1, 0)
+      if (rc == 0) {
+        engine.adjustAudioMixingVolume(volumePercent.coerceIn(0, 100))
+        true
+      } else {
+        false
+      }
+    }.getOrDefault(false)
+  }
+
+  fun pauseMusicMixing() {
+    runCatching { rtcEngine?.pauseAudioMixing() }
+  }
+
+  fun resumeMusicMixing() {
+    runCatching { rtcEngine?.resumeAudioMixing() }
+  }
+
+  fun stopMusicMixing() {
+    runCatching { rtcEngine?.stopAudioMixing() }
+  }
+
+  fun setMusicMixingVolume(volumePercent: Int) {
+    runCatching { rtcEngine?.adjustAudioMixingVolume(volumePercent.coerceIn(0, 100)) }
   }
 
   private data class FetchedToken(val token: String, val uid: Int)

@@ -324,4 +324,16 @@ object SwarUserIdentity {
     }
     return null
   }
+
+  fun highestUnlockedTypingBannerUrl(
+    level: Int,
+    configs: Map<Int, LevelTierConfig>,
+  ): String {
+    val unlocked = unlockedTiersForLevel(level).asReversed()
+    for (tier in unlocked) {
+      val url = configs[tier.badgeLevel]?.typingBannerUrl?.trim().orEmpty()
+      if (url.isNotBlank()) return url
+    }
+    return ""
+  }
 }

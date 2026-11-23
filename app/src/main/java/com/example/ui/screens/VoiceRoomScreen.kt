@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -126,10 +127,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.audio.RoomMusicState
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
 import com.example.data.model.LevelTierConfig
+import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
@@ -144,6 +147,8 @@ import com.example.ui.components.GiftPanelSheet
 import com.example.ui.components.LevelCardsShowcaseDialog
 import com.example.ui.components.OrnateWingedLevelCrest
 import com.example.ui.components.ProfileSideBadgesShowcaseCard
+import com.example.ui.components.RoomSettingsSheet
+import com.example.ui.components.TypingBannerChatBubble
 import com.example.ui.components.UserAvatar
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
@@ -242,10 +247,31 @@ fun VoiceRoomScreen(
     rewardCoins: Long,
     badgeLink: String,
     badgeUri: Uri?,
+    typingBannerLink: String,
+    typingBannerUri: Uri?,
     onDone: () -> Unit,
-  ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
+  ) -> Unit = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
   onClaimLevelTierReward: (Int) -> Unit = {},
   livePresenceMembers: List<RoomPresenceMember> = emptyList(),
+  kickLogs: List<RoomKickLog> = emptyList(),
+  roomMusicState: RoomMusicState = RoomMusicState(),
+  onUpdateRoomIdentity: (title: String, welcomeNotice: String, newCoverUri: Uri?, newCoverLink: String) -> Unit = { title, notice, _, _ ->
+    onUpdateRoomSettings(title, room.backgroundTheme, notice)
+  },
+  onUpdateRoomTheme: (backgroundTheme: String, customThemeUri: Uri?, customThemeLink: String) -> Unit = { theme, _, _ ->
+    onUpdateRoomSettings(room.title, theme, room.welcomeNotice)
+  },
+  onAddRoomManagerById: (String) -> Unit = {},
+  onRemoveRoomManager: (String) -> Unit = {},
+  onUpdateRoomPinLock: (Boolean, String) -> Unit = { _, _ -> },
+  onResizeRoomSeats: (Int) -> Unit = {},
+  onPickRoomMusic: (Uri) -> Unit = {},
+  onToggleRoomMusicPlayPause: () -> Unit = {},
+  onStopRoomMusic: () -> Unit = {},
+  onRoomMusicVolumeChange: (Int) -> Unit = {},
+  onKickRoomMember: (targetUid: String, targetName: String, targetAvatarUrl: String) -> Unit = { uid, _, _ ->
+    seats.firstOrNull { it.occupantUid == uid }?.let { onKickSeatOccupant(it) }
+  },
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -291,9 +317,16 @@ fun VoiceRoomScreen(
   }
 
   val isHost = room.ownerId == currentUserId
-  val topSeats = remember(seats, room) {
-    listOf(0L, 1L).map { idx ->
-      seats.firstOrNull { it.seatIndex == idx } ?: RoomSeat(
+  val isManager = currentUserId in room.managerUids
+  val isModerator = isHost || isManager
+  val configuredSeatCount = room.seatCount.toInt().coerceIn(1, 22)
+  val visibleSeats = remember(seats, configuredSeatCount) {
+    seats.filter { it.seatIndex in 0L until configuredSeatCount.toLong() }.sortedBy { it.seatIndex }
+  }
+  val topSeats = remember(visibleSeats, configuredSeatCount, room) {
+    val indices = if (configuredSeatCount >= 2) listOf(0L, 1L) else listOf(0L)
+    indices.map { idx ->
+      visibleSeats.firstOrNull { it.seatIndex == idx } ?: RoomSeat(
         id = "seat_$idx",
         roomId = room.id,
         roomOwnerId = room.ownerId,
@@ -302,8 +335,8 @@ fun VoiceRoomScreen(
       )
     }
   }
-  val guestSeats = remember(seats) { seats.filter { it.seatIndex >= 2L } }
-  val seatedMembers = remember(seats) { seats.filter { it.occupantUid.isNotBlank() } }
+  val guestSeats = remember(visibleSeats) { visibleSeats.filter { it.seatIndex >= 2L } }
+  val seatedMembers = remember(visibleSeats) { visibleSeats.filter { it.occupantUid.isNotBlank() } }
   LaunchedEffect(seatedMembers) {
     seatedMembers.forEach { seat ->
       val uid = seat.occupantUid
@@ -313,7 +346,7 @@ fun VoiceRoomScreen(
     }
   }
   val seatedUids = remember(seatedMembers) { seatedMembers.map { it.occupantUid }.toSet() }
-  val totalSeatCount = if (seats.isNotEmpty()) seats.size else room.seatCount.toInt()
+  val totalSeatCount = configuredSeatCount
   val isCurrentUserSeated = currentUserId in seatedUids
   val hostView = LocalView.current
   DisposableEffect(hostView, isCurrentUserSeated) {
@@ -467,24 +500,60 @@ fun VoiceRoomScreen(
     },
   ) {
   Box(modifier = Modifier.fillMaxSize()) {
-    // Full-bleed atmospheric background matching Screenshot 1
-    val bgRes = when (room.backgroundTheme) {
-      "aurora" -> R.drawable.img_room_bg_aurora
-      else -> R.drawable.img_room_bg_stadium
+    // Full-bleed atmospheric background (Preset themes OR Host Custom Theme Background visible to everyone)
+    when {
+      room.themeBackgroundUrl.isNotBlank() -> {
+        AsyncImage(
+          model = room.themeBackgroundUrl,
+          contentDescription = "रूम थीम बैकग्राउंड",
+          modifier = Modifier
+            .fillMaxSize()
+            .testTag("room_custom_theme_background"),
+          contentScale = ContentScale.Crop,
+        )
+      }
+      room.backgroundTheme == "neon" -> {
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .background(
+              Brush.verticalGradient(
+                colors = listOf(Color(0xFF0A0624), Color(0xFF1E0B4B), Color(0xFF062C42))
+              )
+            ),
+        )
+      }
+      room.backgroundTheme == "sunset" -> {
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .background(
+              Brush.verticalGradient(
+                colors = listOf(Color(0xFF3A0F2E), Color(0xFF6B1E3D), Color(0xFF1F0C29))
+              )
+            ),
+        )
+      }
+      else -> {
+        val bgRes = when (room.backgroundTheme) {
+          "aurora" -> R.drawable.img_room_bg_aurora
+          else -> R.drawable.img_room_bg_stadium
+        }
+        Image(
+          painter = painterResource(id = bgRes),
+          contentDescription = null,
+          modifier = Modifier.fillMaxSize(),
+          contentScale = ContentScale.Crop,
+        )
+      }
     }
-    Image(
-      painter = painterResource(id = bgRes),
-      contentDescription = null,
-      modifier = Modifier.fillMaxSize(),
-      contentScale = ContentScale.Crop,
-    )
-    if (room.coverUrl.isNotBlank()) {
+    if (room.themeBackgroundUrl.isBlank() && room.coverUrl.isNotBlank()) {
       AsyncImage(
         model = room.coverUrl,
         contentDescription = null,
         modifier = Modifier.fillMaxSize(),
         contentScale = ContentScale.Crop,
-        alpha = 0.55f,
+        alpha = 0.45f,
       )
     }
     Box(
@@ -578,6 +647,47 @@ fun VoiceRoomScreen(
           }
         }
 
+        if (room.isPinLocked && room.roomPin.isNotBlank()) {
+          Surface(
+            color = Color(0x55FFB800),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+              .border(1.dp, SwarGold.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+              .testTag("room_top_lock_badge"),
+          ) {
+            Icon(
+              imageVector = Icons.Filled.Lock,
+              contentDescription = "रूम पिन लॉक सक्रिय",
+              tint = SwarGold,
+              modifier = Modifier
+                .padding(5.dp)
+                .size(14.dp),
+            )
+          }
+          Spacer(modifier = Modifier.width(6.dp))
+        }
+
+        if (roomMusicState.isPrepared) {
+          Surface(
+            onClick = { showSettingsDialog = true },
+            color = Color(0x5500E5B4),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+              .border(1.dp, SwarMint.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+              .testTag("room_top_music_badge"),
+          ) {
+            Icon(
+              imageVector = Icons.Filled.MusicNote,
+              contentDescription = "रूम संगीत नियंत्रण",
+              tint = SwarMint,
+              modifier = Modifier
+                .padding(5.dp)
+                .size(14.dp),
+            )
+          }
+          Spacer(modifier = Modifier.width(6.dp))
+        }
+
         if (room.clubTag.isNotBlank()) {
           Surface(
             color = Color(0x88173F3B),
@@ -609,7 +719,10 @@ fun VoiceRoomScreen(
           )
         }
 
-        IconButton(onClick = { showSettingsDialog = true }) {
+        IconButton(
+          onClick = { showSettingsDialog = true },
+          modifier = Modifier.testTag("room_settings_button"),
+        ) {
           Icon(Icons.Filled.Settings, contentDescription = "रूम सेटिंग्स", tint = Color.White)
         }
         IconButton(onClick = { onShowToast("रूम ID कॉपी हो गई: ${room.roomCode}") }) {
@@ -714,8 +827,25 @@ fun VoiceRoomScreen(
             }
           }
           items(visibleMessages, key = { it.id.ifBlank { "${it.senderUid}_${it.text.hashCode()}" } }) { msg ->
+            if (msg.senderUid.isNotBlank() && msg.senderUid != currentUserId && msg.senderUid !in userProfiles) {
+              LaunchedEffect(msg.senderUid) {
+                onRequestUserProfile(msg.senderUid)
+              }
+            }
+            val senderCoins = if (msg.senderUid == currentUserId) {
+              userCoins
+            } else {
+              userProfiles[msg.senderUid]?.coins ?: 1500L
+            }
+            val senderLevel = SwarUserIdentity.levelForCoins(senderCoins).level
+            val senderTypingBannerUrl = if (msg.messageType == "text") {
+              SwarUserIdentity.highestUnlockedTypingBannerUrl(senderLevel, levelConfigs)
+            } else {
+              ""
+            }
             RoomMessageBubble(
               message = msg,
+              typingBannerUrl = senderTypingBannerUrl,
               onClick = if (msg.senderUid.isNotBlank()) {
                 {
                   selectedProfileTarget = RoomProfileTarget(
@@ -954,6 +1084,21 @@ fun VoiceRoomScreen(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
+          if (profileTarget.uid == room.ownerId || profileTarget.uid in room.managerUids) {
+            val roleLabel = if (profileTarget.uid == room.ownerId) "होस्ट" else "मैनेजर"
+            Surface(
+              color = if (profileTarget.uid == room.ownerId) SwarGold.copy(alpha = 0.28f) else SwarCyan.copy(alpha = 0.28f),
+              shape = RoundedCornerShape(8.dp),
+            ) {
+              Text(
+                text = roleLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (profileTarget.uid == room.ownerId) SwarGold else SwarCyan,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+              )
+            }
+          }
           if (resolvedClub.isNotBlank()) {
             Surface(
               color = SwarViolet.copy(alpha = 0.55f),
@@ -1140,7 +1285,7 @@ fun VoiceRoomScreen(
               }
             }
 
-            if (isHost) {
+            if (isModerator) {
               val seatToToggleLock = liveSeat ?: topSeats.firstOrNull()
               if (seatToToggleLock != null) {
                 OutlinedButton(
@@ -1195,15 +1340,16 @@ fun VoiceRoomScreen(
             }
           }
         } else {
-          // Other User Bottom Controls: Kick Out + Block + Mute (+ Lock if host seat & DM)
+          // Other User Bottom Controls: Host & Managers can Kick Out / Mute / Lock Seat (never Owner)
+          val canModerateTarget = isModerator && profileTarget.uid != room.ownerId && profileTarget.uid != currentUserId
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            if (isHost && liveSeat != null) {
+            if (canModerateTarget) {
               Button(
                 onClick = {
-                  onKickSeatOccupant(liveSeat)
+                  onKickRoomMember(profileTarget.uid, resolvedName, resolvedAvatar)
                   selectedProfileTarget = null
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SwarCoral, contentColor = Color.White),
@@ -1247,7 +1393,7 @@ fun VoiceRoomScreen(
               )
             }
 
-            if (isHost && liveSeat != null) {
+            if (canModerateTarget && liveSeat != null) {
               OutlinedButton(
                 onClick = {
                   onToggleSeatMute(liveSeat, hasAudioPermission.value) {
@@ -1276,7 +1422,7 @@ fun VoiceRoomScreen(
             }
           }
 
-          if (isHost && liveSeat != null) {
+          if (canModerateTarget && liveSeat != null) {
             OutlinedButton(
               onClick = {
                 onToggleSeatLock(liveSeat)
@@ -1345,7 +1491,7 @@ fun VoiceRoomScreen(
 
         Button(
           onClick = {
-            if (sheetSeat.isLocked && isHost) {
+            if (sheetSeat.isLocked && isModerator) {
               onToggleSeatLock(sheetSeat)
             }
             onSeatTapped(sheetSeat.copy(isLocked = false), hasAudioPermission.value) {
@@ -1353,7 +1499,7 @@ fun VoiceRoomScreen(
             }
             selectedSeatForSheet = null
           },
-          enabled = !sheetSeat.isLocked || isHost,
+          enabled = !sheetSeat.isLocked || isModerator,
           colors = ButtonDefaults.buttonColors(containerColor = SwarCyan, contentColor = Color(0xFF041A24)),
           modifier = Modifier
             .fillMaxWidth()
@@ -1368,7 +1514,7 @@ fun VoiceRoomScreen(
           )
         }
 
-        if (isHost) {
+        if (isModerator) {
           OutlinedButton(
             onClick = {
               onToggleSeatMute(sheetSeat, hasAudioPermission.value) {
@@ -1412,19 +1558,31 @@ fun VoiceRoomScreen(
     }
   }
 
-  // Room Settings & Audio Monitor Dialog
+  // Room Control Studio Sheet (DP/Name, Themes, Managers, Kick Audit, Memory Music, PIN Lock, Seat Count, Audio)
   if (showSettingsDialog) {
-    RoomSettingsDialog(
+    RoomSettingsSheet(
       room = room,
       isHost = isHost,
+      isUploadingMedia = isUploadingMedia,
       isMonitorLoopbackOn = isMonitorLoopbackOn,
       isAgoraConnected = isAgoraConnected,
       agoraStatusText = agoraStatusText,
+      userProfiles = userProfiles,
+      livePresenceMembers = livePresenceMembers,
+      seats = visibleSeats,
+      kickLogs = kickLogs,
+      roomMusicState = roomMusicState,
       onToggleMonitorLoopback = onToggleMonitorLoopback,
-      onSave = { newTitle, newTheme, newNotice ->
-        onUpdateRoomSettings(newTitle, newTheme, newNotice)
-        showSettingsDialog = false
-      },
+      onUpdateIdentity = onUpdateRoomIdentity,
+      onUpdateTheme = onUpdateRoomTheme,
+      onAddManagerById = onAddRoomManagerById,
+      onRemoveManager = onRemoveRoomManager,
+      onUpdateRoomPinLock = onUpdateRoomPinLock,
+      onResizeRoomSeats = onResizeRoomSeats,
+      onPickMusicUri = onPickRoomMusic,
+      onToggleMusicPlayPause = onToggleRoomMusicPlayPause,
+      onStopMusic = onStopRoomMusic,
+      onMusicVolumeChange = onRoomMusicVolumeChange,
       onDismiss = { showSettingsDialog = false },
     )
   }
@@ -2191,49 +2349,23 @@ private fun SeatEmojiReactionOverlay(
 @Composable
 private fun RoomMessageBubble(
   message: RoomMessage,
+  typingBannerUrl: String = "",
   onClick: (() -> Unit)? = null,
 ) {
-  Surface(
-    color = Color(0x66000000),
-    shape = RoundedCornerShape(14.dp),
-    modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
-  ) {
-    Row(
-      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      if (message.badgeTag.isNotBlank()) {
-        Surface(
-          color = when (message.messageType) {
-            "gift" -> SwarCoral
-            "join" -> SwarViolet
-            else -> SwarCyan.copy(alpha = 0.25f)
-          },
-          shape = RoundedCornerShape(8.dp),
-        ) {
-          Text(
-            text = message.badgeTag,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-          )
-        }
-        Spacer(modifier = Modifier.width(6.dp))
-      }
-
-      Text(
-        text = buildAnnotatedString {
-          withStyle(SpanStyle(color = SwarCyan, fontWeight = FontWeight.Bold)) {
-            append("${message.senderName}: ")
-          }
-          withStyle(SpanStyle(color = Color.White)) {
-            append(message.text)
-          }
-        },
-        style = MaterialTheme.typography.bodySmall,
-      )
-    }
+  val tag = if (typingBannerUrl.isNotBlank()) {
+    "room_message_typing_banner_${message.id}"
+  } else {
+    "room_message_bubble_${message.id}"
   }
+  TypingBannerChatBubble(
+    senderName = message.senderName,
+    messageText = message.text,
+    badgeTag = message.badgeTag,
+    bannerUrl = typingBannerUrl,
+    messageType = message.messageType,
+    modifier = Modifier.testTag(tag),
+    onClick = onClick,
+  )
 }
 
 @Composable
@@ -2278,95 +2410,4 @@ private fun RoomRoundActionButton(
   }
 }
 
-@Composable
-private fun RoomSettingsDialog(
-  room: VoiceRoom,
-  isHost: Boolean,
-  isMonitorLoopbackOn: Boolean,
-  isAgoraConnected: Boolean,
-  agoraStatusText: String,
-  onToggleMonitorLoopback: () -> Unit,
-  onSave: (String, String, String) -> Unit,
-  onDismiss: () -> Unit,
-) {
-  var title by remember { mutableStateOf(room.title) }
-  var theme by remember { mutableStateOf(room.backgroundTheme) }
-  var notice by remember { mutableStateOf(room.welcomeNotice) }
 
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("रूम और ऑडियो सेटिंग्स") },
-    text = {
-      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (agoraStatusText.isNotBlank()) {
-          Surface(
-            color = if (isAgoraConnected) SwarMint.copy(alpha = 0.14f) else SwarCyan.copy(alpha = 0.12f),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-              .fillMaxWidth()
-              .border(
-                1.dp,
-                if (isAgoraConnected) SwarMint.copy(alpha = 0.5f) else SwarCyan.copy(alpha = 0.4f),
-                RoundedCornerShape(12.dp),
-              ),
-          ) {
-            Text(
-              text = "Agora वॉइस इंजन: $agoraStatusText",
-              style = MaterialTheme.typography.bodySmall,
-              color = if (isAgoraConnected) SwarMint else SwarCyan,
-              fontWeight = FontWeight.SemiBold,
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            )
-          }
-        }
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text("माइक मॉनिटर टेस्ट (इको)", style = MaterialTheme.typography.titleSmall)
-            Text(
-              "बोलते समय अपनी आवाज़ हेडफ़ोन/स्पीकर में सुनें",
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-          Switch(checked = isMonitorLoopbackOn, onCheckedChange = { onToggleMonitorLoopback() })
-        }
-
-        if (isHost) {
-          OutlinedTextField(
-            value = title,
-            onValueChange = { title = it.take(60) },
-            label = { Text("रूम का नाम") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-          )
-          OutlinedTextField(
-            value = notice,
-            onValueChange = { notice = it.take(200) },
-            label = { Text("स्वागत संदेश") },
-            maxLines = 2,
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-      }
-    },
-    confirmButton = {
-      if (isHost) {
-        Button(onClick = { onSave(title, theme, notice) }) {
-          Text("सहेजें")
-        }
-      } else {
-        TextButton(onClick = onDismiss) { Text("ठीक है") }
-      }
-    },
-    dismissButton = {
-      if (isHost) {
-        TextButton(onClick = onDismiss) { Text("रद्द करें") }
-      }
-    },
-  )
-}

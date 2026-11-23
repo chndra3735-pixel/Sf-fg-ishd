@@ -14,6 +14,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.SeatCleanupService
 import com.example.SeatPresenceTracker
+import com.example.audio.RoomMusicPlayer
+import com.example.audio.RoomMusicState
 import com.example.audio.VoiceAudioEngine
 import com.example.data.model.Conversation
 import com.example.data.model.DirectMessage
@@ -22,6 +24,7 @@ import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
+import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
@@ -391,7 +394,7 @@ class SwarRoomViewModel(
       else repository.observeDirectMessages(convoId).catch { emit(emptyList()) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
-  // --- Live Voice Mic & Agora Audio State ---
+  // --- Live Voice Mic, Agora Audio & Room Music State ---
   val isAgoraConfigured: Boolean
     get() = audioEngine.isAgoraConfigured
   val isAgoraConnected: StateFlow<Boolean> = audioEngine.isAgoraConnected
@@ -399,6 +402,17 @@ class SwarRoomViewModel(
   val micAudioLevel: StateFlow<Float> = audioEngine.audioLevel
   val isLocalSpeaking: StateFlow<Boolean> = audioEngine.isSpeaking
   val isMicCapturing: StateFlow<Boolean> = audioEngine.isCapturing
+
+  private val roomMusicPlayer = RoomMusicPlayer(appContext, audioEngine)
+  val roomMusicState: StateFlow<RoomMusicState> = roomMusicPlayer.state
+
+  val activeRoomKickLogs: StateFlow<List<RoomKickLog>> =
+    _activeRoomId.flatMapLatest { roomId ->
+      if (roomId == null) flowOf(emptyList())
+      else repository.observeRoomKickLogs(roomId).catch { emit(emptyList()) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+
+  private val seenKickLogIds = mutableSetOf<String>()
 
   private val _isMicMuted = MutableStateFlow(true)
   val isMicMuted: StateFlow<Boolean> = _isMicMuted.asStateFlow()
@@ -454,11 +468,20 @@ class SwarRoomViewModel(
       }
     }
 
-    // Prefetch profiles of off-seat live room members too
+    // Prefetch profiles of off-seat live room members & chat senders too
     viewModelScope.launch {
       activeRoomPresence.collect { members ->
         members.asSequence()
           .map { it.userId }
+          .filter { it.isNotBlank() && it !in _memberProfiles.value }
+          .distinct()
+          .forEach { uid -> loadUserProfile(uid) }
+      }
+    }
+    viewModelScope.launch {
+      activeRoomMessages.collect { messages ->
+        messages.asSequence()
+          .map { it.senderUid }
           .filter { it.isNotBlank() && it !in _memberProfiles.value }
           .distinct()
           .forEach { uid -> loadUserProfile(uid) }
@@ -696,17 +719,47 @@ class SwarRoomViewModel(
         }
     }
 
-    // Keep own profile synced in memberProfiles cache and audit profile identity
+    // Keep own profile synced in memberProfiles cache, numeric lookup, and audit profile identity
     viewModelScope.launch {
       userProfile.collect { state ->
         val mine = (state as? UiState.Success)?.data ?: return@collect
         _memberProfiles.update { it + (currentUserId to mine) }
+        runCatching { repository.upsertNumericIdLookup(mine.displayName, mine.avatarUrl) }
         runCatching {
           repository.syncAuditProfileIdentity(
             userEmail = currentUserEmail,
             displayName = mine.displayName,
             avatarUrl = mine.avatarUrl,
           )
+        }
+      }
+    }
+    // Prefetch manager profiles and auto-eject kicked user if a live kick log targets currentUserId
+    viewModelScope.launch {
+      activeRoom.collect { room ->
+        room?.managerUids.orEmpty()
+          .filter { it.isNotBlank() && it !in _memberProfiles.value }
+          .forEach { loadUserProfile(it) }
+      }
+    }
+    viewModelScope.launch {
+      activeRoomKickLogs.collect { logs ->
+        val room = activeRoom.value ?: return@collect
+        val activeId = _activeRoomId.value ?: return@collect
+        if (room.id != activeId || room.ownerId == currentUserId) return@collect
+        val joinedAt = _roomJoinedAtMs.value
+        val kickLog = logs.firstOrNull { log ->
+          log.id.isNotBlank() &&
+            log.roomId == activeId &&
+            log.targetUid == currentUserId &&
+            log.actorUid != currentUserId &&
+            seenKickLogIds.add(log.id) &&
+            (joinedAt <= 0L || log.kickedAtMs >= joinedAt - 2_000L)
+        }
+        if (kickLog != null) {
+          val actorLabel = kickLog.actorName.ifBlank { "मैनेजर" }
+          leaveActiveRoom()
+          _events.tryEmit("आपको $actorLabel द्वारा रूम से किक आउट किया गया है।")
         }
       }
     }
@@ -917,9 +970,21 @@ class SwarRoomViewModel(
     roomId: String,
     sendJoinMessage: Boolean = true,
     incrementListenerCount: Boolean = true,
+    enteredPin: String = "",
   ) {
     if (!isNetworkConnected()) {
       _events.tryEmit("इंटरनेट कनेक्शन उपलब्ध नहीं है — कृपया नेटवर्क चालू करें।")
+      return
+    }
+    val cachedRoom = (rooms.value as? UiState.Success)?.data?.firstOrNull { it.id == roomId }
+      ?: activeRoom.value?.takeIf { it.id == roomId }
+    if (cachedRoom != null &&
+      cachedRoom.isPinLocked &&
+      cachedRoom.roomPin.isNotBlank() &&
+      cachedRoom.ownerId != currentUserId &&
+      enteredPin != cachedRoom.roomPin
+    ) {
+      _events.tryEmit("गलत पिन कोड! यह रूम लॉक है।")
       return
     }
     val prevRoomId = _activeRoomId.value
@@ -939,6 +1004,7 @@ class SwarRoomViewModel(
       null
     }
     if (prevRoomId != null) {
+      roomMusicPlayer.stop()
       stopMicEngine()
       audioEngine.leaveRoomVoice()
     }
@@ -966,12 +1032,20 @@ class SwarRoomViewModel(
         flushActiveRoomVisitDuration()
         vacateRoomPresence(prevRoomId, prevSeatHint)
       }
+      val room = cachedRoom ?: repository.getRoom(roomId)
+      if (room != null &&
+        room.isPinLocked &&
+        room.roomPin.isNotBlank() &&
+        room.ownerId != currentUserId &&
+        enteredPin != room.roomPin
+      ) {
+        leaveActiveRoom()
+        _events.tryEmit("गलत पिन कोड! यह रूम लॉक है।")
+        return@launch
+      }
       if (incrementListenerCount) {
         repository.adjustListenerCount(roomId, 1L)
       }
-      val room = (rooms.value as? UiState.Success)?.data?.firstOrNull { it.id == roomId }
-        ?: activeRoom.value?.takeIf { it.id == roomId }
-        ?: repository.getRoom(roomId)
       val profile = currentProfileOrDefault()
       if (room != null) {
         runCatching { repository.upsertRoomPresence(room, profile) }
@@ -980,7 +1054,8 @@ class SwarRoomViewModel(
         }
       }
       if (room != null && room.ownerId == currentUserId) {
-        runCatching { repository.ensureMinimumSeats(room, 22) }
+        val configuredSeats = room.seatCount.toInt().coerceIn(1, 22)
+        runCatching { repository.ensureMinimumSeats(room, configuredSeats) }
       }
       // Clean any leftover old join entry message from earlier visits before posting fresh entry
       runCatching { repository.deleteUserJoinMessagesInRoom(roomId, currentUserId) }
@@ -1046,6 +1121,7 @@ class SwarRoomViewModel(
       runCatching { ctx.stopService(Intent(ctx, SeatCleanupService::class.java)) }
     }
     stopMicEngine()
+    roomMusicPlayer.stop()
     audioEngine.leaveRoomVoice()
     _isRoomMinimized.value = false
     _activeRoomId.value = null
@@ -1097,6 +1173,7 @@ class SwarRoomViewModel(
       runCatching { ctx.stopService(Intent(ctx, SeatCleanupService::class.java)) }
     }
     stopMicEngine()
+    roomMusicPlayer.stop()
     audioEngine.leaveRoomVoice()
     _activeFullScreenGift.value = null
     pendingGiftQueue.clear()
@@ -1282,9 +1359,12 @@ class SwarRoomViewModel(
 
   // --- Seat & Live Mic Controls ---
 
+  private fun isModerator(room: VoiceRoom, uid: String = currentUserId): Boolean =
+    room.ownerId == uid || uid in room.managerUids
+
   fun onSeatTapped(seat: RoomSeat, hasAudioPermission: Boolean, onNeedAudioPermission: () -> Unit) {
     val room = activeRoom.value ?: return
-    val isHost = room.ownerId == currentUserId
+    val canModerate = isModerator(room)
     viewModelScope.launch {
       when {
         seat.occupantUid == currentUserId -> {
@@ -1312,13 +1392,13 @@ class SwarRoomViewModel(
             }
           }.onFailure { _events.tryEmit("सीट लेने में त्रुटि: ${it.message}") }
         }
-        seat.isLocked && isHost -> {
+        seat.isLocked && canModerate -> {
           repository.toggleSeatLock(room.id, seat.seatIndex.toInt(), lock = false)
         }
         seat.isLocked -> {
-          _events.tryEmit("यह सीट होस्ट द्वारा लॉक की गई है।")
+          _events.tryEmit("यह सीट लॉक की गई है।")
         }
-        isHost && seat.occupantUid.isNotEmpty() -> {
+        canModerate && seat.occupantUid.isNotEmpty() && seat.occupantUid != room.ownerId -> {
           repository.leaveSeat(room.id, seat.seatIndex.toInt())
           _events.tryEmit("${seat.occupantName} को सीट से हटाया गया।")
         }
@@ -1336,9 +1416,10 @@ class SwarRoomViewModel(
   }
 
   fun toggleSeatLock(seat: RoomSeat) {
-    val roomId = _activeRoomId.value ?: return
+    val room = activeRoom.value ?: return
+    if (!isModerator(room)) return
     viewModelScope.launch {
-      repository.toggleSeatLock(roomId, seat.seatIndex.toInt(), !seat.isLocked)
+      repository.toggleSeatLock(room.id, seat.seatIndex.toInt(), !seat.isLocked)
     }
   }
 
@@ -1348,7 +1429,7 @@ class SwarRoomViewModel(
       toggleMic(hasAudioPermission, onNeedAudioPermission)
       return
     }
-    if (room.ownerId != currentUserId) return
+    if (!isModerator(room) || seat.occupantUid == room.ownerId) return
     val nextMuted = !seat.isMuted
     viewModelScope.launch {
       repository.updateSeatAudioState(
@@ -1361,18 +1442,47 @@ class SwarRoomViewModel(
   }
 
   fun kickSeatOccupant(seat: RoomSeat) {
+    if (seat.occupantUid.isBlank()) return
+    kickRoomMember(
+      targetUid = seat.occupantUid,
+      targetName = seat.occupantName,
+      targetAvatarUrl = seat.occupantAvatarUrl,
+    )
+  }
+
+  fun kickRoomMember(
+    targetUid: String,
+    targetName: String,
+    targetAvatarUrl: String,
+    reason: String = "रूम नियम उल्लंघन",
+  ) {
     val room = activeRoom.value ?: return
-    if (room.ownerId != currentUserId || seat.occupantUid.isBlank() || seat.occupantUid == currentUserId) {
+    if (!isModerator(room) || targetUid.isBlank() || targetUid == currentUserId) return
+    if (targetUid == room.ownerId) {
+      _events.tryEmit("रूम होस्ट को किक आउट नहीं किया जा सकता।")
       return
     }
+    val actorProfile = currentProfileOrDefault()
+    val actorRole = if (room.ownerId == currentUserId) "owner" else "manager"
+    val seatHint = activeRoomSeats.value.firstOrNull { it.occupantUid == targetUid }?.seatIndex?.toInt()
+    val safeTargetName = targetName.ifBlank { "सदस्य" }
     viewModelScope.launch {
-      repository.leaveSeat(room.id, seat.seatIndex.toInt())
-        .onSuccess {
-          _events.tryEmit("${seat.occupantName.ifBlank { "सदस्य" }} को सीट से किक आउट किया गया।")
-        }
-        .onFailure { err ->
-          _events.tryEmit("किक आउट करने में त्रुटि: ${err.message}")
-        }
+      repository.vacateUserSeatsInRoom(room.id, seatHint, targetUid = targetUid)
+      runCatching { repository.removeRoomPresence(room.id, targetUid) }
+      runCatching { repository.deleteUserJoinMessagesInRoom(room.id, targetUid) }
+      repository.createRoomKickLog(
+        room = room,
+        actor = actorProfile,
+        actorRole = actorRole,
+        targetUid = targetUid,
+        targetName = safeTargetName,
+        targetAvatarUrl = targetAvatarUrl,
+        reason = reason,
+      ).onSuccess {
+        _events.tryEmit("$safeTargetName को रूम से किक आउट किया गया।")
+      }.onFailure { err ->
+        _events.tryEmit("किक आउट करने में त्रुटि: ${err.message}")
+      }
     }
   }
 
@@ -1515,6 +1625,232 @@ class SwarRoomViewModel(
         .onSuccess { _events.tryEmit("रूम सेटिंग्स अपडेट हो गईं") }
         .onFailure { _events.tryEmit("सेटिंग्स अपडेट विफल") }
     }
+  }
+
+  fun updateRoomIdentity(
+    title: String,
+    welcomeNotice: String,
+    newCoverUri: Uri?,
+    newCoverLink: String,
+  ) {
+    val room = activeRoom.value ?: return
+    if (room.ownerId != currentUserId) return
+    viewModelScope.launch {
+      var resolvedCover: String? = null
+      if (newCoverUri != null) {
+        _isUploadingMedia.value = true
+        val upload = supabaseStorage.uploadMediaFromUri(
+          uri = newCoverUri,
+          folder = "covers",
+          uid = currentUserId,
+          isVideo = false,
+        )
+        _isUploadingMedia.value = false
+        upload.onSuccess { resolvedCover = it }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "रूम DP अपलोड विफल रहा")
+            return@launch
+          }
+      } else if (newCoverLink.isNotBlank()) {
+        val link = VideoLinkResolver.extractFirstHttpUrl(newCoverLink).ifBlank { newCoverLink.trim() }
+        if (!link.startsWith("http", ignoreCase = true)) {
+          _events.tryEmit("कृपया मान्य रूम DP लिंक डालें।")
+          return@launch
+        }
+        resolvedCover = link
+      }
+      repository.updateRoomIdentity(
+        roomId = room.id,
+        title = title,
+        welcomeNotice = welcomeNotice,
+        coverUrl = resolvedCover,
+      ).onSuccess {
+        _events.tryEmit("रूम DP और नाम अपडेट हो गए!")
+      }.onFailure { err ->
+        _events.tryEmit(err.message ?: "रूम जानकारी अपडेट विफल")
+      }
+    }
+  }
+
+  fun updateRoomTheme(
+    backgroundTheme: String,
+    customThemeUri: Uri?,
+    customThemeLink: String,
+  ) {
+    val room = activeRoom.value ?: return
+    if (room.ownerId != currentUserId) return
+    viewModelScope.launch {
+      var themeUrl = ""
+      var effectiveTheme = backgroundTheme
+      if (customThemeUri != null) {
+        _isUploadingMedia.value = true
+        val upload = supabaseStorage.uploadMediaFromUri(
+          uri = customThemeUri,
+          folder = "room_themes",
+          uid = currentUserId,
+          isVideo = false,
+        )
+        _isUploadingMedia.value = false
+        upload.onSuccess {
+          themeUrl = it
+          effectiveTheme = "custom"
+        }.onFailure { err ->
+          _events.tryEmit(err.message ?: "थीम बैकग्राउंड अपलोड विफल रहा")
+          return@launch
+        }
+      } else if (customThemeLink.isNotBlank()) {
+        val link = VideoLinkResolver.extractFirstHttpUrl(customThemeLink).ifBlank { customThemeLink.trim() }
+        if (!link.startsWith("http", ignoreCase = true)) {
+          _events.tryEmit("कृपया मान्य बैकग्राउंड थीम लिंक डालें।")
+          return@launch
+        }
+        themeUrl = link
+        effectiveTheme = "custom"
+      } else if (backgroundTheme == "custom" && room.themeBackgroundUrl.isNotBlank()) {
+        themeUrl = room.themeBackgroundUrl
+      }
+      repository.updateRoomTheme(
+        roomId = room.id,
+        backgroundTheme = effectiveTheme,
+        themeBackgroundUrl = themeUrl,
+      ).onSuccess {
+        _events.tryEmit("रूम थीम सभी सदस्यों के लिए अपडेट हो गई!")
+      }.onFailure { err ->
+        _events.tryEmit(err.message ?: "रूम थीम अपडेट विफल")
+      }
+    }
+  }
+
+  fun addRoomManagerByNumericId(numericIdInput: String) {
+    val room = activeRoom.value ?: return
+    if (room.ownerId != currentUserId) return
+    val cleanId = numericIdInput.filter { it.isDigit() }
+    if (cleanId.length != 10) {
+      _events.tryEmit("कृपया सही 10-अंकों का यूज़र ID नंबर दर्ज करें।")
+      return
+    }
+    if (room.managerUids.size >= 5) {
+      _events.tryEmit("एक रूम में अधिकतम 5 मैनेजर ही बन सकते हैं।")
+      return
+    }
+    viewModelScope.launch {
+      var targetUid = _memberProfiles.value.keys.firstOrNull {
+        SwarUserIdentity.numericIdForUid(it) == cleanId
+      } ?: activeRoomPresence.value.firstOrNull {
+        SwarUserIdentity.numericIdForUid(it.userId) == cleanId
+      }?.userId ?: activeRoomSeats.value.firstOrNull {
+        it.occupantUid.isNotBlank() && SwarUserIdentity.numericIdForUid(it.occupantUid) == cleanId
+      }?.occupantUid
+
+      var resolvedName = ""
+      if (targetUid == null) {
+        val lookup = repository.findUserByNumericId(cleanId)
+        if (lookup != null && lookup.userId.isNotBlank()) {
+          targetUid = lookup.userId
+          resolvedName = lookup.displayName
+          if (targetUid !in _memberProfiles.value) {
+            _memberProfiles.update {
+              it + (targetUid to UserProfile(
+                id = targetUid,
+                userId = targetUid,
+                displayName = lookup.displayName,
+                avatarUrl = lookup.avatarUrl,
+              ))
+            }
+          }
+        }
+      } else {
+        resolvedName = _memberProfiles.value[targetUid]?.displayName.orEmpty()
+      }
+
+      if (targetUid.isNullOrBlank()) {
+        _events.tryEmit("ID $cleanId वाला कोई सक्रिय यूज़र नहीं मिला।")
+        return@launch
+      }
+      if (targetUid == room.ownerId) {
+        _events.tryEmit("रूम होस्ट पहले से पूर्ण एडमिन हैं।")
+        return@launch
+      }
+      if (targetUid in room.managerUids) {
+        _events.tryEmit("यह यूज़र पहले से रूम मैनेजर है।")
+        return@launch
+      }
+
+      val nextList = (room.managerUids + targetUid).distinct().take(5)
+      repository.updateRoomManagers(room.id, nextList)
+        .onSuccess {
+          val label = resolvedName.ifBlank { "ID $cleanId" }
+          _events.tryEmit("$label को रूम मैनेजर बनाया गया (${nextList.size}/5)।")
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "मैनेजर जोड़ने में त्रुटि")
+        }
+    }
+  }
+
+  fun removeRoomManager(targetUid: String) {
+    val room = activeRoom.value ?: return
+    if (room.ownerId != currentUserId || targetUid.isBlank()) return
+    val nextList = room.managerUids.filterNot { it == targetUid }
+    viewModelScope.launch {
+      repository.updateRoomManagers(room.id, nextList)
+        .onSuccess { _events.tryEmit("मैनेजर हटाया गया।") }
+        .onFailure { err -> _events.tryEmit(err.message ?: "मैनेजर हटाने में त्रुटि") }
+    }
+  }
+
+  fun updateRoomPinLock(enabled: Boolean, pin: String) {
+    val room = activeRoom.value ?: return
+    if (room.ownerId != currentUserId) return
+    val cleanPin = pin.filter { it.isDigit() }.take(8)
+    if (enabled && cleanPin.length !in 4..8) {
+      _events.tryEmit("रूम लॉक करने के लिए 4 से 8 अंकों का पिन कोड डालें।")
+      return
+    }
+    viewModelScope.launch {
+      repository.updateRoomPinLock(room.id, enabled, cleanPin)
+        .onSuccess {
+          _events.tryEmit(if (enabled) "🔒 रूम पिन लॉक सक्रिय हो गया ($cleanPin)।" else "🔓 रूम पिन लॉक हटा दिया गया।")
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "रूम पिन अपडेट विफल")
+        }
+    }
+  }
+
+  fun resizeRoomSeats(targetCount: Int) {
+    val room = activeRoom.value ?: return
+    if (room.ownerId != currentUserId) return
+    val clamped = targetCount.coerceIn(1, 22)
+    viewModelScope.launch {
+      repository.resizeRoomSeats(room, clamped)
+        .onSuccess { _events.tryEmit("रूम की सीट संख्या $clamped कर दी गई।") }
+        .onFailure { err -> _events.tryEmit(err.message ?: "सीट संख्या बदलने में त्रुटि") }
+    }
+  }
+
+  fun pickAndPlayRoomMusic(uri: Uri) {
+    viewModelScope.launch {
+      roomMusicPlayer.playFromUri(uri)
+        .onSuccess { title ->
+          _events.tryEmit("🎵 बज रहा है: $title")
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "संगीत फ़ाइल चलाई नहीं जा सकी।")
+        }
+    }
+  }
+
+  fun toggleRoomMusicPlayPause() {
+    roomMusicPlayer.togglePlayPause()
+  }
+
+  fun stopRoomMusic() {
+    roomMusicPlayer.stop()
+  }
+
+  fun setRoomMusicVolume(percent: Int) {
+    roomMusicPlayer.setVolume(percent)
   }
 
   // --- 1-on-1 Direct Messaging ---
@@ -2515,6 +2851,8 @@ class SwarRoomViewModel(
     rewardCoins: Long,
     badgeLink: String,
     badgeImageUri: Uri?,
+    typingBannerLink: String = "",
+    typingBannerImageUri: Uri? = null,
     onDone: () -> Unit = {},
   ) {
     if (!isAdminUser) {
@@ -2592,12 +2930,38 @@ class SwarRoomViewModel(
           }
         }
 
+        var finalTypingBannerUrl = VideoLinkResolver.extractFirstHttpUrl(typingBannerLink)
+        if (typingBannerImageUri != null) {
+          val up = supabaseStorage.uploadMediaFromUri(
+            uri = typingBannerImageUri,
+            folder = "level_typing_banners",
+            uid = currentUserId,
+            isVideo = false,
+          )
+          up.onSuccess { finalTypingBannerUrl = it }
+            .onFailure { err ->
+              _events.tryEmit(err.message ?: "टाइपिंग पट्टी अपलोड विफल")
+              return@launch
+            }
+        } else if (finalTypingBannerUrl.isNotBlank() && finalTypingBannerUrl.length <= 800 &&
+          !finalTypingBannerUrl.lowercase().let {
+            it.contains(".gif") || it.contains(".png") || it.contains(".webp") || it.contains(".jpg") || it.contains(".jpeg") || it.contains("supabase.co")
+          }
+        ) {
+          kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            VideoLinkResolver.resolveImageUrl(finalTypingBannerUrl)
+          }.onSuccess { resolved ->
+            if (resolved.length <= 800) finalTypingBannerUrl = resolved
+          }
+        }
+
         repository.upsertLevelConfig(
           badgeLevel = badgeLevel,
           entryVideoUrl = finalEntryUrl.take(800),
           avatarFrameUrl = finalFrameUrl.take(800),
           rewardCoins = rewardCoins.coerceIn(0L, 999999L),
           profileBadgeUrl = finalBadgeUrl.take(800),
+          typingBannerUrl = finalTypingBannerUrl.take(800),
         ).onSuccess {
           _events.tryEmit("LV.$badgeLevel कार्ड सेटिंग सभी यूज़र्स के लिए लाइव सेव हो गई! ✨")
           onDone()
@@ -2809,6 +3173,7 @@ class SwarRoomViewModel(
       SeatPresenceTracker.cleanupSynchronously(ctx, timeoutMs = 800L)
     }
     SeatPresenceTracker.registerAudioDisconnect(null)
+    roomMusicPlayer.release()
     audioEngine.release()
   }
 

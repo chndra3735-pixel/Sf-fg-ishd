@@ -59,15 +59,58 @@ service cloud.firestore {
              data.roomCode is string && data.roomCode.size() >= 3 && data.roomCode.size() <= 12 &&
              data.category is string && data.category.size() >= 1 && data.category.size() <= 24 &&
              data.coverUrl is string && data.coverUrl.size() <= 600 &&
-             data.backgroundTheme in ['stadium', 'aurora', 'neon', 'sunset'] &&
+             data.backgroundTheme in ['stadium', 'aurora', 'neon', 'sunset', 'custom'] &&
+             (!('themeBackgroundUrl' in data.keys()) || (data.themeBackgroundUrl is string && data.themeBackgroundUrl.size() <= 800)) &&
              data.clubTag is string && data.clubTag.size() <= 16 &&
              data.welcomeNotice is string && data.welcomeNotice.size() <= 200 &&
-             data.seatCount is int && data.seatCount in [8, 12, 20, 22] &&
+             data.seatCount is int && data.seatCount >= 1 && data.seatCount <= 22 &&
+             (!('managerUids' in data.keys()) || (data.managerUids is list && data.managerUids.size() <= 5)) &&
+             (!('isPinLocked' in data.keys()) || data.isPinLocked is bool) &&
+             (!('roomPin' in data.keys()) || (data.roomPin is string && data.roomPin.size() <= 8)) &&
              data.listenerCount is int && data.listenerCount >= 0 && data.listenerCount <= 9999 &&
              data.isLive is bool &&
              data.isPublic is bool &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
+    }
+
+    function roomDocData(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+    }
+
+    function isRoomManager(roomId) {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/rooms/$(roomId)) &&
+             ('managerUids' in roomDocData(roomId)) &&
+             roomDocData(roomId).managerUids is list &&
+             request.auth.uid in roomDocData(roomId).managerUids;
+    }
+
+    function isRoomOwnerOrManager(roomId) {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/rooms/$(roomId)) &&
+             (roomDocData(roomId).ownerId == request.auth.uid ||
+              (('managerUids' in roomDocData(roomId)) &&
+               roomDocData(roomId).managerUids is list &&
+               request.auth.uid in roomDocData(roomId).managerUids));
+    }
+
+    function isValidRoomKickLog(data) {
+      return data.roomId is string && isValidId(data.roomId) &&
+             data.roomOwnerId is string && data.roomOwnerId.size() >= 1 && data.roomOwnerId.size() <= 128 &&
+             data.isRoomPublic is bool &&
+             data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128 &&
+             data.actorNumericId is string && data.actorNumericId.size() <= 20 &&
+             data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 40 &&
+             data.actorAvatarUrl is string && data.actorAvatarUrl.size() <= 600 &&
+             data.actorRole in ['owner', 'manager'] &&
+             data.targetUid is string && data.targetUid.size() >= 1 && data.targetUid.size() <= 128 &&
+             data.targetNumericId is string && data.targetNumericId.size() <= 20 &&
+             data.targetName is string && data.targetName.size() >= 1 && data.targetName.size() <= 40 &&
+             data.targetAvatarUrl is string && data.targetAvatarUrl.size() <= 600 &&
+             data.reason is string && data.reason.size() <= 200 &&
+             data.kickedAtMs is int && data.kickedAtMs >= 0 &&
+             isValidTimestamp(data.createdAt);
     }
 
     function isValidRoomSeat(data) {
@@ -187,6 +230,7 @@ service cloud.firestore {
              data.avatarFrameUrl is string && data.avatarFrameUrl.size() <= 800 &&
              data.rewardCoins is int && data.rewardCoins >= 0 && data.rewardCoins <= 999999 &&
              data.profileBadgeUrl is string && data.profileBadgeUrl.size() <= 800 &&
+             (!('typingBannerUrl' in data.keys()) || (data.typingBannerUrl is string && data.typingBannerUrl.size() <= 800)) &&
              data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
              isValidTimestamp(data.updatedAt);
     }
@@ -299,7 +343,7 @@ service cloud.firestore {
                        isValidId(roomId) &&
                        incoming().ownerId == request.auth.uid &&
                        incoming().keys().hasAll(['ownerId', 'ownerName', 'ownerAvatarUrl', 'title', 'roomCode', 'category', 'coverUrl', 'backgroundTheme', 'clubTag', 'welcomeNotice', 'seatCount', 'listenerCount', 'isLive', 'isPublic', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['ownerId', 'ownerName', 'ownerAvatarUrl', 'title', 'roomCode', 'category', 'coverUrl', 'backgroundTheme', 'clubTag', 'welcomeNotice', 'seatCount', 'listenerCount', 'isLive', 'isPublic', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerId', 'ownerName', 'ownerAvatarUrl', 'title', 'roomCode', 'category', 'coverUrl', 'backgroundTheme', 'themeBackgroundUrl', 'clubTag', 'welcomeNotice', 'seatCount', 'managerUids', 'isPinLocked', 'roomPin', 'listenerCount', 'isLive', 'isPublic', 'createdAt', 'updatedAt']) &&
                        isValidVoiceRoom(incoming());
 
       allow update: if isSignedIn() &&
@@ -307,11 +351,11 @@ service cloud.firestore {
                        isValidVoiceRoom(incoming()) &&
                        incoming().ownerId == existing().ownerId &&
                        incoming().createdAt == existing().createdAt &&
-                       incoming().seatCount == existing().seatCount &&
                        incoming().roomCode == existing().roomCode && (
                          (existing().ownerId == request.auth.uid &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['ownerName', 'ownerAvatarUrl', 'title', 'category', 'coverUrl', 'backgroundTheme', 'clubTag', 'welcomeNotice', 'listenerCount', 'isLive', 'isPublic', 'updatedAt'])) ||
+                          incoming().diff(existing()).affectedKeys().hasOnly(['ownerName', 'ownerAvatarUrl', 'title', 'category', 'coverUrl', 'backgroundTheme', 'themeBackgroundUrl', 'clubTag', 'welcomeNotice', 'seatCount', 'managerUids', 'isPinLocked', 'roomPin', 'listenerCount', 'isLive', 'isPublic', 'updatedAt'])) ||
                          (existing().isPublic == true &&
+                          incoming().seatCount == existing().seatCount &&
                           incoming().diff(existing()).affectedKeys().hasOnly(['listenerCount', 'updatedAt']))
                        );
 
@@ -320,7 +364,7 @@ service cloud.firestore {
       // 2a. Room Voice Seats
       match /seats/{seatId} {
         allow get: if isSignedIn() && isValidId(roomId) && isValidId(seatId) &&
-                      (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+                      (resource == null || resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
         allow list: if isSignedIn() &&
                        (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
 
@@ -344,6 +388,10 @@ service cloud.firestore {
                          incoming().seatIndex == existing().seatIndex && (
                            (existing().roomOwnerId == request.auth.uid &&
                             incoming().diff(existing()).affectedKeys().hasOnly(['occupantUid', 'occupantName', 'occupantAvatarUrl', 'isLocked', 'isMuted', 'isSpeaking', 'updatedAt'])) ||
+                           (isRoomManager(roomId) &&
+                            existing().occupantUid != existing().roomOwnerId &&
+                            (incoming().occupantUid == existing().occupantUid || incoming().occupantUid == '') &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['occupantUid', 'occupantName', 'occupantAvatarUrl', 'isLocked', 'isMuted', 'isSpeaking', 'updatedAt'])) ||
                            (existing().isRoomPublic == true &&
                             existing().isLocked == false &&
                             existing().occupantUid == '' &&
@@ -354,10 +402,14 @@ service cloud.firestore {
                             incoming().diff(existing()).affectedKeys().hasOnly(['occupantUid', 'occupantName', 'occupantAvatarUrl', 'isMuted', 'isSpeaking', 'updatedAt']))
                          );
 
-        allow delete: if isSignedIn() && isValidId(roomId) && isValidId(seatId) && existing().roomOwnerId == request.auth.uid;
+        allow delete: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(seatId) &&
+                         (existing().roomOwnerId == request.auth.uid ||
+                          roomDocData(roomId).ownerId == request.auth.uid);
       }
 
-      // 2b. Real-time Room Messages (create + sender/host cleanup of stale entry/room messages)
+      // 2b. Real-time Room Messages (create + sender/host/manager cleanup of stale entry/room messages)
       match /messages/{messageId} {
         allow get: if isSignedIn() && isValidId(roomId) && isValidId(messageId) &&
                       (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
@@ -378,7 +430,9 @@ service cloud.firestore {
         allow delete: if isSignedIn() &&
                          isValidId(roomId) &&
                          isValidId(messageId) &&
-                         (existing().senderUid == request.auth.uid || existing().roomOwnerId == request.auth.uid);
+                         (existing().senderUid == request.auth.uid ||
+                          existing().roomOwnerId == request.auth.uid ||
+                          (isRoomManager(roomId) && existing().senderUid != existing().roomOwnerId));
       }
 
       // 2c. Live Room Presence Heartbeats
@@ -416,7 +470,31 @@ service cloud.firestore {
                          isValidId(presenceUserId) &&
                          (request.auth.uid == presenceUserId ||
                           existing().roomOwnerId == request.auth.uid ||
-                          get(/databases/$(database)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid);
+                          get(/databases/$(database)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid ||
+                          (isRoomManager(roomId) && presenceUserId != existing().roomOwnerId));
+      }
+
+      // 2d. Immutable Room Kick Audit Logs (Owner/Manager writes; room members & managers observe kicks)
+      match /kick_logs/{logId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(logId) &&
+                      (resource == null || resource.data.isRoomPublic == true || isRoomOwnerOrManager(roomId) || resource.data.targetUid == request.auth.uid);
+        allow list: if isSignedIn() && isValidId(roomId) &&
+                       (resource.data.isRoomPublic == true || isRoomOwnerOrManager(roomId) || resource.data.targetUid == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(logId) &&
+                         incoming().roomId == roomId &&
+                         incoming().actorUid == request.auth.uid &&
+                         exists(/databases/$(database)/documents/rooms/$(roomId)) &&
+                         incoming().targetUid != roomDocData(roomId).ownerId &&
+                         incoming().keys().hasAll(['roomId', 'roomOwnerId', 'isRoomPublic', 'actorUid', 'actorNumericId', 'actorName', 'actorAvatarUrl', 'actorRole', 'targetUid', 'targetNumericId', 'targetName', 'targetAvatarUrl', 'reason', 'kickedAtMs', 'createdAt']) &&
+                         incoming().keys().hasOnly(['roomId', 'roomOwnerId', 'isRoomPublic', 'actorUid', 'actorNumericId', 'actorName', 'actorAvatarUrl', 'actorRole', 'targetUid', 'targetNumericId', 'targetName', 'targetAvatarUrl', 'reason', 'kickedAtMs', 'createdAt']) &&
+                         isValidRoomKickLog(incoming()) &&
+                         ((roomDocData(roomId).ownerId == request.auth.uid && incoming().actorRole == 'owner') ||
+                          (isRoomManager(roomId) && incoming().actorRole == 'manager'));
+
+        allow update, delete: if false;
       }
     }
 
@@ -568,7 +646,7 @@ service cloud.firestore {
                                tierId in ['1', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100', '110', '120'] &&
                                incoming().updatedByUid == request.auth.uid &&
                                incoming().keys().hasAll(['badgeLevel', 'entryVideoUrl', 'avatarFrameUrl', 'rewardCoins', 'profileBadgeUrl', 'updatedByUid', 'updatedAt']) &&
-                               incoming().keys().hasOnly(['badgeLevel', 'entryVideoUrl', 'avatarFrameUrl', 'rewardCoins', 'profileBadgeUrl', 'updatedByUid', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['badgeLevel', 'entryVideoUrl', 'avatarFrameUrl', 'rewardCoins', 'profileBadgeUrl', 'typingBannerUrl', 'updatedByUid', 'updatedAt']) &&
                                isValidLevelTierConfig(incoming());
 
       allow delete: if isAdmin() && isValidId(tierId);
@@ -658,6 +736,24 @@ service cloud.firestore {
                        incoming().diff(existing()).affectedKeys().hasOnly(['exitedAtMs', 'durationSeconds']);
 
       allow delete: if isAdmin() && isValidId(logId);
+    }
+
+    // 13. Direct 10-Digit Numeric ID Lookup (get-only, zero list enumeration)
+    match /numeric_id_lookup/{numericId} {
+      allow get: if isSignedIn() && numericId.matches('^[0-9]{10}$');
+      allow list: if false;
+
+      allow create, update: if isSignedIn() &&
+                               numericId.matches('^[0-9]{10}$') &&
+                               incoming().userId == request.auth.uid &&
+                               incoming().numericId == numericId &&
+                               incoming().keys().hasAll(['userId', 'numericId', 'displayName', 'avatarUrl', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['userId', 'numericId', 'displayName', 'avatarUrl', 'updatedAt']) &&
+                               incoming().displayName is string && incoming().displayName.size() >= 1 && incoming().displayName.size() <= 40 &&
+                               incoming().avatarUrl is string && incoming().avatarUrl.size() <= 600 &&
+                               isValidTimestamp(incoming().updatedAt);
+
+      allow delete: if false;
     }
   }
 }

@@ -672,8 +672,10 @@ fun LevelDetailsDialog(
     rewardCoins: Long,
     badgeLink: String,
     badgeUri: Uri?,
+    typingBannerLink: String,
+    typingBannerUri: Uri?,
     onDone: () -> Unit,
-  ) -> Unit = { _, _, _, _, _, _, _, _, onDone -> onDone() },
+  ) -> Unit = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
   onClaimTierReward: (Int) -> Unit = {},
 ) {
   LevelCardsShowcaseDialog(

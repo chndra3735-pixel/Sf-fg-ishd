@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddHome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -66,6 +67,7 @@ import com.example.ui.components.UserAvatar
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarCyanDark
+import com.example.ui.theme.SwarGold
 import com.example.ui.theme.SwarViolet
 import com.example.ui.viewmodel.UiState
 
@@ -365,6 +367,32 @@ private fun LobbyRoomCard(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
               )
+            }
+          }
+          if (room.isPinLocked && room.roomPin.isNotBlank()) {
+            Surface(
+              color = Color(0xCC221500),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.testTag("room_lock_badge_${room.id}"),
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+              ) {
+                Icon(
+                  imageVector = Icons.Filled.Lock,
+                  contentDescription = "रूम लॉक है",
+                  tint = SwarGold,
+                  modifier = Modifier.size(11.dp),
+                )
+                Text(
+                  text = "लॉक",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = SwarGold,
+                  fontWeight = FontWeight.Bold,
+                )
+              }
             }
           }
         }

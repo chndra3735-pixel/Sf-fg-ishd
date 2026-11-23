@@ -408,10 +408,13 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val adminAuditProfiles by viewModel.adminAuditProfiles.collectAsStateWithLifecycle()
   val adminActivityLogs by viewModel.adminActivityLogs.collectAsStateWithLifecycle()
   val isPurgingExpiredLogs by viewModel.isPurgingExpiredLogs.collectAsStateWithLifecycle()
+  val activeRoomKickLogs by viewModel.activeRoomKickLogs.collectAsStateWithLifecycle()
+  val roomMusicState by viewModel.roomMusicState.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
   var showCreateMomentDialog by remember { mutableStateOf(false) }
+  var pendingPinRoom by remember { mutableStateOf<com.example.data.model.VoiceRoom?>(null) }
   val snackbarHostState = remember { SnackbarHostState() }
   val miniBarAudioPermissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestPermission(),
@@ -674,11 +677,28 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onClearEmojiUploadError = { viewModel.clearEmojiUploadError() },
         levelConfigs = levelConfigs,
         claimedLevelTiers = claimedLevelTiers,
-        onSaveLevelTierConfig = { lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone ->
-          viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone)
+        onSaveLevelTierConfig = { lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, typLink, typUri, onDone ->
+          viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, typLink, typUri, onDone)
         },
         onClaimLevelTierReward = { lvl -> viewModel.claimLevelTierReward(lvl) },
         livePresenceMembers = activeRoomPresence,
+        kickLogs = activeRoomKickLogs,
+        roomMusicState = roomMusicState,
+        onUpdateRoomIdentity = { title, notice, coverUri, coverLink ->
+          viewModel.updateRoomIdentity(title, notice, coverUri, coverLink)
+        },
+        onUpdateRoomTheme = { theme, customUri, customLink ->
+          viewModel.updateRoomTheme(theme, customUri, customLink)
+        },
+        onAddRoomManagerById = { id -> viewModel.addRoomManagerByNumericId(id) },
+        onRemoveRoomManager = { uid -> viewModel.removeRoomManager(uid) },
+        onUpdateRoomPinLock = { enabled, pin -> viewModel.updateRoomPinLock(enabled, pin) },
+        onResizeRoomSeats = { count -> viewModel.resizeRoomSeats(count) },
+        onPickRoomMusic = { uri -> viewModel.pickAndPlayRoomMusic(uri) },
+        onToggleRoomMusicPlayPause = { viewModel.toggleRoomMusicPlayPause() },
+        onStopRoomMusic = { viewModel.stopRoomMusic() },
+        onRoomMusicVolumeChange = { pct -> viewModel.setRoomMusicVolume(pct) },
+        onKickRoomMember = { uid, name, avatar -> viewModel.kickRoomMember(uid, name, avatar) },
       )
       SnackbarHost(
         hostState = snackbarHostState,
@@ -775,7 +795,13 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         MainTab.ROOMS -> LobbyScreen(
           roomsState = roomsState,
           currentUserId = user.uid,
-          onRoomClick = { room -> viewModel.enterRoom(room.id) },
+          onRoomClick = { room ->
+            if (room.isPinLocked && room.roomPin.isNotBlank() && room.ownerId != user.uid) {
+              pendingPinRoom = room
+            } else {
+              viewModel.enterRoom(room.id)
+            }
+          },
           onCreateRoomClick = {
             if (myOwnedRoom != null) {
               viewModel.enterRoom(myOwnedRoom.id)
@@ -821,8 +847,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           levelConfigs = levelConfigs,
           claimedLevelTiers = claimedLevelTiers,
           isAdminUser = viewModel.isAdminUser,
-          onSaveLevelTierConfig = { lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone ->
-            viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, onDone)
+          onSaveLevelTierConfig = { lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, typLink, typUri, onDone ->
+            viewModel.saveLevelTierConfig(lvl, vidLink, vidUri, frLink, frUri, coinsReward, bdgLink, bdgUri, typLink, typUri, onDone)
           },
           onClaimLevelTierReward = { lvl -> viewModel.claimLevelTierReward(lvl) },
           configuredGithubRepo = configuredGithubRepo,
@@ -890,6 +916,19 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         viewModel.uploadMomentPost(uri, isVideo, caption)
         showCreateMomentDialog = false
       },
+    )
+  }
+
+  val lockedTarget = pendingPinRoom
+  if (lockedTarget != null) {
+    com.example.ui.components.RoomPinEntryDialog(
+      roomTitle = lockedTarget.title,
+      expectedPin = lockedTarget.roomPin,
+      onSuccessPin = { enteredPin ->
+        pendingPinRoom = null
+        viewModel.enterRoom(lockedTarget.id, enteredPin = enteredPin)
+      },
+      onDismiss = { pendingPinRoom = null },
     )
   }
 

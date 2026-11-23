@@ -24,6 +24,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -76,12 +78,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -416,8 +422,119 @@ private fun UnlockedTierBadgeChip(
   }
 }
 
+@Composable
+fun TypingBannerChatBubble(
+  senderName: String,
+  messageText: String,
+  badgeTag: String = "",
+  bannerUrl: String = "",
+  messageType: String = "text",
+  modifier: Modifier = Modifier,
+  onClick: (() -> Unit)? = null,
+) {
+  val hasBanner = bannerUrl.isNotBlank()
+  val shape = RoundedCornerShape(if (hasBanner) 16.dp else 14.dp)
+  val baseModifier = modifier
+    .widthIn(min = if (hasBanner) 170.dp else 0.dp)
+    .height(IntrinsicSize.Min)
+    .clip(shape)
+    .then(
+      if (hasBanner) {
+        Modifier.border(
+          width = 1.2.dp,
+          brush = Brush.horizontalGradient(listOf(SwarGold, SwarCyan)),
+          shape = shape,
+        )
+      } else {
+        Modifier.background(Color(0x66000000))
+      }
+    )
+    .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+
+  Box(modifier = baseModifier) {
+    if (hasBanner) {
+      AsyncImage(
+        model = bannerUrl,
+        contentDescription = "टाइपिंग पट्टी बैकग्राउंड",
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.matchParentSize(),
+      )
+      Box(
+        modifier = Modifier
+          .matchParentSize()
+          .background(
+            Brush.horizontalGradient(
+              colors = listOf(
+                Color(0x9E0E0820),
+                Color(0x72120B26),
+                Color(0x880E0820),
+              )
+            )
+          ),
+      )
+    }
+
+    Row(
+      modifier = Modifier.padding(
+        horizontal = if (hasBanner) 13.dp else 10.dp,
+        vertical = if (hasBanner) 8.dp else 6.dp,
+      ),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      if (badgeTag.isNotBlank()) {
+        Surface(
+          color = when (messageType) {
+            "gift" -> SwarCoral
+            "join" -> SwarViolet
+            else -> if (hasBanner) Color(0xCC241547) else SwarCyan.copy(alpha = 0.25f)
+          },
+          shape = RoundedCornerShape(8.dp),
+        ) {
+          Text(
+            text = badgeTag,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (hasBanner) SwarGold else Color.White,
+            fontWeight = if (hasBanner) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+          )
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+      }
+
+      val textShadow = if (hasBanner) {
+        Shadow(color = Color(0xCC000000), offset = Offset(1f, 1.5f), blurRadius = 4f)
+      } else {
+        null
+      }
+      Text(
+        text = buildAnnotatedString {
+          withStyle(
+            SpanStyle(
+              color = if (hasBanner) SwarGold else SwarCyan,
+              fontWeight = FontWeight.Bold,
+              shadow = textShadow,
+            )
+          ) {
+            append("$senderName: ")
+          }
+          withStyle(
+            SpanStyle(
+              color = Color.White,
+              fontWeight = if (hasBanner) FontWeight.SemiBold else FontWeight.Normal,
+              shadow = textShadow,
+            )
+          ) {
+            append(messageText)
+          }
+        },
+        style = MaterialTheme.typography.bodySmall,
+      )
+    }
+  }
+}
+
 /**
- * Interactive Live Preview & Admin 4-Reward Configurator Dialog for any selected Level Card.
+ * Interactive Live Preview & Admin 5-Reward Configurator Dialog for any selected Level Card.
  */
 @Composable
 fun LevelTierDetailConfiguratorDialog(
@@ -440,6 +557,8 @@ fun LevelTierDetailConfiguratorDialog(
     rewardCoins: Long,
     badgeLink: String,
     badgeUri: Uri?,
+    typingBannerLink: String,
+    typingBannerUri: Uri?,
     onDone: () -> Unit,
   ) -> Unit,
 ) {
@@ -456,6 +575,11 @@ fun LevelTierDetailConfiguratorDialog(
 
   var badgeLink by remember(tier.badgeLevel, config.profileBadgeUrl) { mutableStateOf(config.profileBadgeUrl) }
   var badgeUri by remember(tier.badgeLevel) { mutableStateOf<Uri?>(null) }
+
+  var typingBannerLink by remember(tier.badgeLevel, config.typingBannerUrl) {
+    mutableStateOf(config.typingBannerUrl)
+  }
+  var typingBannerUri by remember(tier.badgeLevel) { mutableStateOf<Uri?>(null) }
 
   val entryVideoPicker = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia(),
@@ -481,9 +605,18 @@ fun LevelTierDetailConfiguratorDialog(
       }
     },
   )
+  val typingBannerPicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia(),
+    onResult = { uri ->
+      if (uri != null) {
+        typingBannerUri = uri
+      }
+    },
+  )
 
   val previewFrameModel = frameUri?.toString() ?: frameLink.trim()
   val previewBadgeModel = badgeUri?.toString() ?: badgeLink.trim()
+  val previewTypingBannerModel = typingBannerUri?.toString() ?: typingBannerLink.trim()
   val previewVideoSource = entryVideoUri?.toString() ?: entryVideoLink.trim()
   val parsedCoins = coinsInput.trim().toLongOrNull()?.coerceIn(0L, 999999L) ?: 0L
 
@@ -691,13 +824,34 @@ fun LevelTierDetailConfiguratorDialog(
             if (previewVideoSource.isNotBlank()) {
               LevelEntryVideoPreviewBox(videoSource = previewVideoSource)
             }
+
+            // Live Typing Patti ("टाइपिंग पट्टी") Chat Bubble Preview
+            if (previewTypingBannerModel.isNotBlank()) {
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                  text = "टाइपिंग पट्टी लाइव प्रीव्यू (चैट करते समय ऐसा दिखेगा):",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = SwarMint,
+                  fontWeight = FontWeight.Bold,
+                )
+                TypingBannerChatBubble(
+                  senderName = sampleDisplayName.ifBlank { "Swar" },
+                  messageText = "नमस्ते दोस्तों! गाना शुरू करें ✨🎤",
+                  badgeTag = tier.badgeLabel,
+                  bannerUrl = previewTypingBannerModel,
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("typing_banner_live_preview"),
+                )
+              }
+            }
           }
         }
 
-        // Admin Configurator: Entry Video + Avatar Frame + Coins + Profile Badge
+        // Admin Configurator: Entry Video + Avatar Frame + Coins + Profile Badge + Typing Patti
         if (isAdminUser) {
           Text(
-            text = "लेवल कार्ड सेटअप (सभी 4 विकल्प)",
+            text = "लेवल कार्ड सेटअप (सभी 5 विकल्प)",
             style = MaterialTheme.typography.labelLarge,
             color = SwarGold,
             fontWeight = FontWeight.ExtraBold,
@@ -856,6 +1010,56 @@ fun LevelTierDetailConfiguratorDialog(
             }
           }
 
+          // Row 3: Typing Patti ("टाइपिंग पट्टी") Link + Upload
+          Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              OutlinedTextField(
+                value = typingBannerLink,
+                onValueChange = { typingBannerLink = it },
+                label = { Text("टाइपिंग पट्टी लिंक (Chat Bubble)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                placeholder = { Text("GIF / PNG / WebP / Pin लिंक पेस्ट करें") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Message, contentDescription = null, tint = SwarCyan) },
+                singleLine = true,
+                colors = adminFieldColors(),
+                modifier = Modifier
+                  .weight(1f)
+                  .testTag("tier_typing_banner_input"),
+              )
+              OutlinedButton(
+                onClick = {
+                  typingBannerPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                  )
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier
+                  .height(52.dp)
+                  .testTag("pick_tier_typing_banner_button"),
+              ) {
+                Icon(Icons.Filled.PhotoLibrary, contentDescription = null, tint = SwarCyan, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                  text = if (typingBannerUri != null) "चुनी ✓" else "अपलोड",
+                  color = Color.White,
+                  fontSize = 12.sp,
+                  maxLines = 1,
+                )
+              }
+            }
+            Text(
+              text = "रूम में टाइप करने पर आपका टेक्स्ट इसी सुंदर पट्टी के ऊपर लिखकर आएगा",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFFB3ACDC),
+            )
+          }
+
           Button(
             onClick = {
               onSaveTierConfig(
@@ -867,6 +1071,8 @@ fun LevelTierDetailConfiguratorDialog(
                 parsedCoins,
                 badgeLink,
                 badgeUri,
+                typingBannerLink,
+                typingBannerUri,
                 onDismiss,
               )
             },

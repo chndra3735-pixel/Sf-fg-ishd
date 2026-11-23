@@ -29,11 +29,15 @@
         "title": { "type": "string", "description": "Voice room title." },
         "roomCode": { "type": "string", "description": "Display room ID code." },
         "category": { "type": "string", "description": "Room category label." },
-        "coverUrl": { "type": "string", "description": "Supabase Storage cover image URL." },
-        "backgroundTheme": { "type": "string", "enum": ["stadium", "aurora", "neon", "sunset"] },
+        "coverUrl": { "type": "string", "description": "Supabase Storage cover / Room DP image URL." },
+        "backgroundTheme": { "type": "string", "enum": ["stadium", "aurora", "neon", "sunset", "custom"] },
+        "themeBackgroundUrl": { "type": "string", "description": "Custom room background theme photo/GIF URL visible to all room members." },
         "clubTag": { "type": "string", "description": "Room club badge." },
         "welcomeNotice": { "type": "string", "description": "Room welcome announcement." },
-        "seatCount": { "type": "integer", "description": "Total voice seats (8, 12, 20, or 22)." },
+        "seatCount": { "type": "integer", "description": "Total voice seats (1 to 22)." },
+        "managerUids": { "type": "array", "description": "Up to 5 manager Firebase UIDs appointed by host." },
+        "isPinLocked": { "type": "boolean", "description": "Whether entering this room requires a PIN." },
+        "roomPin": { "type": "string", "description": "Numeric room entry PIN set by host." },
         "listenerCount": { "type": "integer", "description": "Active listeners count." },
         "isLive": { "type": "boolean" },
         "isPublic": { "type": "boolean" },
@@ -292,6 +296,42 @@
         "expiresAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "numericId", "userEmail", "userName", "userAvatarUrl", "activityType", "roomId", "roomTitle", "roomCode", "conversationId", "targetUid", "targetNumericId", "targetName", "textContent", "mediaUrl", "dateKey", "enteredAtMs", "exitedAtMs", "durationSeconds", "createdAt", "expiresAt"]
+    },
+    "RoomKickLog": {
+      "title": "RoomKickLog",
+      "description": "Audit log of which host or manager kicked out which user inside a room with exact timestamp.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "roomOwnerId": { "type": "string" },
+        "isRoomPublic": { "type": "boolean" },
+        "actorUid": { "type": "string" },
+        "actorNumericId": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorAvatarUrl": { "type": "string" },
+        "actorRole": { "type": "string", "enum": ["owner", "manager"] },
+        "targetUid": { "type": "string" },
+        "targetNumericId": { "type": "string" },
+        "targetName": { "type": "string" },
+        "targetAvatarUrl": { "type": "string" },
+        "reason": { "type": "string" },
+        "kickedAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "roomOwnerId", "isRoomPublic", "actorUid", "actorNumericId", "actorName", "actorAvatarUrl", "actorRole", "targetUid", "targetNumericId", "targetName", "targetAvatarUrl", "reason", "kickedAtMs", "createdAt"]
+    },
+    "NumericIdLookup": {
+      "title": "NumericIdLookup",
+      "description": "10-digit numeric ID lookup entry allowing room hosts to appoint managers by ID without enumerating user profiles.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "numericId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "numericId", "displayName", "avatarUrl", "updatedAt"]
     }
   },
   "firestore": {
@@ -314,6 +354,14 @@
     "/rooms/{roomId}/presence/{userId}": {
       "schema": { "$ref": "#/entities/RoomPresenceMember" },
       "description": "Live presence heartbeat documents for users currently active inside a voice room."
+    },
+    "/rooms/{roomId}/kick_logs/{logId}": {
+      "schema": { "$ref": "#/entities/RoomKickLog" },
+      "description": "Immutable room kick audit records showing actor (owner/manager), target user, and exact time."
+    },
+    "/numeric_id_lookup/{numericId}": {
+      "schema": { "$ref": "#/entities/NumericIdLookup" },
+      "description": "Direct get-by-ID mapping from 10-digit numeric ID to userId, displayName, and avatarUrl."
     },
     "/conversations/{conversationId}": {
       "schema": { "$ref": "#/entities/Conversation" },

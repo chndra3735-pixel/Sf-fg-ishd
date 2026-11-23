@@ -32,9 +32,13 @@ data class VoiceRoom(
   val category: String = "लोकप्रिय",
   val coverUrl: String = "",
   val backgroundTheme: String = "stadium",
+  val themeBackgroundUrl: String = "",
   val clubTag: String = "SWAR",
   val welcomeNotice: String = "SwarRoom में आपका स्वागत है। कृपया एक दूसरे का सम्मान करें और सभ्य तरीके से चैट करें।",
   val seatCount: Long = 20L,
+  val managerUids: List<String> = emptyList(),
+  @get:PropertyName("isPinLocked") @field:PropertyName("isPinLocked") val isPinLocked: Boolean = false,
+  val roomPin: String = "",
   val listenerCount: Long = 1L,
   @get:PropertyName("isLive") @field:PropertyName("isLive") val isLive: Boolean = true,
   @get:PropertyName("isPublic") @field:PropertyName("isPublic") val isPublic: Boolean = true,
@@ -171,6 +175,7 @@ data class LevelTierConfig(
   val avatarFrameUrl: String = "",
   val rewardCoins: Long = 0L,
   val profileBadgeUrl: String = "",
+  val typingBannerUrl: String = "",
   val updatedByUid: String = "",
   @ServerTimestamp val updatedAt: Timestamp? = null,
 )
@@ -256,6 +261,38 @@ data class UserActivityLog(
   val durationSeconds: Long = 0L,
   @ServerTimestamp val createdAt: Timestamp? = null,
   val expiresAt: Timestamp? = null,
+)
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class RoomKickLog(
+  @DocumentId val id: String = "",
+  val roomId: String = "",
+  val roomOwnerId: String = "",
+  @get:PropertyName("isRoomPublic") @field:PropertyName("isRoomPublic") val isRoomPublic: Boolean = true,
+  val actorUid: String = "",
+  val actorNumericId: String = "",
+  val actorName: String = "",
+  val actorAvatarUrl: String = "",
+  val actorRole: String = "owner",
+  val targetUid: String = "",
+  val targetNumericId: String = "",
+  val targetName: String = "",
+  val targetAvatarUrl: String = "",
+  val reason: String = "",
+  val kickedAtMs: Long = 0L,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class NumericIdLookup(
+  @DocumentId val id: String = "",
+  val userId: String = "",
+  val numericId: String = "",
+  val displayName: String = "",
+  val avatarUrl: String = "",
+  @ServerTimestamp val updatedAt: Timestamp? = null,
 )
 
 object SwarCatalogDefaults {

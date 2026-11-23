@@ -126,6 +126,7 @@ class ExampleRobolectricTest {
     )
     var savedBadgeLevel = -1
     var savedCoins = -1L
+    var savedTypingBannerLink = ""
     composeTestRule.setContent {
       SwarRoomTheme {
         com.example.ui.screens.ProfileScreen(
@@ -136,9 +137,10 @@ class ExampleRobolectricTest {
           onUpdateProfile = { _, _, _, _, _ -> },
           onSignOut = {},
           isAdminUser = true,
-          onSaveLevelTierConfig = { lvl, _, _, _, _, coinsReward, _, _, onDone ->
+          onSaveLevelTierConfig = { lvl, _, _, _, _, coinsReward, _, _, typLink, _, onDone ->
             savedBadgeLevel = lvl
             savedCoins = coinsReward
+            savedTypingBannerLink = typLink
             onDone()
           },
         )
@@ -156,12 +158,90 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("tier_frame_input").performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("tier_coins_input").performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("tier_badge_input").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("tier_typing_banner_input").performScrollTo()
+      .performTextInput("https://cdn.example.com/royal_patti.gif")
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("typing_banner_live_preview").performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("save_level_config_button").performScrollTo().performClick()
     composeTestRule.waitForIdle()
     assertEquals(1, savedBadgeLevel)
     assertEquals(0L, savedCoins)
+    assertEquals("https://cdn.example.com/royal_patti.gif", savedTypingBannerLink)
     composeTestRule.onNodeWithTag("close_level_cards_button").performClick()
     composeTestRule.waitForIdle()
+  }
+
+  @Test
+  fun `voice room renders sender unlocked typing patti banner behind typed chat messages`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_patti",
+      ownerId = "host_1",
+      ownerName = "Host",
+      title = "Patti Test Room",
+      roomCode = "778899",
+    )
+    val msg = com.example.data.model.RoomMessage(
+      id = "msg_patti_1",
+      roomId = "room_patti",
+      senderUid = "u_vip",
+      senderName = "राजा स्वर",
+      text = "शानदार गायकी!",
+      messageType = "text",
+      badgeTag = "VIP",
+    )
+    val configs = mapOf(
+      1 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 1L,
+        typingBannerUrl = "https://cdn.example.com/vip_banner.png",
+      )
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = room,
+          seats = emptyList(),
+          messages = listOf(msg),
+          currentUserId = "u_vip",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 2500L,
+          emojiCatalog = emptyList(),
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = null,
+          isMicMuted = true,
+          isSpeakerOn = true,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          levelConfigs = configs,
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {},
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_message_typing_banner_msg_patti_1").assertIsDisplayed()
+    composeTestRule.onNodeWithText("शानदार गायकी!", substring = true, useUnmergedTree = true).assertIsDisplayed()
   }
 
   @Test
@@ -703,5 +783,276 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     assertTrue(purged)
     composeTestRule.onNodeWithTag("admin_user_audit_dialog").assertIsDisplayed()
+  }
+
+  @Test
+  fun `room settings studio sheet exposes identity, theme, manager, kick log, music, pin and seat count controls`() {
+    val targetNumericId = SwarUserIdentity.numericIdForUid("u_candidate")
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_studio",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "संगीत महफ़िल",
+      roomCode = "554433",
+      seatCount = 12L,
+    )
+    val kickLogs = listOf(
+      com.example.data.model.RoomKickLog(
+        id = "kick_1",
+        roomId = "room_studio",
+        roomOwnerId = "host_1",
+        actorUid = "mgr_1",
+        actorNumericId = SwarUserIdentity.numericIdForUid("mgr_1"),
+        actorName = "राहुल मैनेजर",
+        actorRole = "manager",
+        targetUid = "u_bad",
+        targetNumericId = SwarUserIdentity.numericIdForUid("u_bad"),
+        targetName = "रोहित",
+        reason = "नियम उल्लंघन",
+        kickedAtMs = 1_760_000_500_000L,
+      ),
+    )
+    var updatedTitle = ""
+    var updatedThemeLink = ""
+    var addedManagerId = ""
+    var pinResult: Pair<Boolean, String>? = null
+    var resizedSeats = -1
+    var toggledMusic = false
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.RoomSettingsSheet(
+          room = room,
+          isHost = true,
+          isUploadingMedia = false,
+          isMonitorLoopbackOn = false,
+          isAgoraConnected = true,
+          agoraStatusText = "कनेक्टेड",
+          userProfiles = emptyMap(),
+          livePresenceMembers = emptyList(),
+          seats = emptyList(),
+          kickLogs = kickLogs,
+          roomMusicState = com.example.audio.RoomMusicState(
+            trackTitle = "दिल की धड़कन",
+            isPlaying = true,
+            isPrepared = true,
+            volumePercent = 70,
+            usingRoomBroadcast = true,
+          ),
+          onToggleMonitorLoopback = {},
+          onUpdateIdentity = { title, _, _, _ -> updatedTitle = title },
+          onUpdateTheme = { _, _, link -> updatedThemeLink = link },
+          onAddManagerById = { addedManagerId = it },
+          onRemoveManager = {},
+          onUpdateRoomPinLock = { enabled, pin -> pinResult = enabled to pin },
+          onResizeRoomSeats = { resizedSeats = it },
+          onPickMusicUri = {},
+          onToggleMusicPlayPause = { toggledMusic = true },
+          onStopMusic = {},
+          onMusicVolumeChange = {},
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_settings_dp_picker").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_settings_name_input").performScrollTo().performTextReplacement("नया स्टेज")
+    composeTestRule.onNodeWithTag("room_settings_save_identity_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("नया स्टेज", updatedTitle)
+
+    composeTestRule.onNodeWithTag("room_settings_theme_link_input").performScrollTo()
+      .performTextInput("https://cdn.example.com/night_theme.gif")
+    composeTestRule.onNodeWithTag("room_settings_apply_theme_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("https://cdn.example.com/night_theme.gif", updatedThemeLink)
+
+    composeTestRule.onNodeWithTag("room_settings_manager_id_input").performScrollTo()
+      .performTextInput(targetNumericId)
+    composeTestRule.onNodeWithTag("room_settings_manager_accept_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(targetNumericId, addedManagerId)
+
+    composeTestRule.onNodeWithTag("room_settings_kick_log_kick_1").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_settings_pick_music_button").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_settings_music_play_pause").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertTrue(toggledMusic)
+
+    composeTestRule.onNodeWithTag("room_settings_pin_input").performScrollTo().performTextInput("4321")
+    composeTestRule.onNodeWithTag("room_settings_pin_toggle_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(true to "4321", pinResult)
+
+    composeTestRule.onNodeWithTag("room_settings_seat_count_input").performScrollTo().performTextReplacement("8")
+    composeTestRule.onNodeWithTag("room_settings_seat_count_apply_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(8, resizedSeats)
+  }
+
+  @Test
+  fun `lobby displays room lock badge and pin dialog verifies pin before admitting`() {
+    val lockedRoom = com.example.data.model.VoiceRoom(
+      id = "room_pin_1",
+      ownerId = "host_other",
+      ownerName = "होस्ट",
+      title = "प्राइवेट कमरा",
+      roomCode = "111222",
+      isPinLocked = true,
+      roomPin = "2580",
+      seatCount = 10L,
+    )
+    var admittedPin = ""
+    composeTestRule.setContent {
+      val showPinDialog = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+      SwarRoomTheme {
+        androidx.compose.foundation.layout.Box {
+          com.example.ui.screens.LobbyScreen(
+            roomsState = com.example.ui.viewmodel.UiState.Success(listOf(lockedRoom)),
+            currentUserId = "guest_user",
+            onRoomClick = { room ->
+              if (room.isPinLocked && room.roomPin.isNotBlank()) showPinDialog.value = true
+            },
+            onCreateRoomClick = {},
+          )
+          if (showPinDialog.value) {
+            com.example.ui.components.RoomPinEntryDialog(
+              roomTitle = lockedRoom.title,
+              expectedPin = lockedRoom.roomPin,
+              onSuccessPin = {
+                admittedPin = it
+                showPinDialog.value = false
+              },
+              onDismiss = { showPinDialog.value = false },
+            )
+          }
+        }
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_lock_badge_room_pin_1").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_card_room_pin_1").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_pin_entry_input").performTextInput("1111")
+    composeTestRule.onNodeWithTag("room_pin_submit_button").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_pin_error_text").assertIsDisplayed()
+    assertEquals("", admittedPin)
+
+    composeTestRule.onNodeWithTag("room_pin_entry_input").performTextReplacement("2580")
+    composeTestRule.onNodeWithTag("room_pin_submit_button").performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("2580", admittedPin)
+  }
+
+  @Test
+  fun `voice room renders custom theme, dynamic seats, and allows manager kick on non-owner only`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_mgr",
+      ownerId = "host_owner",
+      ownerName = "मालिक",
+      title = "मैनेजर स्टेज",
+      roomCode = "909090",
+      backgroundTheme = "custom",
+      themeBackgroundUrl = "https://cdn.example.com/custom_stage.jpg",
+      managerUids = listOf("mgr_user"),
+      isPinLocked = true,
+      roomPin = "4455",
+      seatCount = 6L,
+    )
+    val seats = (0 until 6).map { idx ->
+      when (idx) {
+        0 -> com.example.data.model.RoomSeat(
+          id = "seat_0",
+          roomId = room.id,
+          roomOwnerId = room.ownerId,
+          seatIndex = 0L,
+          occupantUid = "host_owner",
+          occupantName = "मालिक",
+        )
+        2 -> com.example.data.model.RoomSeat(
+          id = "seat_2",
+          roomId = room.id,
+          roomOwnerId = room.ownerId,
+          seatIndex = 2L,
+          occupantUid = "member_u",
+          occupantName = "सदस्य वन",
+        )
+        else -> com.example.data.model.RoomSeat(
+          id = "seat_$idx",
+          roomId = room.id,
+          roomOwnerId = room.ownerId,
+          seatIndex = idx.toLong(),
+        )
+      }
+    }
+    var kickedUid = ""
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = room,
+          seats = seats,
+          messages = emptyList(),
+          currentUserId = "mgr_user",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 2000L,
+          emojiCatalog = emptyList(),
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = null,
+          isMicMuted = true,
+          isSpeakerOn = true,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          roomMusicState = com.example.audio.RoomMusicState(isPrepared = true, trackTitle = "साउंडट्रैक"),
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {},
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+          onKickRoomMember = { uid, _, _ -> kickedUid = uid },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_custom_theme_background").assertExists()
+    composeTestRule.onNodeWithTag("room_top_lock_badge").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_top_music_badge").assertIsDisplayed()
+
+    // Tap Host seat as Manager -> cannot kick or mute Room Owner
+    composeTestRule.onNodeWithText("मालिक").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("other_profile_kick_button").assertDoesNotExist()
+    composeTestRule.onNodeWithTag("other_profile_mute_button").assertDoesNotExist()
+    // Clicking block (with no-op handler) cleanly dismisses the ModalBottomSheet
+    composeTestRule.onNodeWithTag("other_profile_block_button").performClick()
+    composeTestRule.waitForIdle()
+
+    // Tap regular member seat as Manager -> Kick, Mute, Lock visible and working
+    composeTestRule.onNodeWithText("सदस्य वन").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("other_profile_mute_button").assertExists()
+    composeTestRule.onNodeWithTag("other_profile_lock_seat").assertExists()
+    composeTestRule.onNodeWithTag("other_profile_kick_button").assertExists().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("member_u", kickedUid)
   }
 }

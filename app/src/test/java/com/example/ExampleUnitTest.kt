@@ -172,21 +172,28 @@ class ExampleUnitTest {
         badgeLevel = 1L,
         avatarFrameUrl = "https://cdn.example.com/frame_lv1.gif",
         entryVideoUrl = "https://cdn.example.com/entry_lv1.mp4",
+        typingBannerUrl = "https://cdn.example.com/patti_lv1.png",
       ),
       20 to com.example.data.model.LevelTierConfig(
         badgeLevel = 20L,
         avatarFrameUrl = "https://cdn.example.com/frame_lv20.webp",
+        typingBannerUrl = "https://cdn.example.com/patti_lv20.gif",
       ),
       50 to com.example.data.model.LevelTierConfig(
         badgeLevel = 50L,
         avatarFrameUrl = "https://cdn.example.com/frame_lv50.gif",
         entryVideoUrl = "https://cdn.example.com/entry_lv50.mp4",
+        typingBannerUrl = "https://cdn.example.com/patti_lv50.gif",
       ),
     )
 
     assertEquals(
       "https://cdn.example.com/frame_lv20.webp",
       SwarUserIdentity.highestUnlockedFrameUrl(25, configs),
+    )
+    assertEquals(
+      "https://cdn.example.com/patti_lv20.gif",
+      SwarUserIdentity.highestUnlockedTypingBannerUrl(25, configs),
     )
     val entry = SwarUserIdentity.highestUnlockedEntryVideo(25, configs)
     assertNotNull(entry)

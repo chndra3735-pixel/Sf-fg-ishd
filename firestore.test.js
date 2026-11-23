@@ -533,3 +533,166 @@ test("Users save own onboarding audit profile & 7-month logs; ONLY verified admi
   );
 });
 
+// 9. Room Settings Studio: Custom Theme, PIN Lock, Dynamic Seat Count, Managers (max 5), Kick Audit Logs & Numeric ID Lookup
+test("Host configures theme/PIN/seats/managers; manager can lock/mute/kick non-owner and write kick_logs; numeric lookup forbids list", async () => {
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieUid = "charlie_uid_3";
+  const charlie = testEnv.authenticatedContext(charlieUid).firestore();
+
+  // Numeric ID lookup allows get-by-ID for signed-in users, denies list and cross-user write
+  await assertSucceeds(
+    bob.collection("numeric_id_lookup").doc("2222222222").set({
+      userId: BOB_UID,
+      numericId: "2222222222",
+      displayName: "Bob",
+      avatarUrl: "",
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(alice.collection("numeric_id_lookup").doc("2222222222").get());
+  await assertFails(alice.collection("numeric_id_lookup").get());
+  await assertFails(
+    alice.collection("numeric_id_lookup").doc("3333333333").set({
+      userId: BOB_UID,
+      numericId: "3333333333",
+      displayName: "Spoof",
+      avatarUrl: "",
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Alice creates a room and seats
+  const roomRef = alice.collection("rooms").doc("room_ctrl_1");
+  await assertSucceeds(roomRef.set(validRoomPayload(ALICE_UID, true)));
+  await assertSucceeds(
+    roomRef.collection("seats").doc("seat_0").set({
+      roomId: "room_ctrl_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      seatIndex: 0,
+      occupantUid: ALICE_UID,
+      occupantName: "Alice",
+      occupantAvatarUrl: "",
+      isLocked: false,
+      isMuted: false,
+      isSpeaking: false,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(
+    roomRef.collection("seats").doc("seat_1").set({
+      roomId: "room_ctrl_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      seatIndex: 1,
+      occupantUid: charlieUid,
+      occupantName: "Charlie",
+      occupantAvatarUrl: "",
+      isLocked: false,
+      isMuted: false,
+      isSpeaking: false,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Host updates custom background theme, PIN lock, seatCount, and assigns Bob as manager
+  await assertSucceeds(
+    roomRef.update({
+      themeBackgroundUrl: "https://proj.supabase.co/storage/v1/object/public/swarroom-media/room_themes/royal.jpg",
+      isPinLocked: true,
+      roomPin: "4590",
+      seatCount: 8,
+      managerUids: [BOB_UID],
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Exceeding 5 managers fails
+  await assertFails(
+    roomRef.update({
+      managerUids: ["m1", "m2", "m3", "m4", "m5", "m6"],
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Non-owner Bob cannot resize seatCount
+  await assertFails(
+    bob.collection("rooms").doc("room_ctrl_1").update({
+      seatCount: 12,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Manager Bob can mute & kick Charlie (non-owner) and record a kick_log
+  const bobRoom = bob.collection("rooms").doc("room_ctrl_1");
+  await assertSucceeds(
+    bobRoom.collection("seats").doc("seat_1").update({
+      isMuted: true,
+      isSpeaking: false,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(
+    bobRoom.collection("seats").doc("seat_1").update({
+      occupantUid: "",
+      occupantName: "",
+      occupantAvatarUrl: "",
+      isMuted: false,
+      isSpeaking: false,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(
+    bobRoom.collection("kick_logs").doc("kick_1").set({
+      roomId: "room_ctrl_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      actorUid: BOB_UID,
+      actorNumericId: "2222222222",
+      actorName: "Bob",
+      actorAvatarUrl: "",
+      actorRole: "manager",
+      targetUid: charlieUid,
+      targetNumericId: "3333333333",
+      targetName: "Charlie",
+      targetAvatarUrl: "",
+      reason: "रूम नियम उल्लंघन",
+      kickedAtMs: Date.now(),
+      createdAt: serverTimestamp(),
+    })
+  );
+
+  // Manager Bob CANNOT mute or kick Host Alice, and Charlie cannot forge a kick_log
+  await assertFails(
+    bobRoom.collection("seats").doc("seat_0").update({
+      isMuted: true,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(
+    charlie.collection("rooms").doc("room_ctrl_1").collection("kick_logs").doc("kick_fake").set({
+      roomId: "room_ctrl_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      actorUid: charlieUid,
+      actorNumericId: "3333333333",
+      actorName: "Charlie",
+      actorAvatarUrl: "",
+      actorRole: "manager",
+      targetUid: "other_uid",
+      targetNumericId: "4444444444",
+      targetName: "Other",
+      targetAvatarUrl: "",
+      reason: "",
+      kickedAtMs: Date.now(),
+      createdAt: serverTimestamp(),
+    })
+  );
+
+  // Room owner & members can list kick_logs; deleting kick_logs is forbidden
+  await assertSucceeds(roomRef.collection("kick_logs").where("isRoomPublic", "==", true).get());
+  await assertFails(roomRef.collection("kick_logs").doc("kick_1").delete());
+});
+
+
