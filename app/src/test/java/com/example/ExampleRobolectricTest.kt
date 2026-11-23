@@ -6,6 +6,9 @@ import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -891,7 +894,7 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `lobby displays room lock badge and pin dialog verifies pin before admitting`() {
+  fun `lobby displays room lock badge and triggers locked room callback`() {
     val lockedRoom = com.example.data.model.VoiceRoom(
       id = "room_pin_1",
       ownerId = "host_other",
@@ -902,36 +905,37 @@ class ExampleRobolectricTest {
       roomPin = "2580",
       seatCount = 10L,
     )
-    var admittedPin = ""
+    var clickedRoomId = ""
     composeTestRule.setContent {
-      val showPinDialog = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
       SwarRoomTheme {
-        androidx.compose.foundation.layout.Box {
-          com.example.ui.screens.LobbyScreen(
-            roomsState = com.example.ui.viewmodel.UiState.Success(listOf(lockedRoom)),
-            currentUserId = "guest_user",
-            onRoomClick = { room ->
-              if (room.isPinLocked && room.roomPin.isNotBlank()) showPinDialog.value = true
-            },
-            onCreateRoomClick = {},
-          )
-          if (showPinDialog.value) {
-            com.example.ui.components.RoomPinEntryDialog(
-              roomTitle = lockedRoom.title,
-              expectedPin = lockedRoom.roomPin,
-              onSuccessPin = {
-                admittedPin = it
-                showPinDialog.value = false
-              },
-              onDismiss = { showPinDialog.value = false },
-            )
-          }
-        }
+        com.example.ui.screens.LobbyScreen(
+          roomsState = com.example.ui.viewmodel.UiState.Success(listOf(lockedRoom)),
+          currentUserId = "guest_user",
+          onRoomClick = { room -> clickedRoomId = room.id },
+          onCreateRoomClick = {},
+        )
       }
     }
     composeTestRule.waitForIdle()
-    composeTestRule.onNodeWithTag("room_lock_badge_room_pin_1").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_lock_badge_room_pin_1", useUnmergedTree = true).assertIsDisplayed()
     composeTestRule.onNodeWithTag("room_card_room_pin_1").performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("room_pin_1", clickedRoomId)
+  }
+
+  @Test
+  fun `room pin entry dialog rejects wrong pin and admits matching pin`() {
+    var admittedPin = ""
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.RoomPinEntryDialog(
+          roomTitle = "प्राइवेट कमरा",
+          expectedPin = "2580",
+          onSuccessPin = { admittedPin = it },
+          onDismiss = {},
+        )
+      }
+    }
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("room_pin_entry_input").performTextInput("1111")
     composeTestRule.onNodeWithTag("room_pin_submit_button").performClick()
@@ -1036,9 +1040,10 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("room_custom_theme_background").assertExists()
     composeTestRule.onNodeWithTag("room_top_lock_badge").assertIsDisplayed()
     composeTestRule.onNodeWithTag("room_top_music_badge").assertIsDisplayed()
+    composeTestRule.onNodeWithText("बात करना").assertDoesNotExist()
 
     // Tap Host seat as Manager -> cannot kick or mute Room Owner
-    composeTestRule.onNodeWithText("मालिक").performClick()
+    composeTestRule.onNodeWithTag("host_seat_badge_0").performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("other_profile_kick_button").assertDoesNotExist()
     composeTestRule.onNodeWithTag("other_profile_mute_button").assertDoesNotExist()
@@ -1047,12 +1052,330 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
 
     // Tap regular member seat as Manager -> Kick, Mute, Lock visible and working
-    composeTestRule.onNodeWithText("सदस्य वन").performClick()
+    composeTestRule.onAllNodesWithText("सदस्य वन").onFirst().performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("other_profile_mute_button").assertExists()
     composeTestRule.onNodeWithTag("other_profile_lock_seat").assertExists()
     composeTestRule.onNodeWithTag("other_profile_kick_button").assertExists().performClick()
     composeTestRule.waitForIdle()
     assertEquals("member_u", kickedUid)
+  }
+
+  @Test
+  fun `profile CP row generates ID and submits 10-digit partner request`() {
+    val myUid = "u_cp_sender"
+    val partnerNumericId = SwarUserIdentity.numericIdForUid("u_cp_receiver")
+    val profile = com.example.data.model.UserProfile(
+      id = myUid,
+      userId = myUid,
+      displayName = "अजय कुमार",
+      coins = 3_000L,
+    )
+    var generatedSynced = false
+    var submittedTargetId = ""
+    var submittedBondTitle = ""
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.ProfileScreen(
+          profileState = com.example.ui.viewmodel.UiState.Success(profile),
+          isUploadingMedia = false,
+          isSupabaseConfigured = true,
+          onUploadAvatarDp = {},
+          onUpdateProfile = { _, _, _, _, _ -> },
+          onSignOut = {},
+          onGenerateSyncOwnCpId = { generatedSynced = true },
+          onSendCpRequestById = { id, bond ->
+            submittedTargetId = id
+            submittedBondTitle = bond
+          },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("profile_cp_row").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("cp_partner_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("cp_own_numeric_id").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("cp_generate_sync_id_button").performClick()
+    composeTestRule.waitForIdle()
+    assertTrue(generatedSynced)
+
+    composeTestRule.onNodeWithTag("cp_partner_id_input").performScrollTo().performTextInput(partnerNumericId)
+    composeTestRule.onNodeWithTag("cp_submit_request_button").performScrollTo().assertIsEnabled().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(partnerNumericId, submittedTargetId)
+    assertTrue(submittedBondTitle.isNotBlank())
+  }
+
+  @Test
+  fun `incoming CP notification popup lets recipient click agree to join IDs`() {
+    val request = com.example.data.model.CpRelationship(
+      id = SwarUserIdentity.cpPairId("u_req", "u_rec"),
+      memberUids = listOf("u_rec", "u_req"),
+      memberNames = mapOf("u_req" to "सोनिया", "u_rec" to "विकास"),
+      memberNumericIds = mapOf(
+        "u_req" to SwarUserIdentity.numericIdForUid("u_req"),
+        "u_rec" to SwarUserIdentity.numericIdForUid("u_rec"),
+      ),
+      requesterUid = "u_req",
+      recipientUid = "u_rec",
+      bondTitle = "बेस्ट फ्रेंड",
+      status = "pending",
+    )
+    var agreed = false
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.IncomingCpNotificationDialog(
+          request = request,
+          isSubmitting = false,
+          onAgree = { agreed = true },
+          onDecline = {},
+          onLater = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("incoming_cp_notification_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("cp_popup_agree_button").assertIsEnabled().performClick()
+    composeTestRule.waitForIdle()
+    assertTrue(agreed)
+  }
+
+  @Test
+  fun `voice room shows adjacent CP seat bridge animation and tapping either partner shows both joined IDs`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_cp_stage",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "दोस्ती मंच",
+      roomCode = "121212",
+      seatCount = 10L,
+    )
+    val guestAId = SwarUserIdentity.numericIdForUid("guest_a")
+    val guestBId = SwarUserIdentity.numericIdForUid("guest_b")
+    val cpGuestPair = com.example.data.model.CpRelationship(
+      id = SwarUserIdentity.cpPairId("guest_a", "guest_b"),
+      memberUids = listOf("guest_a", "guest_b"),
+      memberNames = mapOf("guest_a" to "अमित दोस्त", "guest_b" to "प्रिया दोस्त"),
+      memberNumericIds = mapOf("guest_a" to guestAId, "guest_b" to guestBId),
+      requesterUid = "guest_a",
+      recipientUid = "guest_b",
+      bondTitle = "बेस्ट फ्रेंड",
+      status = "accepted",
+      cpXp = 650L,
+      totalGiftsCount = 12L,
+      acceptedAtMs = System.currentTimeMillis() - 40L * 86_400_000L,
+    )
+    val seats = (0 until 10).map { idx ->
+      when (idx) {
+        0 -> com.example.data.model.RoomSeat(
+          id = "seat_0",
+          roomId = room.id,
+          roomOwnerId = room.ownerId,
+          seatIndex = 0L,
+          occupantUid = "host_1",
+          occupantName = "होस्ट",
+        )
+        2 -> com.example.data.model.RoomSeat(
+          id = "seat_2",
+          roomId = room.id,
+          roomOwnerId = room.ownerId,
+          seatIndex = 2L,
+          occupantUid = "guest_a",
+          occupantName = "अमित दोस्त",
+        )
+        3 -> com.example.data.model.RoomSeat(
+          id = "seat_3",
+          roomId = room.id,
+          roomOwnerId = room.ownerId,
+          seatIndex = 3L,
+          occupantUid = "guest_b",
+          occupantName = "प्रिया दोस्त",
+        )
+        else -> com.example.data.model.RoomSeat(
+          id = "seat_$idx",
+          roomId = room.id,
+          roomOwnerId = room.ownerId,
+          seatIndex = idx.toLong(),
+        )
+      }
+    }
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = room,
+          seats = seats,
+          messages = emptyList(),
+          currentUserId = "viewer_u",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 2000L,
+          emojiCatalog = emptyList(),
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = null,
+          isMicMuted = true,
+          isSpeakerOn = true,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          acceptedCpLinks = listOf(cpGuestPair),
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {},
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("cp_adjacent_bridge_2_3").assertIsDisplayed()
+
+    // Tap either paired partner -> bottom sheet reveals BOTH joined IDs & names together
+    composeTestRule.onAllNodesWithText("प्रिया दोस्त").onFirst().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("sheet_joint_cp_card").performScrollTo().assertIsDisplayed()
+    val inJointCard = hasAnyAncestor(hasTestTag("sheet_joint_cp_card"))
+    composeTestRule.onNode(hasText("अमित दोस्त") and inJointCard, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+    composeTestRule.onNode(hasText("प्रिया दोस्त") and inJointCard, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+    composeTestRule.onNode(hasText("ID: $guestAId") and inJointCard, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+    composeTestRule.onNode(hasText("ID: $guestBId") and inJointCard, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+  }
+
+  @Test
+  fun `lucky gift category blocks sending for non-CP users`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_lucky_gate",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "लकी टेस्ट रूम",
+      roomCode = "334455",
+    )
+    val luckyGift = com.example.data.model.GiftCatalogItem(
+      id = "g_cp_lucky_locked",
+      name = "दिल बंधन",
+      category = com.example.data.model.SwarCatalogDefaults.LUCKY_CP_CATEGORY,
+      emoji = "💞",
+      coinCost = 199L,
+    )
+    var sentGiftCalled = false
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.GiftPanelSheet(
+          room = room,
+          seats = emptyList(),
+          gifts = listOf(luckyGift),
+          userCoins = 2000L,
+          isAdminUser = false,
+          isUploading = false,
+          currentUserId = "u_single",
+          acceptedCpLinks = emptyList(),
+          onClaimBonusCoins = {},
+          onSendGift = { _, _, _, _ -> sentGiftCalled = true },
+          onAddCustomGift = { _, _, _, _, _, _, _, onDone -> onDone() },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
+          onDeleteCustomGift = { _, onDone -> onDone() },
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("gift_category_tab_3").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("cp_lucky_category_banner").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("gift_cp_badge_g_cp_lucky_locked", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("send_gift_button").assertIsNotEnabled()
+    assertTrue(!sentGiftCalled)
+  }
+
+  @Test
+  fun `lucky gift category unlocks and auto-selects linked CP partner to send and grow CP level`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_lucky_cp",
+      ownerId = "host_other",
+      ownerName = "अन्य होस्ट",
+      title = "CP गिफ्ट स्टेज",
+      roomCode = "667788",
+    )
+    val partnerPair = com.example.data.model.CpRelationship(
+      id = SwarUserIdentity.cpPairId("u_cp_me", "u_cp_buddy"),
+      memberUids = listOf("u_cp_buddy", "u_cp_me"),
+      memberNames = mapOf("u_cp_me" to "रोहन", "u_cp_buddy" to "प्रिया"),
+      memberNumericIds = mapOf(
+        "u_cp_me" to SwarUserIdentity.numericIdForUid("u_cp_me"),
+        "u_cp_buddy" to SwarUserIdentity.numericIdForUid("u_cp_buddy"),
+      ),
+      requesterUid = "u_cp_me",
+      recipientUid = "u_cp_buddy",
+      status = "accepted",
+      acceptedAtMs = 1_700_000_000_000L,
+    )
+    val luckyGift = com.example.data.model.GiftCatalogItem(
+      id = "g_cp_lucky_1",
+      name = "रॉयल कपल रिंग",
+      category = com.example.data.model.SwarCatalogDefaults.LUCKY_CP_CATEGORY,
+      emoji = "💍",
+      coinCost = 299L,
+    )
+    var sentGiftId = ""
+    var sentRecipientUid = ""
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.GiftPanelSheet(
+          room = room,
+          seats = listOf(
+            com.example.data.model.RoomSeat(
+              id = "seat_2",
+              roomId = room.id,
+              roomOwnerId = room.ownerId,
+              seatIndex = 2L,
+              occupantUid = "u_cp_buddy",
+              occupantName = "प्रिया",
+            )
+          ),
+          gifts = listOf(luckyGift),
+          userCoins = 2000L,
+          isAdminUser = false,
+          isUploading = false,
+          currentUserId = "u_cp_me",
+          acceptedCpLinks = listOf(partnerPair),
+          onClaimBonusCoins = {},
+          onSendGift = { gift, uid, _, _ ->
+            sentGiftId = gift.id
+            sentRecipientUid = uid
+          },
+          onAddCustomGift = { _, _, _, _, _, _, _, onDone -> onDone() },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
+          onDeleteCustomGift = { _, onDone -> onDone() },
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("gift_category_tab_3").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("cp_lucky_category_banner").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("send_gift_button").assertIsEnabled().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals("g_cp_lucky_1", sentGiftId)
+    assertEquals("u_cp_buddy", sentRecipientUid)
   }
 }

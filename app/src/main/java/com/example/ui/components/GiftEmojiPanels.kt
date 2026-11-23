@@ -36,7 +36,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -57,6 +59,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -79,10 +82,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.data.model.CpRelationship
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
+import com.example.data.model.SwarUserIdentity
 import com.example.data.model.VoiceRoom
 import com.example.data.repository.MediaCompressor
 import com.example.ui.theme.SwarCoral
@@ -412,33 +417,60 @@ fun GiftPanelSheet(
   onDismiss: () -> Unit,
   giftUploadError: String? = null,
   onClearGiftUploadError: () -> Unit = {},
+  currentUserId: String = "",
+  acceptedCpLinks: List<CpRelationship> = emptyList(),
 ) {
   val categories = SwarCatalogDefaults.giftCategories
   var selectedCategoryIdx by remember { mutableIntStateOf(0) }
   val currentCategory = categories[selectedCategoryIdx]
+  val isLuckyCpTabSelected = SwarCatalogDefaults.isCpLuckyGiftCategory(currentCategory)
   val filteredGifts = remember(gifts, currentCategory) {
     gifts.filter { it.category == currentCategory }
   }
 
-  // Recipient options: Host + seated guests + All Members
-  val recipients = remember(room.id, seats) {
+  val activeOwnCp = remember(currentUserId, acceptedCpLinks) {
+    SwarUserIdentity.findAcceptedCpForUser(currentUserId, acceptedCpLinks)
+  }
+  val myCpPartnerUid = remember(activeOwnCp, currentUserId) {
+    activeOwnCp?.partnerUidFor(currentUserId).orEmpty()
+  }
+  val myCpPartnerName = remember(activeOwnCp, currentUserId) {
+    activeOwnCp?.partnerNameFor(currentUserId).orEmpty()
+  }
+
+  // Recipient options: Host + seated guests (+ linked CP partner if not already listed) + All Members
+  val recipients = remember(room.id, seats, myCpPartnerUid, myCpPartnerName) {
     buildList {
-      add(room.ownerId to "होस्ट • ${room.ownerName}")
+      val seen = mutableSetOf<String>()
+      val hostSuffix = if (room.ownerId == myCpPartnerUid && myCpPartnerUid.isNotBlank()) " (CP ❤️)" else ""
+      add(room.ownerId to "होस्ट • ${room.ownerName}$hostSuffix")
+      seen.add(room.ownerId)
       seats
         .filter { it.occupantUid.isNotBlank() && it.occupantUid != room.ownerId }
         .distinctBy { it.occupantUid }
         .forEach { seat ->
-          add(seat.occupantUid to seat.occupantName)
+          val cpMark = if (seat.occupantUid == myCpPartnerUid && myCpPartnerUid.isNotBlank()) " ❤️ (CP)" else ""
+          add(seat.occupantUid to "${seat.occupantName}$cpMark")
+          seen.add(seat.occupantUid)
         }
+      if (myCpPartnerUid.isNotBlank() && seen.add(myCpPartnerUid)) {
+        add(myCpPartnerUid to "❤️ ${myCpPartnerName.ifBlank { "CP पार्टनर" }} (CP)")
+      }
       add("all" to "सभी सदस्य")
     }
   }
   var selectedRecipient by remember(recipients) { mutableStateOf(recipients.first()) }
+  LaunchedEffect(isLuckyCpTabSelected, myCpPartnerUid, recipients) {
+    if (isLuckyCpTabSelected && myCpPartnerUid.isNotBlank()) {
+      recipients.firstOrNull { it.first == myCpPartnerUid }?.let { cpTarget ->
+        selectedRecipient = cpTarget
+      }
+    }
+  }
   var selectedGiftId by remember { mutableStateOf<String?>(null) }
-  val selectedGift = remember(selectedGiftId, filteredGifts, gifts) {
-    gifts.firstOrNull { it.id == selectedGiftId }
+  val selectedGift = remember(selectedGiftId, filteredGifts, currentCategory) {
+    filteredGifts.firstOrNull { it.id == selectedGiftId }
       ?: filteredGifts.firstOrNull()
-      ?: gifts.firstOrNull()
   }
   var selectedQuantity by remember { mutableIntStateOf(1) }
   var showAdminAddGiftDialog by remember { mutableStateOf(false) }
@@ -545,17 +577,82 @@ fun GiftPanelSheet(
         edgePadding = 12.dp,
       ) {
         categories.forEachIndexed { idx, cat ->
+          val isLuckyCat = SwarCatalogDefaults.isCpLuckyGiftCategory(cat)
           Tab(
             selected = selectedCategoryIdx == idx,
             onClick = { selectedCategoryIdx = idx },
+            modifier = Modifier.testTag("gift_category_tab_$idx"),
             text = {
               Text(
-                text = cat,
+                text = if (isLuckyCat) "$cat 💞 CP" else cat,
                 fontWeight = if (selectedCategoryIdx == idx) FontWeight.Bold else FontWeight.Medium,
-                color = if (selectedCategoryIdx == idx) SwarGold else Color(0xFFB5ACDA),
+                color = when {
+                  selectedCategoryIdx == idx && isLuckyCat -> Color(0xFFFF79B0)
+                  selectedCategoryIdx == idx -> SwarGold
+                  else -> Color(0xFFB5ACDA)
+                },
               )
             },
           )
+        }
+      }
+
+      if (isLuckyCpTabSelected) {
+        val partnerSelected = myCpPartnerUid.isNotBlank() && selectedRecipient.first == myCpPartnerUid
+        Surface(
+          color = when {
+            activeOwnCp == null -> Color(0x33FF5252)
+            !partnerSelected -> Color(0x33FFB300)
+            else -> Color(0x33E91E63)
+          },
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp)
+            .border(
+              width = 1.dp,
+              color = when {
+                activeOwnCp == null -> SwarCoral.copy(alpha = 0.7f)
+                !partnerSelected -> SwarGold.copy(alpha = 0.75f)
+                else -> Color(0xFFFF4081)
+              },
+              shape = RoundedCornerShape(12.dp),
+            )
+            .clickable(enabled = activeOwnCp != null && !partnerSelected) {
+              recipients.firstOrNull { it.first == myCpPartnerUid }?.let { cpTarget ->
+                selectedRecipient = cpTarget
+              }
+            }
+            .testTag("cp_lucky_category_banner"),
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Icon(
+              imageVector = if (activeOwnCp != null) Icons.Filled.Favorite else Icons.Filled.Lock,
+              contentDescription = null,
+              tint = when {
+                activeOwnCp == null -> SwarCoral
+                !partnerSelected -> SwarGold
+                else -> Color(0xFFFF80AB)
+              },
+              modifier = Modifier.size(16.dp),
+            )
+            Text(
+              text = when {
+                activeOwnCp == null -> "केवल CP जोड़ी के लिए: पहले प्रोफ़ाइल → CP में जोड़ी बनाएं। इसी गिफ्ट से CP लेवल बढ़ेगा!"
+                !partnerSelected -> "ऊपर अपने CP पार्टनर ($myCpPartnerName) को चुनने के लिए टैप करें — तभी यह लकी गिफ्ट जाएगा!"
+                else -> "केवल CP जोड़ी • $myCpPartnerName को भेजते ही आपका CP लेवल बढ़ेगा!"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = Color.White,
+              fontWeight = FontWeight.SemiBold,
+            )
+          }
         }
       }
 
@@ -717,6 +814,36 @@ fun GiftPanelSheet(
                 }
               }
 
+              if (SwarCatalogDefaults.isCpLuckyGiftCategory(gift.category)) {
+                Surface(
+                  color = if (activeOwnCp != null) Color(0xCCE91E63) else Color(0xCC3A2342),
+                  shape = RoundedCornerShape(6.dp),
+                  modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .testTag("gift_cp_badge_${gift.id}"),
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                  ) {
+                    Icon(
+                      imageVector = if (activeOwnCp != null) Icons.Filled.Favorite else Icons.Filled.Lock,
+                      contentDescription = "केवल CP जोड़ी",
+                      tint = Color.White,
+                      modifier = Modifier.size(8.dp),
+                    )
+                    Text(
+                      text = "CP",
+                      fontSize = 8.sp,
+                      color = Color.White,
+                      fontWeight = FontWeight.ExtraBold,
+                    )
+                  }
+                }
+              }
+
               // Coins overlay directly on the Gift DP
               Surface(
                 color = Color(0xCC120926),
@@ -778,29 +905,53 @@ fun GiftPanelSheet(
 
         val activeGift = selectedGift
         val totalCost = (activeGift?.coinCost ?: 0L) * selectedQuantity
+        val isActiveGiftLuckyCp = activeGift != null && SwarCatalogDefaults.isCpLuckyGiftCategory(activeGift.category)
+        val recipientIsAcceptedCp = remember(currentUserId, selectedRecipient, acceptedCpLinks) {
+          currentUserId.isNotBlank() &&
+            selectedRecipient.first.isNotBlank() &&
+            selectedRecipient.first != "all" &&
+            SwarUserIdentity.areAcceptedCpPartners(currentUserId, selectedRecipient.first, acceptedCpLinks) != null
+        }
+        val canSendSelectedGift = activeGift != null && (!isActiveGiftLuckyCp || recipientIsAcceptedCp)
         Button(
           onClick = {
-            if (activeGift != null) {
+            if (activeGift != null && canSendSelectedGift) {
               onSendGift(activeGift, selectedRecipient.first, selectedRecipient.second, selectedQuantity)
               onDismiss()
             }
           },
-          enabled = activeGift != null,
+          enabled = canSendSelectedGift,
           colors = ButtonDefaults.buttonColors(
-            containerColor = SwarCoral,
+            containerColor = if (isActiveGiftLuckyCp) Color(0xFFE91E63) else SwarCoral,
             contentColor = Color.White,
+            disabledContainerColor = Color(0xFF392B58),
+            disabledContentColor = Color(0xFFB3A9D1),
           ),
           shape = RoundedCornerShape(22.dp),
           modifier = Modifier
             .height(48.dp)
             .testTag("send_gift_button"),
         ) {
-          CoinEmblem(sizeDp = 16)
-          Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = "भेजें ($totalCost)",
-            fontWeight = FontWeight.Bold,
-          )
+          if (isActiveGiftLuckyCp && !recipientIsAcceptedCp) {
+            Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = "केवल CP जोड़ी",
+              fontWeight = FontWeight.Bold,
+            )
+          } else {
+            if (isActiveGiftLuckyCp) {
+              Icon(Icons.Filled.Favorite, contentDescription = null, modifier = Modifier.size(15.dp))
+              Spacer(modifier = Modifier.width(5.dp))
+            } else {
+              CoinEmblem(sizeDp = 16)
+              Spacer(modifier = Modifier.width(6.dp))
+            }
+            Text(
+              text = if (isActiveGiftLuckyCp) "CP गिफ्ट ($totalCost)" else "भेजें ($totalCost)",
+              fontWeight = FontWeight.Bold,
+            )
+          }
         }
       }
     }
@@ -1309,10 +1460,11 @@ private fun AddGiftAdminDialog(
         ) {
           Text("श्रेणी:", style = MaterialTheme.typography.labelMedium)
           SwarCatalogDefaults.giftCategories.forEach { cat ->
+            val labelText = if (SwarCatalogDefaults.isCpLuckyGiftCategory(cat)) "$cat (CP लेवल)" else cat
             FilterChip(
               selected = category == cat,
               onClick = { category = cat },
-              label = { Text(cat) },
+              label = { Text(labelText) },
             )
           }
         }
@@ -1825,10 +1977,11 @@ private fun EditGiftAdminDialog(
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           SwarCatalogDefaults.giftCategories.forEach { cat ->
+            val labelText = if (SwarCatalogDefaults.isCpLuckyGiftCategory(cat)) "$cat (CP लेवल)" else cat
             FilterChip(
               selected = category == cat,
               onClick = { category = cat },
-              label = { Text(cat) },
+              label = { Text(labelText) },
             )
           }
         }

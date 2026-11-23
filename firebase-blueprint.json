@@ -332,6 +332,27 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "numericId", "displayName", "avatarUrl", "updatedAt"]
+    },
+    "CpRelationship": {
+      "title": "CpRelationship",
+      "description": "Linked CP / Best-Friend pair connecting two user IDs with acceptance workflow, gift-driven CP level XP, and bond longevity aura.",
+      "type": "object",
+      "properties": {
+        "memberUids": { "type": "array" },
+        "memberNumericIds": { "type": "object" },
+        "memberNames": { "type": "object" },
+        "memberAvatars": { "type": "object" },
+        "requesterUid": { "type": "string" },
+        "recipientUid": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted"] },
+        "cpXp": { "type": "integer" },
+        "totalGiftsCount": { "type": "integer" },
+        "bondTitle": { "type": "string" },
+        "acceptedAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["memberUids", "memberNumericIds", "memberNames", "memberAvatars", "requesterUid", "recipientUid", "status", "cpXp", "totalGiftsCount", "bondTitle", "acceptedAtMs", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -406,6 +427,10 @@
     "/user_activity_logs/{logId}": {
       "schema": { "$ref": "#/entities/UserActivityLog" },
       "description": "7-month retained room visit duration, room chat, and inbox chat/DP activity logs for Admin inspection."
+    },
+    "/cp_links/{pairId}": {
+      "schema": { "$ref": "#/entities/CpRelationship" },
+      "description": "Linked CP / Best-Friend pairs supporting ID lookup invites, agreement notifications, gift-based level XP, and paired seat animations."
     }
   }
 }

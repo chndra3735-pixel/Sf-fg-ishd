@@ -76,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
+import com.example.data.model.CpRelationship
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.SwarCatalogDefaults
@@ -86,9 +87,11 @@ import com.example.data.model.UserProfile
 import com.example.data.repository.AppUpdateInfo
 import com.example.ui.components.AdminUserAuditDialog
 import com.example.ui.components.AppUpdateCenterDialog
+import com.example.ui.components.CpPartnerDialog
 import com.example.ui.components.FamilyCrestEmblem
 import com.example.ui.components.FramedUserAvatar
 import com.example.ui.components.GoldenWingedLevelBadge
+import com.example.ui.components.JointCpProfileCard
 import com.example.ui.components.LanguageSelectionDialog
 import com.example.ui.components.LevelDetailsDialog
 import com.example.ui.components.ProfileFeatureInfoDialog
@@ -152,11 +155,20 @@ fun ProfileScreen(
   isPurgingExpiredLogs: Boolean = false,
   onPurgeExpiredAuditLogs: () -> Unit = {},
   onToggleUserBlockByAdmin: (targetUid: String, targetName: String, blocked: Boolean) -> Unit = { _, _, _ -> },
+  activeCpLink: CpRelationship? = null,
+  incomingCpRequests: List<CpRelationship> = emptyList(),
+  outgoingCpRequests: List<CpRelationship> = emptyList(),
+  isSubmittingCpAction: Boolean = false,
+  onGenerateSyncOwnCpId: () -> Unit = {},
+  onSendCpRequestById: (recipientNumericId: String, bondTitle: String) -> Unit = { _, _ -> },
+  onAcceptCpRequest: (CpRelationship) -> Unit = {},
+  onDeclineOrBreakCp: (CpRelationship) -> Unit = {},
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
   var showWalletDialog by remember { mutableStateOf(false) }
   var showStoreDialog by remember { mutableStateOf(false) }
   var showLevelDialog by remember { mutableStateOf(false) }
+  var showCpPartnerDialog by remember { mutableStateOf(false) }
   var showLanguageDialog by remember { mutableStateOf(false) }
   var showUpdateCenterDialog by remember { mutableStateOf(false) }
   var showAdminAuditDialog by remember { mutableStateOf(false) }
@@ -427,6 +439,17 @@ fun ProfileScreen(
       onOpenLevelCards = { showLevelDialog = true },
     )
 
+    if (activeCpLink != null) {
+      JointCpProfileCard(
+        cp = activeCpLink,
+        focusUid = profile?.userId.orEmpty(),
+        darkSurface = false,
+        modifier = Modifier
+          .clickable { showCpPartnerDialog = true }
+          .testTag("profile_joint_cp_banner"),
+      )
+    }
+
     // Two Vibrant Side-by-Side Feature Cards: वॉलेट (Wallet) & स्टोर (Store)
     Row(
       modifier = Modifier.fillMaxWidth(),
@@ -488,18 +511,24 @@ fun ProfileScreen(
         )
         MenuHairlineDivider()
 
+        val cpBadgeText = when {
+          incomingCpRequests.isNotEmpty() -> "🔔 ${incomingCpRequests.size} नया"
+          activeCpLink != null -> {
+            val cpInfo = SwarUserIdentity.cpLevelInfoFor(activeCpLink.cpXp, activeCpLink.acceptedAtMs)
+            "CP Lv.${cpInfo.level}"
+          }
+          outgoingCpRequests.isNotEmpty() -> "प्रतीक्षारत"
+          else -> "CP जोड़ें"
+        }
         ProfileMenuRow(
-          title = "सीपी स्तर",
+          title = "CP स्तर • कपल / दोस्त जोड़ें",
           icon = Icons.Filled.Favorite,
           iconTint = Color.White,
           iconBgColor = Color(0xFFFF4081),
-          onClick = {
-            activeFeatureInfo = ProfileInfoPayload(
-              title = "सीपी स्तर",
-              highlight = "कॉइंस बैलेंस: $coins",
-              description = "वॉइस रूम में साथ बैठकर और एक-दूसरे को शाही गिफ्ट भेजकर अपना सीपी स्तर बढ़ाएं।",
-            )
-          },
+          showNewBadge = incomingCpRequests.isNotEmpty(),
+          trailingText = cpBadgeText,
+          onClick = { showCpPartnerDialog = true },
+          modifier = Modifier.testTag("profile_cp_row"),
         )
         MenuHairlineDivider()
 
@@ -757,6 +786,23 @@ fun ProfileScreen(
       onPurgeExpiredLogs = onPurgeExpiredAuditLogs,
       onToggleUserBlock = onToggleUserBlockByAdmin,
       onDismiss = { showAdminAuditDialog = false },
+    )
+  }
+
+  if (showCpPartnerDialog) {
+    CpPartnerDialog(
+      currentUserId = profile?.userId.orEmpty(),
+      currentDisplayName = displayName,
+      currentAvatarUrl = profile?.avatarUrl.orEmpty(),
+      activeCpLink = activeCpLink,
+      incomingRequests = incomingCpRequests,
+      outgoingRequests = outgoingCpRequests,
+      isSubmitting = isSubmittingCpAction,
+      onGenerateSyncOwnId = onGenerateSyncOwnCpId,
+      onSendRequestById = onSendCpRequestById,
+      onAcceptRequest = onAcceptCpRequest,
+      onDeclineOrBreak = onDeclineOrBreakCp,
+      onDismiss = { showCpPartnerDialog = false },
     )
   }
 }

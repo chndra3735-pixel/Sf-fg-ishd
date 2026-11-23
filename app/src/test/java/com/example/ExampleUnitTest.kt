@@ -416,4 +416,91 @@ class ExampleUnitTest {
     assertEquals("2001-01-01", derivedDob)
     assertEquals(25, AuditDateLocationHelper.calculateAgeYears(derivedDob, nowMs))
   }
+
+  @Test
+  fun cpPairId_isDeterministicRegardlessOfUidOrder() {
+    val ab = SwarUserIdentity.cpPairId("uid_alpha", "uid_zeta")
+    val ba = SwarUserIdentity.cpPairId("uid_zeta", "uid_alpha")
+    assertEquals(ab, ba)
+    assertEquals("cp_uid_alpha_uid_zeta", ab)
+  }
+
+  @Test
+  fun cpPartnersLookup_matchesAcceptedLinksOnlyAndResolvesPartnerDetails() {
+    val numA = SwarUserIdentity.numericIdForUid("u_a")
+    val numB = SwarUserIdentity.numericIdForUid("u_b")
+    val acceptedPair = com.example.data.model.CpRelationship(
+      id = SwarUserIdentity.cpPairId("u_a", "u_b"),
+      memberUids = listOf("u_a", "u_b"),
+      memberNames = mapOf("u_a" to "रोहित", "u_b" to "प्रिया"),
+      memberNumericIds = mapOf("u_a" to numA, "u_b" to numB),
+      requesterUid = "u_a",
+      recipientUid = "u_b",
+      status = "accepted",
+      cpXp = 350L,
+      totalGiftsCount = 5L,
+      acceptedAtMs = 1_700_000_000_000L,
+    )
+    val pendingOther = com.example.data.model.CpRelationship(
+      id = SwarUserIdentity.cpPairId("u_a", "u_c"),
+      memberUids = listOf("u_a", "u_c"),
+      requesterUid = "u_a",
+      recipientUid = "u_c",
+      status = "pending",
+    )
+
+    val links = listOf(pendingOther, acceptedPair)
+    val matchAB = SwarUserIdentity.areAcceptedCpPartners("u_b", "u_a", links)
+    assertNotNull(matchAB)
+    assertEquals(acceptedPair.id, matchAB?.id)
+    assertNull(SwarUserIdentity.areAcceptedCpPartners("u_a", "u_c", links))
+
+    val foundForB = SwarUserIdentity.findAcceptedCpForUser("u_b", links)
+    assertNotNull(foundForB)
+    assertEquals("u_a", foundForB?.partnerUidFor("u_b"))
+    assertEquals("रोहित", foundForB?.partnerNameFor("u_b"))
+    assertEquals(numA, foundForB?.partnerNumericIdFor("u_b"))
+  }
+
+  @Test
+  fun cpLevelInfoFor_scalesLevelWithGiftsAndAuraTierWithBondAge() {
+    val now = 2_000_000_000_000L
+    val freshDayOne = SwarUserIdentity.cpLevelInfoFor(
+      cpXp = 0L,
+      acceptedAtMs = now - 3_600_000L,
+      nowMs = now,
+    )
+    assertEquals(1, freshDayOne.level)
+    assertEquals(0L, freshDayOne.ageDays)
+    assertEquals(1, freshDayOne.auraTier)
+
+    // 100 + 200 = 300 XP unlocks Lv.3; +50 leaves 0.17ish into Lv.3
+    val giftedLv3 = SwarUserIdentity.cpLevelInfoFor(
+      cpXp = 350L,
+      acceptedAtMs = now - 3_600_000L,
+      nowMs = now,
+    )
+    assertEquals(3, giftedLv3.level)
+    assertEquals(50L, giftedLv3.xpIntoLevel)
+    assertEquals(300L, giftedLv3.xpForNextLevel)
+
+    // Older bond (95 days) upgrades seat animation aura to Tier 5 even at starter XP
+    val oldBond = SwarUserIdentity.cpLevelInfoFor(
+      cpXp = 50L,
+      acceptedAtMs = now - 95L * 86_400_000L,
+      nowMs = now,
+    )
+    assertEquals(95L, oldBond.ageDays)
+    assertEquals(5, oldBond.auraTier)
+  }
+
+  @Test
+  fun isCpLuckyGiftCategory_recognizesLuckyCategoryOnly() {
+    assertTrue(SwarCatalogDefaults.isCpLuckyGiftCategory(SwarCatalogDefaults.LUCKY_CP_CATEGORY))
+    assertTrue(SwarCatalogDefaults.isCpLuckyGiftCategory("लकी गिफ्ट"))
+    assertTrue(SwarCatalogDefaults.isCpLuckyGiftCategory("Lucky"))
+    assertFalse(SwarCatalogDefaults.isCpLuckyGiftCategory("हॉट"))
+    assertFalse(SwarCatalogDefaults.isCpLuckyGiftCategory("लग्ज़री"))
+    assertFalse(SwarCatalogDefaults.isCpLuckyGiftCategory("वीडियो VIP"))
+  }
 }

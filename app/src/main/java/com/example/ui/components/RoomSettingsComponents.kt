@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,7 +35,6 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -64,6 +64,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -481,15 +483,38 @@ fun RoomPinEntryDialog(
   var pinInput by remember { mutableStateOf("") }
   var wrongPinError by remember { mutableStateOf(false) }
 
-  AlertDialog(
+  Dialog(
     onDismissRequest = onDismiss,
-    containerColor = Color(0xFF1A1132),
-    titleContentColor = Color.White,
-    textContentColor = Color.White,
-    icon = { Icon(Icons.Filled.Lock, contentDescription = null, tint = SwarGold) },
-    title = { Text("पिन कोड दर्ज करें", fontWeight = FontWeight.Bold) },
-    text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    properties = DialogProperties(usePlatformDefaultWidth = false),
+  ) {
+    Surface(
+      shape = RoundedCornerShape(24.dp),
+      color = Color(0xFF1A1132),
+      border = BorderStroke(1.dp, SwarGold.copy(alpha = 0.45f)),
+      tonalElevation = 6.dp,
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 24.dp)
+        .widthIn(max = 420.dp),
+    ) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Icon(Icons.Filled.Lock, contentDescription = null, tint = SwarGold)
+          Text(
+            text = "पिन कोड दर्ज करें",
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+          )
+        }
         Text(
           text = "“$roomTitle” रूम लॉक है। प्रवेश करने के लिए होस्ट द्वारा सेट किया गया पिन कोड डालें।",
           style = MaterialTheme.typography.bodySmall,
@@ -504,7 +529,7 @@ fun RoomPinEntryDialog(
           label = { Text("रूम पिन कोड") },
           singleLine = true,
           isError = wrongPinError,
-          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
           colors = roomStudioTextFieldColors(),
           modifier = Modifier
             .fillMaxWidth()
@@ -518,30 +543,33 @@ fun RoomPinEntryDialog(
             modifier = Modifier.testTag("room_pin_error_text"),
           )
         }
-      }
-    },
-    confirmButton = {
-      Button(
-        onClick = {
-          if (pinInput.isNotBlank() && pinInput == expectedPin) {
-            onSuccessPin(pinInput)
-          } else {
-            wrongPinError = true
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.End,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          TextButton(
+            onClick = onDismiss,
+            modifier = Modifier.testTag("room_pin_cancel_button"),
+          ) {
+            Text("रद्द करें", color = Color(0xFFD0C9EC))
           }
-        },
-        colors = ButtonDefaults.buttonColors(containerColor = SwarGold, contentColor = Color(0xFF1B1201)),
-        modifier = Modifier.testTag("room_pin_submit_button"),
-      ) {
-        Text("प्रवेश करें", fontWeight = FontWeight.Bold)
+          Spacer(modifier = Modifier.width(8.dp))
+          Button(
+            onClick = {
+              if (pinInput.isNotBlank() && pinInput == expectedPin) {
+                onSuccessPin(pinInput)
+              } else {
+                wrongPinError = true
+              }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = SwarGold, contentColor = Color(0xFF1B1201)),
+            modifier = Modifier.testTag("room_pin_submit_button"),
+          ) {
+            Text("प्रवेश करें", fontWeight = FontWeight.Bold)
+          }
+        }
       }
-    },
-    dismissButton = {
-      TextButton(
-        onClick = onDismiss,
-        modifier = Modifier.testTag("room_pin_cancel_button"),
-      ) {
-        Text("रद्द करें", color = Color(0xFFD0C9EC))
-      }
-    },
-  )
+    }
+  }
 }

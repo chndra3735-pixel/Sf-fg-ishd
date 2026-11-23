@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import com.example.R
 import com.example.data.model.Conversation
+import com.example.data.model.CpRelationship
 import com.example.data.model.DirectMessage
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
@@ -15,6 +16,7 @@ import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
+import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserActivityLog
 import com.example.data.model.UserAuditProfile
@@ -1641,9 +1643,29 @@ class SwarRoomRepository(
       "createdAt" to FieldValue.serverTimestamp(),
     )
 
+    val cpPairRef = if (recipientUid.isNotBlank() && recipientUid != uid) {
+      db.collection("cp_links").document(SwarUserIdentity.cpPairId(uid, recipientUid))
+    } else {
+      null
+    }
+    val isLuckyCpGift = SwarCatalogDefaults.isCpLuckyGiftCategory(gift.category)
+    val xpGain = totalCost.coerceAtLeast(10L)
+
     try {
       db.runTransaction { tx ->
         val userSnap = tx.get(userRef)
+        val cpSnap = cpPairRef?.let { tx.get(it) }
+        val hasAcceptedCpPair = cpPairRef != null &&
+          cpSnap != null &&
+          cpSnap.exists() &&
+          cpSnap.getString("status") == "accepted"
+
+        if (isLuckyCpGift && !hasAcceptedCpPair) {
+          throw IllegalStateException(
+            "यह लकी गिफ्ट केवल जुड़ी हुई CP जोड़ी एक-दूसरे को भेज सकती है! पहले प्रोफ़ाइल में CP जोड़ें और अपने CP पार्टनर को चुनें।"
+          )
+        }
+
         val currentCoins = userSnap.getLong("coins") ?: 0L
         if (currentCoins < totalCost) {
           throw IllegalStateException("कॉइंस कम हैं! इस गिफ्ट के लिए $totalCost कॉइंस चाहिए।")
@@ -1657,6 +1679,18 @@ class SwarRoomRepository(
         )
         tx.set(eventRef, eventPayload)
         tx.set(msgRef, msgPayload)
+        if (isLuckyCpGift && hasAcceptedCpPair && cpPairRef != null && cpSnap != null) {
+          val prevXp = cpSnap.getLong("cpXp") ?: 0L
+          val prevGifts = cpSnap.getLong("totalGiftsCount") ?: 0L
+          tx.update(
+            cpPairRef,
+            mapOf(
+              "cpXp" to (prevXp + xpGain).coerceAtMost(999_999_999L),
+              "totalGiftsCount" to (prevGifts + safeQty.toLong()).coerceAtMost(99_999_999L),
+              "updatedAt" to FieldValue.serverTimestamp(),
+            ),
+          )
+        }
       }.await()
       GiftEvent(
         id = eventId,
@@ -2180,6 +2214,199 @@ class SwarRoomRepository(
       batch.commit().await()
     }
     refs.size
+  }
+
+  // --- CP / Best-Friend Partner Linking & Progression ---
+
+  fun observeMyCpLinks(): Flow<List<CpRelationship>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("cp_links").whereArrayContains("memberUids", uid)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(CpRelationship::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "cp_links", uid); throw error }
+    )
+  }
+
+  fun observeAcceptedCpLinks(): Flow<List<CpRelationship>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("cp_links").whereEqualTo("status", "accepted")
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(CpRelationship::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.cpXp }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "cp_links", uid); throw error }
+    )
+  }
+
+  suspend fun sendCpRequest(
+    senderProfile: UserProfile,
+    recipientNumericId: String,
+    bondTitle: String = "बेस्ट फ्रेंड",
+  ): Result<CpRelationship> = runCatching {
+    val uid = requireUserId()
+    val cleanId = recipientNumericId.filter { it.isDigit() }
+    require(cleanId.length == 10) { "कृपया सही 10-अंकों का ID नंबर दर्ज करें।" }
+    val ownNumericId = SwarUserIdentity.numericIdForUid(uid)
+    require(cleanId != ownNumericId) { "आप अपनी खुद की ID पर CP अनुरोध नहीं भेज सकते।" }
+
+    val target = findUserByNumericId(cleanId)
+      ?: throw IllegalStateException("यह ID नंबर ($cleanId) अभी रजिस्टर नहीं मिला। सामने वाले से ऐप खोलकर अपनी ID सिंक करने को कहें।")
+    val targetUid = target.userId.trim()
+    require(targetUid.isNotBlank() && targetUid != uid) { "अमान्य यूज़र ID मिली।" }
+
+    val acceptedSnap = db.collection("cp_links")
+      .whereEqualTo("status", "accepted")
+      .get()
+      .await()
+    val alreadyPaired = acceptedSnap.documents.any { doc ->
+      val members = (doc.get("memberUids") as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+      uid in members || targetUid in members
+    }
+    require(!alreadyPaired) { "आप या सामने वाला यूज़र पहले से किसी CP पार्टनर से जुड़े हुए हैं।" }
+
+    val pairId = SwarUserIdentity.cpPairId(uid, targetUid)
+    val docRef = db.collection("cp_links").document(pairId)
+    val existing = docRef.get().await()
+    if (existing.exists()) {
+      val status = existing.getString("status").orEmpty()
+      if (status == "accepted") {
+        throw IllegalStateException("आप दोनों पहले से CP पार्टनर के रूप में जुड़े हैं!")
+      }
+      if (status == "pending") {
+        val reqUid = existing.getString("requesterUid").orEmpty()
+        if (reqUid == targetUid) {
+          throw IllegalStateException("${target.displayName.ifBlank { "इस यूज़र" }} ने आपको पहले ही CP अनुरोध भेजा है — कृपया स्वीकार करें!")
+        } else {
+          throw IllegalStateException("CP अनुरोध पहले से भेजा जा चुका है। सामने वाले की स्वीकृति की प्रतीक्षा करें।")
+        }
+      }
+    }
+
+    val sortedUids = listOf(uid, targetUid).sorted()
+    val senderName = senderProfile.displayName.trim().take(40).ifBlank { "Swar User" }
+    val targetName = target.displayName.trim().take(40).ifBlank { "Swar Partner" }
+    val cleanTitle = bondTitle.trim().take(40).ifBlank { "बेस्ट फ्रेंड" }
+
+    val memberNumericIds = mapOf(
+      sortedUids[0] to if (sortedUids[0] == uid) ownNumericId else cleanId,
+      sortedUids[1] to if (sortedUids[1] == uid) ownNumericId else cleanId,
+    )
+    val memberNames = mapOf(
+      sortedUids[0] to if (sortedUids[0] == uid) senderName else targetName,
+      sortedUids[1] to if (sortedUids[1] == uid) senderName else targetName,
+    )
+    val memberAvatars = mapOf(
+      sortedUids[0] to if (sortedUids[0] == uid) senderProfile.avatarUrl.take(600) else target.avatarUrl.take(600),
+      sortedUids[1] to if (sortedUids[1] == uid) senderProfile.avatarUrl.take(600) else target.avatarUrl.take(600),
+    )
+
+    val payload = mapOf(
+      "memberUids" to sortedUids,
+      "memberNumericIds" to memberNumericIds,
+      "memberNames" to memberNames,
+      "memberAvatars" to memberAvatars,
+      "requesterUid" to uid,
+      "recipientUid" to targetUid,
+      "status" to "pending",
+      "cpXp" to 0L,
+      "totalGiftsCount" to 0L,
+      "bondTitle" to cleanTitle,
+      "acceptedAtMs" to 0L,
+      "createdAt" to FieldValue.serverTimestamp(),
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+
+    try {
+      docRef.set(payload).await()
+      CpRelationship(
+        id = pairId,
+        memberUids = sortedUids,
+        memberNumericIds = memberNumericIds,
+        memberNames = memberNames,
+        memberAvatars = memberAvatars,
+        requesterUid = uid,
+        recipientUid = targetUid,
+        status = "pending",
+        cpXp = 0L,
+        totalGiftsCount = 0L,
+        bondTitle = cleanTitle,
+        acceptedAtMs = 0L,
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun acceptCpRequest(
+    pairId: String,
+    accepterProfile: UserProfile,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("cp_links").document(pairId)
+    val snap = docRef.get().await()
+    require(snap.exists()) { "यह CP अनुरोध अब उपलब्ध नहीं है।" }
+    val rel = snap.toObject(CpRelationship::class.java, ServerTimestampBehavior.ESTIMATE)
+      ?: throw IllegalStateException("अनुरोध डेटा पढ़ा नहीं जा सका।")
+    require(rel.status == "pending") { "यह अनुरोध पहले ही प्रोसेस हो चुका है।" }
+    require(rel.recipientUid == uid) { "केवल प्राप्तकर्ता ही इस अनुरोध को स्वीकार कर सकता है।" }
+
+    val otherUid = rel.partnerUidFor(uid)
+    val acceptedSnap = db.collection("cp_links")
+      .whereEqualTo("status", "accepted")
+      .get()
+      .await()
+    val conflict = acceptedSnap.documents.any { doc ->
+      doc.id != pairId && (doc.get("memberUids") as? List<*>)?.mapNotNull { it?.toString() }.orEmpty().let { members ->
+        uid in members || otherUid in members
+      }
+    }
+    require(!conflict) { "आप या पार्टनर पहले से किसी अन्य CP जोड़ी में जुड़े हुए हैं।" }
+
+    val updatedNames = rel.memberNames.toMutableMap().apply {
+      put(uid, accepterProfile.displayName.trim().take(40).ifBlank { this[uid].orEmpty().ifBlank { "Partner" } })
+    }
+    val updatedAvatars = rel.memberAvatars.toMutableMap().apply {
+      put(uid, accepterProfile.avatarUrl.take(600))
+    }
+
+    try {
+      docRef.update(
+        mapOf(
+          "status" to "accepted",
+          "acceptedAtMs" to System.currentTimeMillis().coerceAtLeast(1L),
+          "memberNames" to updatedNames,
+          "memberAvatars" to updatedAvatars,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      ).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun declineOrBreakCp(pairId: String): Result<Unit> = runCatching {
+    requireUserId()
+    val docRef = db.collection("cp_links").document(pairId)
+    try {
+      docRef.delete().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.DELETE, docRef.path)
+      throw e
+    }
   }
 
   private companion object {

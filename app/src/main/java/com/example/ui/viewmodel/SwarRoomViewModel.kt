@@ -18,6 +18,7 @@ import com.example.audio.RoomMusicPlayer
 import com.example.audio.RoomMusicState
 import com.example.audio.VoiceAudioEngine
 import com.example.data.model.Conversation
+import com.example.data.model.CpRelationship
 import com.example.data.model.DirectMessage
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
@@ -144,6 +145,34 @@ class SwarRoomViewModel(
 
   private val _isPurgingExpiredLogs = MutableStateFlow(false)
   val isPurgingExpiredLogs: StateFlow<Boolean> = _isPurgingExpiredLogs.asStateFlow()
+
+  // --- CP / Best-Friend Partner Linking & Progression ---
+  val myCpLinks: StateFlow<List<CpRelationship>> =
+    repository.observeMyCpLinks()
+      .catch { emit(emptyList()) }
+      .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+  val acceptedCpLinks: StateFlow<List<CpRelationship>> =
+    repository.observeAcceptedCpLinks()
+      .catch { emit(emptyList()) }
+      .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+  val activeCpLink: StateFlow<CpRelationship?> =
+    myCpLinks.map { list -> list.firstOrNull { it.status == "accepted" } }
+      .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+  val incomingCpRequests: StateFlow<List<CpRelationship>> =
+    myCpLinks.map { list ->
+      list.filter { it.status == "pending" && it.recipientUid == currentUserId }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+  val outgoingCpRequests: StateFlow<List<CpRelationship>> =
+    myCpLinks.map { list ->
+      list.filter { it.status == "pending" && it.requesterUid == currentUserId }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+  private val _isSubmittingCpAction = MutableStateFlow(false)
+  val isSubmittingCpAction: StateFlow<Boolean> = _isSubmittingCpAction.asStateFlow()
 
   val rooms: StateFlow<UiState<List<VoiceRoom>>> =
     repository.observePublicRooms()
@@ -3027,6 +3056,23 @@ class SwarRoomViewModel(
     quantity: Int,
   ) {
     val room = activeRoom.value ?: return
+    if (SwarCatalogDefaults.isCpLuckyGiftCategory(gift.category)) {
+      val cpPartnerMatch = SwarUserIdentity.areAcceptedCpPartners(
+        currentUserId,
+        recipientUid,
+        acceptedCpLinks.value,
+      )
+      if (cpPartnerMatch == null) {
+        val ownCp = SwarUserIdentity.findAcceptedCpForUser(currentUserId, acceptedCpLinks.value)
+        val msg = if (ownCp == null) {
+          "लकी गिफ्ट केवल जुड़ी हुई CP जोड़ी ही भेज सकती है। पहले प्रोफ़ाइल → CP में जाकर जोड़ी बनाएं।"
+        } else {
+          "लकी गिफ्ट केवल आपके CP पार्टनर (${ownCp.partnerNameFor(currentUserId)}) को ही भेजा जा सकता है!"
+        }
+        _events.tryEmit(msg)
+        return
+      }
+    }
     viewModelScope.launch {
       repository.sendGiftTransaction(
         room = room,
@@ -3138,6 +3184,94 @@ class SwarRoomViewModel(
         .onFailure {
           _events.tryEmit("कॉइंस जोड़ने में त्रुटि")
         }
+    }
+  }
+
+  fun refreshOwnNumericId() {
+    val profile = currentProfileOrDefault()
+    val ownId = SwarUserIdentity.numericIdForUid(currentUserId)
+    viewModelScope.launch {
+      repository.upsertNumericIdLookup(profile.displayName, profile.avatarUrl)
+        .onSuccess {
+          _events.tryEmit("आपका 10-अंकीय CP ID सिंक व तैयार है: $ownId")
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "ID सिंक करने में त्रुटि")
+        }
+    }
+  }
+
+  fun sendCpRequestByNumericId(
+    recipientNumericId: String,
+    bondTitle: String = "बेस्ट फ्रेंड",
+    onSuccess: () -> Unit = {},
+  ) {
+    if (_isSubmittingCpAction.value) return
+    val profile = currentProfileOrDefault()
+    viewModelScope.launch {
+      _isSubmittingCpAction.value = true
+      try {
+        repository.upsertNumericIdLookup(profile.displayName, profile.avatarUrl)
+        repository.sendCpRequest(
+          senderProfile = profile,
+          recipientNumericId = recipientNumericId,
+          bondTitle = bondTitle,
+        ).onSuccess { rel ->
+          val partnerName = rel.partnerNameFor(currentUserId)
+          _events.tryEmit("💌 $partnerName को CP अनुरोध भेज दिया गया! स्वीकार करते ही दोनों ID जुड़ जाएंगी।")
+          onSuccess()
+        }.onFailure { err ->
+          _events.tryEmit(err.message ?: "CP अनुरोध भेजा नहीं जा सका")
+        }
+      } finally {
+        _isSubmittingCpAction.value = false
+      }
+    }
+  }
+
+  fun acceptCpRequest(cp: CpRelationship) {
+    if (_isSubmittingCpAction.value) return
+    val profile = currentProfileOrDefault()
+    viewModelScope.launch {
+      _isSubmittingCpAction.value = true
+      try {
+        repository.upsertNumericIdLookup(profile.displayName, profile.avatarUrl)
+        repository.acceptCpRequest(cp.id, profile)
+          .onSuccess {
+            val partnerName = cp.partnerNameFor(currentUserId)
+            _events.tryEmit("💖 बधाई हो! आप और $partnerName अब एक CP जोड़ी में जुड़ गए हैं!")
+          }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "CP अनुरोध स्वीकार नहीं हो सका")
+          }
+      } finally {
+        _isSubmittingCpAction.value = false
+      }
+    }
+  }
+
+  fun declineOrBreakCp(cp: CpRelationship) {
+    if (_isSubmittingCpAction.value) return
+    val wasAccepted = cp.status == "accepted"
+    val wasIncoming = cp.status == "pending" && cp.recipientUid == currentUserId
+    viewModelScope.launch {
+      _isSubmittingCpAction.value = true
+      try {
+        repository.declineOrBreakCp(cp.id)
+          .onSuccess {
+            val msg = when {
+              wasAccepted -> "CP जोड़ी अलग हो गई है।"
+              wasIncoming -> "CP अनुरोध अस्वीकार कर दिया गया।"
+              else -> "भेजा गया CP अनुरोध वापस ले लिया गया।"
+            }
+            _events.tryEmit(msg)
+          }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "CP कार्रवाई पूरी नहीं हो सकी")
+          }
+      } finally {
+        _isSubmittingCpAction.value = false
+      }
     }
   }
 

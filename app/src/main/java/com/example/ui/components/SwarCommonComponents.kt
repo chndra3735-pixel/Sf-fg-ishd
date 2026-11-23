@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -60,6 +61,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -131,19 +134,19 @@ fun LiveEqualizerBars(
   isAnimating: Boolean = true,
 ) {
   val transition = rememberInfiniteTransition(label = "eq")
-  val h1 by transition.animateFloat(
+  val h1State = transition.animateFloat(
     initialValue = 0.35f,
     targetValue = 1.0f,
     animationSpec = infiniteRepeatable(tween(420), RepeatMode.Reverse),
     label = "b1",
   )
-  val h2 by transition.animateFloat(
+  val h2State = transition.animateFloat(
     initialValue = 0.9f,
     targetValue = 0.3f,
     animationSpec = infiniteRepeatable(tween(340), RepeatMode.Reverse),
     label = "b2",
   )
-  val h3 by transition.animateFloat(
+  val h3State = transition.animateFloat(
     initialValue = 0.45f,
     targetValue = 0.95f,
     animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
@@ -155,15 +158,20 @@ fun LiveEqualizerBars(
     horizontalArrangement = Arrangement.spacedBy(2.dp),
     verticalAlignment = Alignment.Bottom,
   ) {
-    listOf(
-      if (isAnimating) h1 else 0.5f,
-      if (isAnimating) h2 else 0.9f,
-      if (isAnimating) h3 else 0.6f,
-    ).forEach { fraction ->
+    val providers: List<() -> Float> = listOf(
+      { if (isAnimating) h1State.value else 0.5f },
+      { if (isAnimating) h2State.value else 0.9f },
+      { if (isAnimating) h3State.value else 0.6f },
+    )
+    providers.forEach { fractionProvider ->
       Box(
         modifier = Modifier
           .width(2.5.dp)
-          .height((12f * fraction).dp)
+          .fillMaxHeight()
+          .graphicsLayer {
+            scaleY = fractionProvider().coerceIn(0.15f, 1f)
+            transformOrigin = TransformOrigin(0.5f, 1f)
+          }
           .clip(RoundedCornerShape(1.5.dp))
           .background(barColor)
       )

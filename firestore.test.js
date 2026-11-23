@@ -695,4 +695,90 @@ test("Host configures theme/PIN/seats/managers; manager can lock/mute/kick non-o
   await assertFails(roomRef.collection("kick_logs").doc("kick_1").delete());
 });
 
+// 10. CP / Best-Friend Pair Linking, Agreement Notification, Gift Level XP & Public Joint Visibility
+test("CP linking requires partner acceptance, keeps pending private, allows accepted visibility & gift XP increment", async () => {
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlie = testEnv.authenticatedContext("charlie_uid_3").firestore();
+  const unauth = testEnv.unauthenticatedContext().firestore();
+
+  const sorted = [ALICE_UID, BOB_UID].sort();
+  const pairId = `cp_${sorted[0]}_${sorted[1]}`;
+  const pendingPayload = {
+    memberUids: sorted,
+    memberNumericIds: { [ALICE_UID]: "1111111111", [BOB_UID]: "2222222222" },
+    memberNames: { [ALICE_UID]: "Alice", [BOB_UID]: "Bob" },
+    memberAvatars: { [ALICE_UID]: "", [BOB_UID]: "" },
+    requesterUid: ALICE_UID,
+    recipientUid: BOB_UID,
+    status: "pending",
+    cpXp: 0,
+    totalGiftsCount: 0,
+    bondTitle: "कपल / जोड़ी 💖",
+    acceptedAtMs: 0,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  // Unauthenticated or spoofed pair creation must fail
+  await assertFails(unauth.collection("cp_links").doc(pairId).set(pendingPayload));
+  await assertFails(charlie.collection("cp_links").doc(pairId).set(pendingPayload));
+  await assertFails(alice.collection("cp_links").doc(pairId).set({ ...pendingPayload, status: "accepted", acceptedAtMs: Date.now() }));
+
+  // Alice creates valid pending CP request
+  await assertSucceeds(alice.collection("cp_links").doc(pairId).set(pendingPayload));
+
+  // Pending request is visible to Bob & Alice via array-contains, hidden from Charlie
+  await assertSucceeds(bob.collection("cp_links").where("memberUids", "array-contains", BOB_UID).get());
+  await assertFails(charlie.collection("cp_links").doc(pairId).get());
+
+  // Alice (requester) cannot self-accept; Bob (recipient) accepts
+  await assertFails(
+    alice.collection("cp_links").doc(pairId).update({
+      status: "accepted",
+      acceptedAtMs: Date.now(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(
+    bob.collection("cp_links").doc(pairId).update({
+      status: "accepted",
+      acceptedAtMs: Date.now(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Once accepted, any signed-in room member (Charlie) can read & list accepted bonds
+  await assertSucceeds(charlie.collection("cp_links").where("status", "==", "accepted").get());
+  await assertSucceeds(charlie.collection("cp_links").doc(pairId).get());
+
+  // Either partner can increment gift XP & count; outsider Charlie cannot; negative decrement fails
+  await assertSucceeds(
+    alice.collection("cp_links").doc(pairId).update({
+      cpXp: 500,
+      totalGiftsCount: 2,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(
+    bob.collection("cp_links").doc(pairId).update({
+      cpXp: 100,
+      totalGiftsCount: 1,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(
+    charlie.collection("cp_links").doc(pairId).update({
+      cpXp: 999,
+      totalGiftsCount: 5,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Outsider cannot break up pair; either partner can delete
+  await assertFails(charlie.collection("cp_links").doc(pairId).delete());
+  await assertSucceeds(bob.collection("cp_links").doc(pairId).delete());
+});
+
+
 

@@ -102,6 +102,7 @@ import com.example.ui.components.AppUpdateAvailableDialog
 import com.example.ui.components.CreateMomentDialog
 import com.example.ui.components.CreateRoomDialog
 import com.example.ui.components.FirstTimeOnboardingScreen
+import com.example.ui.components.IncomingCpNotificationDialog
 import com.example.ui.components.MinimizedRoomFloatingBar
 import com.example.ui.screens.GuestPreviewSwarRoomApp
 import com.example.ui.screens.LobbyScreen
@@ -410,11 +411,17 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isPurgingExpiredLogs by viewModel.isPurgingExpiredLogs.collectAsStateWithLifecycle()
   val activeRoomKickLogs by viewModel.activeRoomKickLogs.collectAsStateWithLifecycle()
   val roomMusicState by viewModel.roomMusicState.collectAsStateWithLifecycle()
+  val activeCpLink by viewModel.activeCpLink.collectAsStateWithLifecycle()
+  val acceptedCpLinks by viewModel.acceptedCpLinks.collectAsStateWithLifecycle()
+  val incomingCpRequests by viewModel.incomingCpRequests.collectAsStateWithLifecycle()
+  val outgoingCpRequests by viewModel.outgoingCpRequests.collectAsStateWithLifecycle()
+  val isSubmittingCpAction by viewModel.isSubmittingCpAction.collectAsStateWithLifecycle()
 
   var currentTab by remember { mutableStateOf(MainTab.ROOMS) }
   var showCreateRoomDialog by remember { mutableStateOf(false) }
   var showCreateMomentDialog by remember { mutableStateOf(false) }
   var pendingPinRoom by remember { mutableStateOf<com.example.data.model.VoiceRoom?>(null) }
+  var dismissedCpRequestIds by remember { mutableStateOf(emptySet<String>()) }
   val snackbarHostState = remember { SnackbarHostState() }
   val miniBarAudioPermissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestPermission(),
@@ -699,6 +706,10 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onStopRoomMusic = { viewModel.stopRoomMusic() },
         onRoomMusicVolumeChange = { pct -> viewModel.setRoomMusicVolume(pct) },
         onKickRoomMember = { uid, name, avatar -> viewModel.kickRoomMember(uid, name, avatar) },
+        acceptedCpLinks = acceptedCpLinks,
+        onSendCpRequestById = { recipientNumericId, bondTitle ->
+          viewModel.sendCpRequestByNumericId(recipientNumericId, bondTitle)
+        },
       )
       SnackbarHost(
         hostState = snackbarHostState,
@@ -707,8 +718,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           .padding(top = 64.dp),
       )
     }
-    return
-  }
+  } else {
 
   val navItemColors = NavigationBarItemDefaults.colors(
     selectedIconColor = Color(0xFF008CE6),
@@ -864,6 +874,16 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           onToggleUserBlockByAdmin = { uid, name, blocked ->
             viewModel.setUserBlockedByAdmin(uid, name, blocked)
           },
+          activeCpLink = activeCpLink,
+          incomingCpRequests = incomingCpRequests,
+          outgoingCpRequests = outgoingCpRequests,
+          isSubmittingCpAction = isSubmittingCpAction,
+          onGenerateSyncOwnCpId = { viewModel.refreshOwnNumericId() },
+          onSendCpRequestById = { recipientNumericId, bondTitle ->
+            viewModel.sendCpRequestByNumericId(recipientNumericId, bondTitle)
+          },
+          onAcceptCpRequest = { req -> viewModel.acceptCpRequest(req) },
+          onDeclineOrBreakCp = { req -> viewModel.declineOrBreakCp(req) },
         )
       }
 
@@ -937,6 +957,28 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
     AppUpdateAvailableDialog(
       updateInfo = availableUpdate,
       onDismiss = { viewModel.dismissUpdatePrompt() },
+    )
+  }
+  }
+
+  val pendingPopupCp = remember(incomingCpRequests, dismissedCpRequestIds) {
+    incomingCpRequests.firstOrNull { it.id !in dismissedCpRequestIds }
+  }
+  if (pendingPopupCp != null) {
+    IncomingCpNotificationDialog(
+      request = pendingPopupCp,
+      isSubmitting = isSubmittingCpAction,
+      onAgree = {
+        viewModel.acceptCpRequest(pendingPopupCp)
+        dismissedCpRequestIds = dismissedCpRequestIds + pendingPopupCp.id
+      },
+      onDecline = {
+        viewModel.declineOrBreakCp(pendingPopupCp)
+        dismissedCpRequestIds = dismissedCpRequestIds + pendingPopupCp.id
+      },
+      onLater = {
+        dismissedCpRequestIds = dismissedCpRequestIds + pendingPopupCp.id
+      },
     )
   }
 }

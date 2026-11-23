@@ -16,6 +16,21 @@ data class UserLevelInfo(
   val nextLevelRemainingCoins: Long,
 )
 
+data class CpLevelInfo(
+  val level: Int,
+  val title: String,
+  val progress: Float,
+  val xpIntoLevel: Long,
+  val xpForNextLevel: Long,
+  val remainingXp: Long,
+  val ageDays: Long,
+  val ageLabel: String,
+  val auraTier: Int,
+  val auraLabel: String,
+  val primaryColor: Color,
+  val secondaryColor: Color,
+)
+
 data class LevelTierSpec(
   val badgeLevel: Int,
   val minLevel: Int,
@@ -336,4 +351,137 @@ object SwarUserIdentity {
     }
     return ""
   }
+
+  /**
+   * Builds the canonical sorted pair ID matching firestore.rules (`cp_<uid0>_<uid1>`).
+   */
+  fun cpPairId(uidA: String, uidB: String): String {
+    val sorted = listOf(uidA.trim(), uidB.trim()).sorted()
+    return "cp_${sorted[0]}_${sorted[1]}"
+  }
+
+  fun findAcceptedCpForUser(
+    uid: String,
+    acceptedLinks: List<CpRelationship>,
+  ): CpRelationship? {
+    if (uid.isBlank()) return null
+    return acceptedLinks.firstOrNull { it.status == "accepted" && uid in it.memberUids }
+  }
+
+  fun areAcceptedCpPartners(
+    uidA: String,
+    uidB: String,
+    acceptedLinks: List<CpRelationship>,
+  ): CpRelationship? {
+    if (uidA.isBlank() || uidB.isBlank() || uidA == uidB) return null
+    val expectedId = cpPairId(uidA, uidB)
+    return acceptedLinks.firstOrNull {
+      it.status == "accepted" && (it.id == expectedId || (uidA in it.memberUids && uidB in it.memberUids))
+    }
+  }
+
+  /**
+   * Computes CP Level from mutual Gift XP and Animation Aura Tier from both Gift Level & Bond Age (days).
+   */
+  fun cpLevelInfoFor(
+    cpXp: Long,
+    acceptedAtMs: Long,
+    nowMs: Long = System.currentTimeMillis(),
+  ): CpLevelInfo {
+    val safeXp = cpXp.coerceAtLeast(0L)
+    var level = 1
+    var thresholdStart = 0L
+    // Quadratic progression: Lv1->2 requires 100 XP, Lv2->3 requires 200 XP, Lv3->4 requires 300 XP, etc.
+    while (level < 99) {
+      val stepCost = level.toLong() * 100L
+      val nextThreshold = thresholdStart + stepCost
+      if (safeXp < nextThreshold) break
+      thresholdStart = nextThreshold
+      level++
+    }
+    val stepCost = if (level >= 99) 1L else level.toLong() * 100L
+    val xpIntoLevel = (safeXp - thresholdStart).coerceAtLeast(0L)
+    val progress = if (level >= 99) 1f else (xpIntoLevel.toFloat() / stepCost.toFloat()).coerceIn(0f, 1f)
+    val remainingXp = if (level >= 99) 0L else (stepCost - xpIntoLevel).coerceAtLeast(0L)
+
+    val ageDays = if (acceptedAtMs > 0L && nowMs >= acceptedAtMs) {
+      ((nowMs - acceptedAtMs) / 86_400_000L).coerceAtLeast(0L)
+    } else {
+      0L
+    }
+    val ageLabel = when {
+      ageDays <= 0L -> "आज जुड़े (1 दिन)"
+      ageDays == 1L -> "1 दिन साथ"
+      ageDays < 30L -> "$ageDays दिन साथ"
+      ageDays < 365L -> "${ageDays / 30L} माह ${ageDays % 30L} दिन"
+      else -> "${ageDays / 365L} वर्ष ${(ageDays % 365L) / 30L} माह"
+    }
+
+    val title = when {
+      level >= 70 -> "लेजेंडरी सोलमेट्स"
+      level >= 45 -> "अनमोल दिव्य जोड़ी"
+      level >= 25 -> "रॉयल स्टार पार्टनर्स"
+      level >= 15 -> "गोल्डन हार्ट्स"
+      level >= 8 -> "दिल से जुड़े साथी"
+      level >= 3 -> "पक्के दोस्त"
+      else -> "नए CP दोस्त"
+    }
+
+    // Both CP Gift Level AND bond longevity (older bond = richer seat aura!) boost the visual aura tier (1..5)
+    val maturityScore = level + (ageDays / 3L).toInt()
+    val (auraTier, auraLabel, primaryColor, secondaryColor) = when {
+      maturityScore >= 50 || ageDays >= 90L -> QuadAura(
+        5,
+        "दिव्य नक्षत्र बंधन",
+        Color(0xFFFFD54F),
+        Color(0xFF00E5FF),
+      )
+      maturityScore >= 28 || ageDays >= 30L -> QuadAura(
+        4,
+        "शाही धूमकेतु आभा",
+        Color(0xFFFF4D94),
+        Color(0xFFFFC107),
+      )
+      maturityScore >= 14 || ageDays >= 14L -> QuadAura(
+        3,
+        "ऑरोरा ऊर्जा धारा",
+        Color(0xFF00E5FF),
+        Color(0xFFB388FF),
+      )
+      maturityScore >= 5 || ageDays >= 3L -> QuadAura(
+        2,
+        "सुनहरी चिंगारी रिबन",
+        Color(0xFFFF6EC7),
+        Color(0xFFFFD54F),
+      )
+      else -> QuadAura(
+        1,
+        "रेशमी गुलाबी तरंग",
+        Color(0xFFFF7EB6),
+        Color(0xFFFF9E80),
+      )
+    }
+
+    return CpLevelInfo(
+      level = level,
+      title = title,
+      progress = progress,
+      xpIntoLevel = xpIntoLevel,
+      xpForNextLevel = stepCost,
+      remainingXp = remainingXp,
+      ageDays = ageDays,
+      ageLabel = ageLabel,
+      auraTier = auraTier,
+      auraLabel = auraLabel,
+      primaryColor = primaryColor,
+      secondaryColor = secondaryColor,
+    )
+  }
+
+  private data class QuadAura(
+    val tier: Int,
+    val label: String,
+    val primary: Color,
+    val secondary: Color,
+  )
 }

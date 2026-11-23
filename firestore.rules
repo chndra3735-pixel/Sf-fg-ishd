@@ -755,5 +755,74 @@ service cloud.firestore {
 
       allow delete: if false;
     }
+
+    // 14. CP / Best-Friend Partner Pairs (Private pending requests, public accepted bonds & gift XP progression)
+    function isValidCpRelationship(data) {
+      return data.memberUids is list &&
+             data.memberUids.size() == 2 &&
+             data.memberUids[0] is string && data.memberUids[0].size() >= 1 && data.memberUids[0].size() <= 128 &&
+             data.memberUids[1] is string && data.memberUids[1].size() >= 1 && data.memberUids[1].size() <= 128 &&
+             data.memberUids[0] != data.memberUids[1] &&
+             data.memberNumericIds is map && data.memberNumericIds.size() == 2 &&
+             data.memberNames is map && data.memberNames.size() == 2 &&
+             data.memberAvatars is map && data.memberAvatars.size() == 2 &&
+             data.requesterUid is string && data.requesterUid in data.memberUids &&
+             data.recipientUid is string && data.recipientUid in data.memberUids &&
+             data.requesterUid != data.recipientUid &&
+             data.status in ['pending', 'accepted'] &&
+             data.cpXp is int && data.cpXp >= 0 && data.cpXp <= 999999999 &&
+             data.totalGiftsCount is int && data.totalGiftsCount >= 0 && data.totalGiftsCount <= 99999999 &&
+             data.bondTitle is string && data.bondTitle.size() >= 1 && data.bondTitle.size() <= 40 &&
+             data.acceptedAtMs is int && data.acceptedAtMs >= 0 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    match /cp_links/{pairId} {
+      allow get: if isSignedIn() && isValidId(pairId) &&
+                    (resource == null || resource.data.status == 'accepted' || request.auth.uid in resource.data.memberUids);
+      allow list: if isSignedIn() &&
+                     (resource.data.status == 'accepted' || request.auth.uid in resource.data.memberUids);
+
+      allow create: if isSignedIn() &&
+                       isValidId(pairId) &&
+                       incoming().keys().hasAll(['memberUids', 'memberNumericIds', 'memberNames', 'memberAvatars', 'requesterUid', 'recipientUid', 'status', 'cpXp', 'totalGiftsCount', 'bondTitle', 'acceptedAtMs', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['memberUids', 'memberNumericIds', 'memberNames', 'memberAvatars', 'requesterUid', 'recipientUid', 'status', 'cpXp', 'totalGiftsCount', 'bondTitle', 'acceptedAtMs', 'createdAt', 'updatedAt']) &&
+                       isValidCpRelationship(incoming()) &&
+                       pairId == ('cp_' + incoming().memberUids[0] + '_' + incoming().memberUids[1]) &&
+                       incoming().requesterUid == request.auth.uid &&
+                       incoming().status == 'pending' &&
+                       incoming().cpXp == 0 &&
+                       incoming().totalGiftsCount == 0 &&
+                       incoming().acceptedAtMs == 0;
+
+      allow update: if isSignedIn() &&
+                       isValidId(pairId) &&
+                       isValidCpRelationship(incoming()) &&
+                       incoming().memberUids == existing().memberUids &&
+                       incoming().memberNumericIds == existing().memberNumericIds &&
+                       incoming().requesterUid == existing().requesterUid &&
+                       incoming().recipientUid == existing().recipientUid &&
+                       incoming().createdAt == existing().createdAt && (
+                         (existing().status == 'pending' &&
+                          incoming().status == 'accepted' &&
+                          request.auth.uid == existing().recipientUid &&
+                          incoming().cpXp == 0 &&
+                          incoming().totalGiftsCount == 0 &&
+                          incoming().acceptedAtMs > 0 &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedAtMs', 'memberNames', 'memberAvatars', 'updatedAt'])) ||
+                         (existing().status == 'accepted' &&
+                          incoming().status == 'accepted' &&
+                          request.auth.uid in existing().memberUids &&
+                          incoming().acceptedAtMs == existing().acceptedAtMs &&
+                          incoming().cpXp >= existing().cpXp &&
+                          incoming().totalGiftsCount >= existing().totalGiftsCount &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['cpXp', 'totalGiftsCount', 'memberNames', 'memberAvatars', 'bondTitle', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() &&
+                       isValidId(pairId) &&
+                       request.auth.uid in existing().memberUids;
+    }
   }
 }

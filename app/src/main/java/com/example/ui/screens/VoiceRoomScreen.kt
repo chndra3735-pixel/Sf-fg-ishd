@@ -25,7 +25,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,9 +37,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -95,6 +91,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -110,6 +107,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -128,6 +126,7 @@ import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.audio.RoomMusicState
+import com.example.data.model.CpRelationship
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
@@ -139,17 +138,21 @@ import com.example.data.model.RoomSeat
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
 import com.example.data.model.VoiceRoom
+import com.example.ui.components.AdjacentCpFloatingCrest
+import com.example.ui.components.AdjacentCpSeatBridgeCanvas
 import com.example.ui.components.CrossRoomGiftMarqueeStrip
 import com.example.ui.components.EmojiPanelSheet
 import com.example.ui.components.FramedUserAvatar
 import com.example.ui.components.FullScreenGiftOverlay
 import com.example.ui.components.GiftPanelSheet
+import com.example.ui.components.JointCpProfileCard
 import com.example.ui.components.LevelCardsShowcaseDialog
 import com.example.ui.components.OrnateWingedLevelCrest
 import com.example.ui.components.ProfileSideBadgesShowcaseCard
 import com.example.ui.components.RoomSettingsSheet
 import com.example.ui.components.TypingBannerChatBubble
 import com.example.ui.components.UserAvatar
+import androidx.compose.material.icons.filled.Favorite
 import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarGold
@@ -272,6 +275,8 @@ fun VoiceRoomScreen(
   onKickRoomMember: (targetUid: String, targetName: String, targetAvatarUrl: String) -> Unit = { uid, _, _ ->
     seats.firstOrNull { it.occupantUid == uid }?.let { onKickSeatOccupant(it) }
   },
+  acceptedCpLinks: List<CpRelationship> = emptyList(),
+  onSendCpRequestById: (recipientNumericId: String, bondTitle: String) -> Unit = { _, _ -> },
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -705,20 +710,6 @@ fun VoiceRoomScreen(
           Spacer(modifier = Modifier.width(6.dp))
         }
 
-        Surface(
-          onClick = { showComposer = true },
-          color = SwarCyan,
-          shape = RoundedCornerShape(16.dp),
-        ) {
-          Text(
-            text = stringResource(id = R.string.talk_pill),
-            style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF061B29),
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-          )
-        }
-
         IconButton(
           onClick = { showSettingsDialog = true },
           modifier = Modifier.testTag("room_settings_button"),
@@ -744,60 +735,158 @@ fun VoiceRoomScreen(
         )
       }
 
-      // Top 2 Host / Co-Host Seats Centered Side-by-Side
-      Row(
+      // Top 2 Host / Co-Host Seats Centered Side-by-Side (with Adjacent CP Animation Bridge if paired)
+      val hostPairCp = if (topSeats.size >= 2) {
+        SwarUserIdentity.areAcceptedCpPartners(
+          topSeats[0].occupantUid,
+          topSeats[1].occupantUid,
+          acceptedCpLinks,
+        )
+      } else null
+      val hostPairInfo = remember(hostPairCp?.cpXp, hostPairCp?.acceptedAtMs) {
+        hostPairCp?.let { SwarUserIdentity.cpLevelInfoFor(it.cpXp, it.acceptedAtMs) }
+      }
+
+      Box(
         modifier = Modifier
           .fillMaxWidth()
           .padding(top = 6.dp, bottom = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
       ) {
-        topSeats.forEach { topSeat ->
-          val occUid = topSeat.occupantUid
-          val occFrameUrl = if (occUid.isNotBlank()) {
-            val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
-            SwarUserIdentity.highestUnlockedFrameUrl(
-              SwarUserIdentity.levelForCoins(occCoins).level,
-              levelConfigs,
+        if (hostPairInfo != null) {
+          AdjacentCpSeatBridgeCanvas(
+            info = hostPairInfo,
+            startCenterFractionX = 0.36f,
+            endCenterFractionX = 0.64f,
+            modifier = Modifier.matchParentSize(),
+          )
+        }
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          topSeats.forEach { topSeat ->
+            val occUid = topSeat.occupantUid
+            val occFrameUrl = if (occUid.isNotBlank()) {
+              val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
+              SwarUserIdentity.highestUnlockedFrameUrl(
+                SwarUserIdentity.levelForCoins(occCoins).level,
+                levelConfigs,
+              )
+            } else ""
+            val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
+            HostSeatBadge(
+              seat = topSeat,
+              emptyLabel = if (topSeat.seatIndex == 0L) "होस्ट सीट 1" else "होस्ट सीट 2",
+              localLevel = if (topSeat.occupantUid == currentUserId) micAudioLevel else 0f,
+              frameUrl = occFrameUrl,
+              activeEmoji = topSeat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
+              isCpLinked = isCpPartnerSeated,
+              onClick = { openSeatOrProfileSheet(topSeat) },
             )
-          } else ""
-          HostSeatBadge(
-            seat = topSeat,
-            emptyLabel = if (topSeat.seatIndex == 0L) "होस्ट सीट 1" else "होस्ट सीट 2",
-            localLevel = if (topSeat.occupantUid == currentUserId) micAudioLevel else 0f,
-            frameUrl = occFrameUrl,
-            activeEmoji = topSeat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
-            onClick = { openSeatOrProfileSheet(topSeat) },
+          }
+        }
+        if (hostPairInfo != null && topSeats.size >= 2) {
+          AdjacentCpFloatingCrest(
+            info = hostPairInfo,
+            tag = "cp_adjacent_bridge_${topSeats[0].seatIndex}_${topSeats[1].seatIndex}",
+            modifier = Modifier
+              .align(Alignment.TopCenter)
+              .padding(top = 2.dp),
           )
         }
       }
 
-      // Multi-Seat Voice Grid (5 columns matching Screenshot 1)
-      LazyVerticalGrid(
-        columns = GridCells.Fixed(5),
+      // Multi-Seat Voice Grid (5 columns per row with smooth cross-seat CP Aura Animation when friends sit side-by-side)
+      val seatRows = remember(guestSeats) { guestSeats.chunked(5) }
+      Column(
         modifier = Modifier
           .fillMaxWidth()
-          .weight(1f),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+          .weight(1f)
+          .verticalScroll(rememberScrollState())
+          .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
-        items(guestSeats, key = { it.id.ifBlank { "seat_${it.seatIndex}" } }) { seat ->
-          val occUid = seat.occupantUid
-          val occFrameUrl = if (occUid.isNotBlank()) {
-            val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
-            SwarUserIdentity.highestUnlockedFrameUrl(
-              SwarUserIdentity.levelForCoins(occCoins).level,
-              levelConfigs,
-            )
-          } else ""
-          GuestSeatTile(
-            seat = seat,
-            localLevel = if (seat.occupantUid == currentUserId) micAudioLevel else 0f,
-            frameUrl = occFrameUrl,
-            activeEmoji = seat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
-            onClick = { openSeatOrProfileSheet(seat) },
-          )
+        seatRows.forEach { rowSeats ->
+          val adjacentPairs = remember(rowSeats, acceptedCpLinks) {
+            buildList {
+              for (col in 0 until (rowSeats.size - 1)) {
+                val left = rowSeats[col]
+                val right = rowSeats[col + 1]
+                val rel = SwarUserIdentity.areAcceptedCpPartners(
+                  left.occupantUid,
+                  right.occupantUid,
+                  acceptedCpLinks,
+                )
+                if (rel != null) {
+                  add(Triple(col, rel, left.seatIndex to right.seatIndex))
+                }
+              }
+            }
+          }
+          Box(modifier = Modifier.fillMaxWidth()) {
+            adjacentPairs.forEach { (col, rel, _) ->
+              val info = remember(rel.cpXp, rel.acceptedAtMs) {
+                SwarUserIdentity.cpLevelInfoFor(rel.cpXp, rel.acceptedAtMs)
+              }
+              AdjacentCpSeatBridgeCanvas(
+                info = info,
+                startCenterFractionX = (col + 0.5f) / 5f,
+                endCenterFractionX = (col + 1.5f) / 5f,
+                modifier = Modifier.matchParentSize(),
+              )
+            }
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalAlignment = Alignment.Top,
+            ) {
+              for (col in 0 until 5) {
+                if (col < rowSeats.size) {
+                  val seat = rowSeats[col]
+                  val occUid = seat.occupantUid
+                  val occFrameUrl = if (occUid.isNotBlank()) {
+                    val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
+                    SwarUserIdentity.highestUnlockedFrameUrl(
+                      SwarUserIdentity.levelForCoins(occCoins).level,
+                      levelConfigs,
+                    )
+                  } else ""
+                  val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
+                  Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.TopCenter,
+                  ) {
+                    GuestSeatTile(
+                      seat = seat,
+                      localLevel = if (seat.occupantUid == currentUserId) micAudioLevel else 0f,
+                      frameUrl = occFrameUrl,
+                      activeEmoji = seat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
+                      isCpLinked = isCpPartnerSeated,
+                      onClick = { openSeatOrProfileSheet(seat) },
+                    )
+                  }
+                } else {
+                  Spacer(modifier = Modifier.weight(1f))
+                }
+              }
+            }
+
+            adjacentPairs.forEach { (col, rel, seatIndices) ->
+              val info = remember(rel.cpXp, rel.acceptedAtMs) {
+                SwarUserIdentity.cpLevelInfoFor(rel.cpXp, rel.acceptedAtMs)
+              }
+              val midFraction = (col + 1f) / 5f
+              val horizontalBias = (midFraction * 2f - 1f).coerceIn(-0.9f, 0.9f)
+              AdjacentCpFloatingCrest(
+                info = info,
+                tag = "cp_adjacent_bridge_${seatIndices.first}_${seatIndices.second}",
+                modifier = Modifier
+                  .align(androidx.compose.ui.BiasAlignment(horizontalBias, -0.95f)),
+              )
+            }
+          }
         }
       }
 
@@ -1045,15 +1134,18 @@ fun VoiceRoomScreen(
       else SwarUserIdentity.levelForProfile(remoteProfile)
     }
     val isBlocked = profileTarget.uid in blockedUserIds
+    val memberSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
       onDismissRequest = { selectedProfileTarget = null },
+      sheetState = memberSheetState,
       containerColor = Color(0xFF170E2E),
       contentColor = Color.White,
     ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
+          .verticalScroll(rememberScrollState())
           .padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1222,6 +1314,47 @@ fun VoiceRoomScreen(
             onOpenAllCards = { showSheetLevelCards = true },
             modifier = Modifier.weight(1.05f),
           )
+        }
+
+        val targetCpRel = remember(profileTarget.uid, acceptedCpLinks) {
+          SwarUserIdentity.findAcceptedCpForUser(profileTarget.uid, acceptedCpLinks)
+        }
+        val ownCpRel = remember(currentUserId, acceptedCpLinks) {
+          SwarUserIdentity.findAcceptedCpForUser(currentUserId, acceptedCpLinks)
+        }
+        if (targetCpRel != null) {
+          JointCpProfileCard(
+            cp = targetCpRel,
+            focusUid = profileTarget.uid,
+            darkSurface = true,
+            modifier = Modifier.testTag("sheet_joint_cp_card"),
+            onPartnerClick = { pUid, pName, pAvatar ->
+              if (pUid.isNotBlank() && pUid != profileTarget.uid) {
+                if (pUid != currentUserId) onRequestUserProfile(pUid)
+                selectedProfileTarget = RoomProfileTarget(
+                  uid = pUid,
+                  displayName = pName,
+                  avatarUrl = pAvatar,
+                  seat = seatedMembers.firstOrNull { it.occupantUid == pUid },
+                )
+              }
+            },
+          )
+        } else if (!isSelf && ownCpRel == null) {
+          OutlinedButton(
+            onClick = {
+              onSendCpRequestById(numericId, "बेस्ट फ्रेंड")
+              selectedProfileTarget = null
+            },
+            modifier = Modifier
+              .fillMaxWidth()
+              .minimumInteractiveComponentSize()
+              .testTag("sheet_send_cp_request_button"),
+          ) {
+            Icon(Icons.Filled.Favorite, contentDescription = null, tint = Color(0xFFFF4081), modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("CP पार्टनर जोड़ने का अनुरोध भेजें", color = Color(0xFFFFB2CE), fontWeight = FontWeight.Bold)
+          }
         }
 
         if (showSheetLevelCards) {
@@ -1612,6 +1745,8 @@ fun VoiceRoomScreen(
       userCoins = userCoins,
       isAdminUser = isAdminUser,
       isUploading = isUploadingMedia,
+      currentUserId = currentUserId,
+      acceptedCpLinks = acceptedCpLinks,
       onClaimBonusCoins = onClaimBonusCoins,
       onSendGift = onSendGift,
       onAddCustomGift = onAddCustomGift,
@@ -2138,6 +2273,7 @@ private fun HostSeatBadge(
   localLevel: Float,
   frameUrl: String = "",
   activeEmoji: ActiveSeatEmoji? = null,
+  isCpLinked: Boolean = false,
   onClick: () -> Unit,
 ) {
   val isOccupied = seat?.occupantUid?.isNotBlank() == true
@@ -2164,7 +2300,10 @@ private fun HostSeatBadge(
           Box(
             modifier = Modifier
               .size(56.dp)
-              .scale(pulse)
+              .graphicsLayer {
+                scaleX = pulse
+                scaleY = pulse
+              }
               .clip(CircleShape)
               .border(2.5.dp, SwarCyan, CircleShape)
           )
@@ -2174,11 +2313,32 @@ private fun HostSeatBadge(
           name = seat?.occupantName.orEmpty(),
           avatarSize = 48.dp,
           frameUrl = frameUrl,
-          borderColor = if (speaking) SwarMint else SwarGold,
-          borderWidth = 1.8.dp,
+          borderColor = when {
+            isCpLinked -> Color(0xFFFF4081)
+            speaking -> SwarMint
+            else -> SwarGold
+          },
+          borderWidth = if (isCpLinked) 2.2.dp else 1.8.dp,
         )
         if (activeEmoji != null) {
           SeatEmojiReactionOverlay(reaction = activeEmoji, dpSize = 48.dp)
+        }
+        if (isCpLinked) {
+          Box(
+            modifier = Modifier
+              .align(Alignment.BottomStart)
+              .size(16.dp)
+              .clip(CircleShape)
+              .background(Color(0xFFE91E63)),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              imageVector = Icons.Filled.Favorite,
+              contentDescription = "CP पार्टनर",
+              tint = Color.White,
+              modifier = Modifier.size(10.dp),
+            )
+          }
         }
         Box(
           modifier = Modifier
@@ -2235,6 +2395,7 @@ private fun GuestSeatTile(
   localLevel: Float,
   frameUrl: String = "",
   activeEmoji: ActiveSeatEmoji? = null,
+  isCpLinked: Boolean = false,
   onClick: () -> Unit,
 ) {
   val isOccupied = seat.occupantUid.isNotBlank()
@@ -2253,11 +2414,32 @@ private fun GuestSeatTile(
           name = seat.occupantName,
           avatarSize = 46.dp,
           frameUrl = frameUrl,
-          borderColor = if (isSpeaking) SwarCyan else Color(0x88FFFFFF),
-          borderWidth = if (isSpeaking) 2.5.dp else 1.dp,
+          borderColor = when {
+            isCpLinked -> Color(0xFFFF4081)
+            isSpeaking -> SwarCyan
+            else -> Color(0x88FFFFFF)
+          },
+          borderWidth = if (isCpLinked || isSpeaking) 2.2.dp else 1.dp,
         )
         if (activeEmoji != null) {
           SeatEmojiReactionOverlay(reaction = activeEmoji, dpSize = 46.dp)
+        }
+        if (isCpLinked) {
+          Box(
+            modifier = Modifier
+              .align(Alignment.BottomStart)
+              .size(16.dp)
+              .clip(CircleShape)
+              .background(Color(0xFFE91E63)),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              imageVector = Icons.Filled.Favorite,
+              contentDescription = "CP पार्टनर",
+              tint = Color.White,
+              modifier = Modifier.size(10.dp),
+            )
+          }
         }
         Box(
           modifier = Modifier

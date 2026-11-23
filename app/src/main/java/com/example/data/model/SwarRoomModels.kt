@@ -295,9 +295,63 @@ data class NumericIdLookup(
   @ServerTimestamp val updatedAt: Timestamp? = null,
 )
 
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class CpRelationship(
+  @DocumentId val id: String = "",
+  val memberUids: List<String> = emptyList(),
+  val memberNumericIds: Map<String, String> = emptyMap(),
+  val memberNames: Map<String, String> = emptyMap(),
+  val memberAvatars: Map<String, String> = emptyMap(),
+  val requesterUid: String = "",
+  val recipientUid: String = "",
+  val status: String = "pending",
+  val cpXp: Long = 0L,
+  val totalGiftsCount: Long = 0L,
+  val bondTitle: String = "बेस्ट फ्रेंड",
+  val acceptedAtMs: Long = 0L,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+) {
+  fun partnerUidFor(myUid: String): String {
+    return memberUids.firstOrNull { it != myUid }.orEmpty()
+  }
+
+  fun partnerNameFor(myUid: String): String {
+    val pUid = partnerUidFor(myUid)
+    return memberNames[pUid].orEmpty().ifBlank { "पार्टनर" }
+  }
+
+  fun partnerAvatarFor(myUid: String): String {
+    val pUid = partnerUidFor(myUid)
+    return memberAvatars[pUid].orEmpty()
+  }
+
+  fun partnerNumericIdFor(myUid: String): String {
+    val pUid = partnerUidFor(myUid)
+    return memberNumericIds[pUid].orEmpty().ifBlank {
+      if (pUid.isNotBlank()) SwarUserIdentity.numericIdForUid(pUid) else ""
+    }
+  }
+
+  fun numericIdForMember(uid: String): String {
+    return memberNumericIds[uid].orEmpty().ifBlank {
+      if (uid.isNotBlank()) SwarUserIdentity.numericIdForUid(uid) else ""
+    }
+  }
+}
+
 object SwarCatalogDefaults {
+  const val LUCKY_CP_CATEGORY = "लकी"
   val emojiCategories = listOf("ट्रेंडिंग", "मस्ती", "प्यार", "प्रतिक्रिया")
-  val giftCategories = listOf("हॉट", "लग्ज़री", "वीडियो VIP", "लकी")
+  val giftCategories = listOf("हॉट", "लग्ज़री", "वीडियो VIP", LUCKY_CP_CATEGORY)
+
+  fun isCpLuckyGiftCategory(category: String): Boolean {
+    val clean = category.trim()
+    return clean == LUCKY_CP_CATEGORY ||
+      clean.equals("lucky", ignoreCase = true) ||
+      clean == "लकी गिफ्ट"
+  }
 
   val builtInEmojis = listOf(
     EmojiCatalogItem(id = "def_e1", label = "फायर", category = "ट्रेंडिंग", symbol = "🔥"),
