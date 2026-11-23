@@ -14,6 +14,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.SeatCleanupService
 import com.example.SeatPresenceTracker
+import com.example.audio.DeviceMusicScanner
+import com.example.audio.DeviceMusicTrack
 import com.example.audio.RoomMusicPlayer
 import com.example.audio.RoomMusicState
 import com.example.audio.VoiceAudioEngine
@@ -432,7 +434,24 @@ class SwarRoomViewModel(
   val isLocalSpeaking: StateFlow<Boolean> = audioEngine.isSpeaking
   val isMicCapturing: StateFlow<Boolean> = audioEngine.isCapturing
 
-  private val roomMusicPlayer = RoomMusicPlayer(appContext, audioEngine)
+  private val musicTreePrefs by lazy {
+    appContext?.applicationContext?.getSharedPreferences("swarroom_music_trees", Context.MODE_PRIVATE)
+  }
+
+  private val _scannedMusicTracks = MutableStateFlow<List<DeviceMusicTrack>>(emptyList())
+  val scannedMusicTracks: StateFlow<List<DeviceMusicTrack>> = _scannedMusicTracks.asStateFlow()
+
+  private val _isScanningMusic = MutableStateFlow(false)
+  val isScanningMusic: StateFlow<Boolean> = _isScanningMusic.asStateFlow()
+
+  private val _hasScannedMusicOnce = MutableStateFlow(false)
+  val hasScannedMusicOnce: StateFlow<Boolean> = _hasScannedMusicOnce.asStateFlow()
+
+  private val roomMusicPlayer = RoomMusicPlayer(
+    appContext = appContext,
+    audioEngine = audioEngine,
+    onTrackCompleted = { playNextScannedTrack() },
+  )
   val roomMusicState: StateFlow<RoomMusicState> = roomMusicPlayer.state
 
   val activeRoomKickLogs: StateFlow<List<RoomKickLog>> =
@@ -1856,6 +1875,60 @@ class SwarRoomViewModel(
         .onSuccess { _events.tryEmit("रूम की सीट संख्या $clamped कर दी गई।") }
         .onFailure { err -> _events.tryEmit(err.message ?: "सीट संख्या बदलने में त्रुटि") }
     }
+  }
+
+  fun scanAllMemoryCardMusic() {
+    val ctx = appContext?.applicationContext ?: return
+    if (_isScanningMusic.value) return
+    viewModelScope.launch {
+      _isScanningMusic.value = true
+      try {
+        val savedTrees = musicTreePrefs?.getStringSet("tree_uris", emptySet()).orEmpty()
+        val found = DeviceMusicScanner.scanAllDeviceMusic(ctx, savedTrees)
+        _scannedMusicTracks.value = found
+        _hasScannedMusicOnce.value = true
+      } finally {
+        _isScanningMusic.value = false
+      }
+    }
+  }
+
+  fun addAndScanMusicFolderTree(treeUri: Uri) {
+    val ctx = appContext?.applicationContext ?: return
+    DeviceMusicScanner.takePersistableFolderPermission(ctx, treeUri)
+    val existing = musicTreePrefs?.getStringSet("tree_uris", emptySet()).orEmpty()
+    musicTreePrefs?.edit()?.putStringSet("tree_uris", existing + treeUri.toString())?.apply()
+    scanAllMemoryCardMusic()
+  }
+
+  fun playScannedMusicTrack(track: DeviceMusicTrack) {
+    viewModelScope.launch {
+      roomMusicPlayer.playFromUri(track.uri, preferredTitle = track.title)
+        .onSuccess { title ->
+          _events.tryEmit("🎵 बज रहा है: $title")
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "संगीत फ़ाइल चलाई नहीं जा सकी।")
+        }
+    }
+  }
+
+  fun playNextScannedTrack() {
+    val list = _scannedMusicTracks.value
+    if (list.isEmpty()) return
+    val currentUri = roomMusicPlayer.state.value.activeTrackUri
+    val idx = list.indexOfFirst { it.uri.toString() == currentUri }
+    val next = if (idx >= 0) list[(idx + 1) % list.size] else list.first()
+    playScannedMusicTrack(next)
+  }
+
+  fun playPreviousScannedTrack() {
+    val list = _scannedMusicTracks.value
+    if (list.isEmpty()) return
+    val currentUri = roomMusicPlayer.state.value.activeTrackUri
+    val idx = list.indexOfFirst { it.uri.toString() == currentUri }
+    val prev = if (idx > 0) list[idx - 1] else list.last()
+    playScannedMusicTrack(prev)
   }
 
   fun pickAndPlayRoomMusic(uri: Uri) {

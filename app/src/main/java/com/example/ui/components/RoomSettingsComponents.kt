@@ -63,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -70,6 +71,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.example.audio.DeviceMusicScanner
+import com.example.audio.DeviceMusicTrack
 import com.example.audio.RoomMusicState
 import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomPresenceMember
@@ -96,6 +99,8 @@ fun RoomSettingsSheet(
   seats: List<RoomSeat>,
   kickLogs: List<RoomKickLog>,
   roomMusicState: RoomMusicState,
+  scannedMusicTracks: List<DeviceMusicTrack> = emptyList(),
+  isScanningMusic: Boolean = false,
   onToggleMonitorLoopback: () -> Unit,
   onUpdateIdentity: (title: String, welcomeNotice: String, newCoverUri: Uri?, newCoverLink: String) -> Unit,
   onUpdateTheme: (backgroundTheme: String, customThemeUri: Uri?, customThemeLink: String) -> Unit,
@@ -107,8 +112,14 @@ fun RoomSettingsSheet(
   onToggleMusicPlayPause: () -> Unit,
   onStopMusic: () -> Unit,
   onMusicVolumeChange: (Int) -> Unit,
+  onScanMemoryCardMusic: () -> Unit = {},
+  onSelectMusicFolderTree: (Uri) -> Unit = {},
+  onPlayScannedMusicTrack: (DeviceMusicTrack) -> Unit = { track -> onPickMusicUri(track.uri) },
+  onPlayNextMusic: () -> Unit = {},
+  onPlayPreviousMusic: () -> Unit = {},
   onDismiss: () -> Unit,
 ) {
+  val context = LocalContext.current
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   var title by remember(room.id, room.title) { mutableStateOf(room.title) }
   var welcomeNotice by remember(room.id, room.welcomeNotice) { mutableStateOf(room.welcomeNotice) }
@@ -118,6 +129,7 @@ fun RoomSettingsSheet(
   var selectedTheme by remember(room.id, room.backgroundTheme) { mutableStateOf(room.backgroundTheme) }
   var pendingThemeUri by remember(room.id) { mutableStateOf<Uri?>(null) }
   var themeLinkInput by remember(room.id, room.themeBackgroundUrl) { mutableStateOf(room.themeBackgroundUrl) }
+  var showMusicLibraryDialog by remember { mutableStateOf(false) }
 
   val coverPicker = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia(),
@@ -141,6 +153,22 @@ fun RoomSettingsSheet(
   ) { uri ->
     if (uri != null) {
       onPickMusicUri(uri)
+      showMusicLibraryDialog = false
+    }
+  }
+  val folderTreePicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocumentTree(),
+  ) { uri ->
+    if (uri != null) {
+      onSelectMusicFolderTree(uri)
+    }
+  }
+  val audioPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+  ) { granted ->
+    showMusicLibraryDialog = true
+    if (granted) {
+      onScanMemoryCardMusic()
     }
   }
 
@@ -409,13 +437,24 @@ fun RoomSettingsSheet(
       // 4. Admin / Kick Audit Panel
       RoomKickAuditSection(kickLogs = kickLogs)
 
-      // 5. Memory Card Music Player (Zero-Permission OpenDocument)
+      // 5. Auto-Captured Memory Card Music Player
       RoomMusicSection(
         roomMusicState = roomMusicState,
-        onPickMusicClick = { musicPicker.launch(arrayOf("audio/*")) },
+        scannedTracksCount = scannedMusicTracks.size,
+        isScanningMusic = isScanningMusic,
+        onPickMusicClick = {
+          if (DeviceMusicScanner.hasAudioReadPermission(context)) {
+            onScanMemoryCardMusic()
+            showMusicLibraryDialog = true
+          } else {
+            audioPermissionLauncher.launch(DeviceMusicScanner.requiredAudioReadPermission())
+          }
+        },
         onTogglePlayPause = onToggleMusicPlayPause,
         onStopMusic = onStopMusic,
         onVolumeChange = onMusicVolumeChange,
+        onNextTrack = onPlayNextMusic,
+        onPreviousTrack = onPlayPreviousMusic,
       )
 
       // 6 & 7. Room PIN Lock & Dynamic Seat Count
@@ -470,6 +509,27 @@ fun RoomSettingsSheet(
 
       Spacer(modifier = Modifier.height(14.dp))
     }
+  }
+
+  if (showMusicLibraryDialog) {
+    MemoryCardMusicLibraryDialog(
+      tracks = scannedMusicTracks,
+      isScanning = isScanningMusic,
+      hasAudioPermission = DeviceMusicScanner.hasAudioReadPermission(context),
+      activeTrackUri = roomMusicState.activeTrackUri,
+      isPlaying = roomMusicState.isPlaying,
+      onRescan = onScanMemoryCardMusic,
+      onRequestAudioPermission = {
+        audioPermissionLauncher.launch(DeviceMusicScanner.requiredAudioReadPermission())
+      },
+      onPickFolderTreeClick = { folderTreePicker.launch(null) },
+      onPickSingleFileClick = { musicPicker.launch(arrayOf("audio/*")) },
+      onSelectTrack = { track ->
+        onPlayScannedMusicTrack(track)
+        showMusicLibraryDialog = false
+      },
+      onDismiss = { showMusicLibraryDialog = false },
+    )
   }
 }
 

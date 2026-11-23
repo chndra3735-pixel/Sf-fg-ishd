@@ -125,6 +125,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.audio.DeviceMusicTrack
 import com.example.audio.RoomMusicState
 import com.example.data.model.CpRelationship
 import com.example.data.model.EmojiCatalogItem
@@ -258,6 +259,8 @@ fun VoiceRoomScreen(
   livePresenceMembers: List<RoomPresenceMember> = emptyList(),
   kickLogs: List<RoomKickLog> = emptyList(),
   roomMusicState: RoomMusicState = RoomMusicState(),
+  scannedMusicTracks: List<DeviceMusicTrack> = emptyList(),
+  isScanningMusic: Boolean = false,
   onUpdateRoomIdentity: (title: String, welcomeNotice: String, newCoverUri: Uri?, newCoverLink: String) -> Unit = { title, notice, _, _ ->
     onUpdateRoomSettings(title, room.backgroundTheme, notice)
   },
@@ -272,6 +275,11 @@ fun VoiceRoomScreen(
   onToggleRoomMusicPlayPause: () -> Unit = {},
   onStopRoomMusic: () -> Unit = {},
   onRoomMusicVolumeChange: (Int) -> Unit = {},
+  onScanMemoryCardMusic: () -> Unit = {},
+  onSelectMusicFolderTree: (Uri) -> Unit = {},
+  onPlayScannedMusicTrack: (DeviceMusicTrack) -> Unit = { track -> onPickRoomMusic(track.uri) },
+  onPlayNextMusic: () -> Unit = {},
+  onPlayPreviousMusic: () -> Unit = {},
   onKickRoomMember: (targetUid: String, targetName: String, targetAvatarUrl: String) -> Unit = { uid, _, _ ->
     seats.firstOrNull { it.occupantUid == uid }?.let { onKickSeatOccupant(it) }
   },
@@ -1705,6 +1713,8 @@ fun VoiceRoomScreen(
       seats = visibleSeats,
       kickLogs = kickLogs,
       roomMusicState = roomMusicState,
+      scannedMusicTracks = scannedMusicTracks,
+      isScanningMusic = isScanningMusic,
       onToggleMonitorLoopback = onToggleMonitorLoopback,
       onUpdateIdentity = onUpdateRoomIdentity,
       onUpdateTheme = onUpdateRoomTheme,
@@ -1716,6 +1726,11 @@ fun VoiceRoomScreen(
       onToggleMusicPlayPause = onToggleRoomMusicPlayPause,
       onStopMusic = onStopRoomMusic,
       onMusicVolumeChange = onRoomMusicVolumeChange,
+      onScanMemoryCardMusic = onScanMemoryCardMusic,
+      onSelectMusicFolderTree = onSelectMusicFolderTree,
+      onPlayScannedMusicTrack = onPlayScannedMusicTrack,
+      onPlayNextMusic = onPlayNextMusic,
+      onPlayPreviousMusic = onPlayPreviousMusic,
       onDismiss = { showSettingsDialog = false },
     )
   }

@@ -15,6 +15,7 @@ import java.io.File
 
 data class RoomMusicState(
   val trackTitle: String = "",
+  val activeTrackUri: String = "",
   val isPlaying: Boolean = false,
   val isPrepared: Boolean = false,
   val volumePercent: Int = 75,
@@ -22,13 +23,14 @@ data class RoomMusicState(
 )
 
 /**
- * Plays audio tracks selected via zero-permission Storage Access Framework (`OpenDocument`).
+ * Plays audio tracks from automatic Memory Card scan (`MediaStore.Audio`) or SAF (`OpenDocument`).
  * Uses Agora audio mixing when connected as broadcaster so room listeners can hear the music,
  * and falls back cleanly to local `MediaPlayer` otherwise without double playback.
  */
 class RoomMusicPlayer(
   private val appContext: Context?,
   private val audioEngine: VoiceAudioEngine,
+  private val onTrackCompleted: () -> Unit = {},
 ) {
   private val _state = MutableStateFlow(RoomMusicState())
   val state: StateFlow<RoomMusicState> = _state.asStateFlow()
@@ -36,12 +38,12 @@ class RoomMusicPlayer(
   private var mediaPlayer: MediaPlayer? = null
   private var cachedTrackFile: File? = null
 
-  suspend fun playFromUri(uri: Uri): Result<String> = withContext(Dispatchers.IO) {
+  suspend fun playFromUri(uri: Uri, preferredTitle: String = ""): Result<String> = withContext(Dispatchers.IO) {
     runCatching {
       val ctx = appContext?.applicationContext
         ?: throw IllegalStateException("ऑडियो चलाने के लिए एप्लिकेशन संदर्भ उपलब्ध नहीं है।")
       stopPlaybackInternal()
-      val title = resolveTrackDisplayName(ctx, uri)
+      val title = preferredTitle.trim().take(64).ifBlank { resolveTrackDisplayName(ctx, uri) }
       val copiedFile = copyUriToTempTrack(ctx, uri)
       cachedTrackFile?.let { old -> if (old.absolutePath != copiedFile.absolutePath) runCatching { old.delete() } }
       cachedTrackFile = copiedFile
@@ -50,6 +52,7 @@ class RoomMusicPlayer(
       if (audioEngine.startMusicMixing(copiedFile.absolutePath, volume)) {
         _state.value = RoomMusicState(
           trackTitle = title,
+          activeTrackUri = uri.toString(),
           isPlaying = true,
           isPrepared = true,
           volumePercent = volume,
@@ -68,6 +71,7 @@ class RoomMusicPlayer(
         setDataSource(copiedFile.absolutePath)
         setOnCompletionListener {
           _state.value = _state.value.copy(isPlaying = false)
+          onTrackCompleted()
         }
         prepare()
         val scalar = volume / 100f
@@ -77,6 +81,7 @@ class RoomMusicPlayer(
       mediaPlayer = mp
       _state.value = RoomMusicState(
         trackTitle = title,
+        activeTrackUri = uri.toString(),
         isPlaying = true,
         isPrepared = true,
         volumePercent = volume,

@@ -411,6 +411,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isPurgingExpiredLogs by viewModel.isPurgingExpiredLogs.collectAsStateWithLifecycle()
   val activeRoomKickLogs by viewModel.activeRoomKickLogs.collectAsStateWithLifecycle()
   val roomMusicState by viewModel.roomMusicState.collectAsStateWithLifecycle()
+  val scannedMusicTracks by viewModel.scannedMusicTracks.collectAsStateWithLifecycle()
+  val isScanningMusic by viewModel.isScanningMusic.collectAsStateWithLifecycle()
   val activeCpLink by viewModel.activeCpLink.collectAsStateWithLifecycle()
   val acceptedCpLinks by viewModel.acceptedCpLinks.collectAsStateWithLifecycle()
   val incomingCpRequests by viewModel.incomingCpRequests.collectAsStateWithLifecycle()
@@ -691,6 +693,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         livePresenceMembers = activeRoomPresence,
         kickLogs = activeRoomKickLogs,
         roomMusicState = roomMusicState,
+        scannedMusicTracks = scannedMusicTracks,
+        isScanningMusic = isScanningMusic,
         onUpdateRoomIdentity = { title, notice, coverUri, coverLink ->
           viewModel.updateRoomIdentity(title, notice, coverUri, coverLink)
         },
@@ -705,6 +709,11 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onToggleRoomMusicPlayPause = { viewModel.toggleRoomMusicPlayPause() },
         onStopRoomMusic = { viewModel.stopRoomMusic() },
         onRoomMusicVolumeChange = { pct -> viewModel.setRoomMusicVolume(pct) },
+        onScanMemoryCardMusic = { viewModel.scanAllMemoryCardMusic() },
+        onSelectMusicFolderTree = { uri -> viewModel.addAndScanMusicFolderTree(uri) },
+        onPlayScannedMusicTrack = { track -> viewModel.playScannedMusicTrack(track) },
+        onPlayNextMusic = { viewModel.playNextScannedTrack() },
+        onPlayPreviousMusic = { viewModel.playPreviousScannedTrack() },
         onKickRoomMember = { uid, name, avatar -> viewModel.kickRoomMember(uid, name, avatar) },
         acceptedCpLinks = acceptedCpLinks,
         onSendCpRequestById = { recipientNumericId, bondTitle ->

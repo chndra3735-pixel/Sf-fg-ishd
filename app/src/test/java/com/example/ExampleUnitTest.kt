@@ -503,4 +503,12 @@ class ExampleUnitTest {
     assertFalse(SwarCatalogDefaults.isCpLuckyGiftCategory("लग्ज़री"))
     assertFalse(SwarCatalogDefaults.isCpLuckyGiftCategory("वीडियो VIP"))
   }
+
+  @Test
+  fun deviceMusicScanner_formatDurationClockFormatsZeroMinutesAndHours() {
+    assertEquals("--:--", com.example.audio.DeviceMusicScanner.formatDurationClock(0L))
+    assertEquals("--:--", com.example.audio.DeviceMusicScanner.formatDurationClock(-500L))
+    assertEquals("01:05", com.example.audio.DeviceMusicScanner.formatDurationClock(65_000L))
+    assertEquals("1:01:01", com.example.audio.DeviceMusicScanner.formatDurationClock(3_661_000L))
+  }
 }

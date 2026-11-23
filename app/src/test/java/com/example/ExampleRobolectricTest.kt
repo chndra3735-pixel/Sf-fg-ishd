@@ -1,5 +1,7 @@
 package com.example
 
+import android.Manifest
+import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
@@ -35,6 +37,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import java.io.File
 
@@ -1377,5 +1380,111 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     assertEquals("g_cp_lucky_1", sentGiftId)
     assertEquals("u_cp_buddy", sentRecipientUid)
+  }
+
+  @Test
+  fun `memory card music button auto scans tracks opens library filters and plays selected song`() {
+    assertEquals(
+      Manifest.permission.READ_MEDIA_AUDIO,
+      com.example.audio.DeviceMusicScanner.requiredAudioReadPermission(),
+    )
+    val app = ApplicationProvider.getApplicationContext<Application>()
+    Shadows.shadowOf(app).grantPermissions(com.example.audio.DeviceMusicScanner.requiredAudioReadPermission())
+
+    val tracks = listOf(
+      com.example.audio.DeviceMusicTrack(
+        id = "t1",
+        uri = Uri.parse("content://media/external/audio/media/101"),
+        title = "दिलबर धुने",
+        artist = "अरिजीत",
+        folderName = "Download",
+        durationMs = 205_000L,
+        isFromSdCard = false,
+      ),
+      com.example.audio.DeviceMusicTrack(
+        id = "t2",
+        uri = Uri.parse("content://media/sdcard/audio/media/202"),
+        title = "SD गाना मिक्स",
+        artist = "डीजे राजा",
+        folderName = "SD Card/Music",
+        durationMs = 185_000L,
+        isFromSdCard = true,
+      ),
+    )
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_music_auto",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "म्यूजिक रूम",
+      roomCode = "778899",
+    )
+    var scanTriggered = false
+    var nextTriggered = false
+    var prevTriggered = false
+    var selectedTrackId = ""
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.RoomSettingsSheet(
+          room = room,
+          isHost = true,
+          isUploadingMedia = false,
+          isMonitorLoopbackOn = false,
+          isAgoraConnected = true,
+          agoraStatusText = "कनेक्टेड",
+          userProfiles = emptyMap(),
+          livePresenceMembers = emptyList(),
+          seats = emptyList(),
+          kickLogs = emptyList(),
+          roomMusicState = com.example.audio.RoomMusicState(
+            activeTrackUri = tracks.first().uri.toString(),
+            trackTitle = tracks.first().title,
+            isPlaying = true,
+            isPrepared = true,
+          ),
+          scannedMusicTracks = tracks,
+          isScanningMusic = false,
+          onToggleMonitorLoopback = {},
+          onUpdateIdentity = { _, _, _, _ -> },
+          onUpdateTheme = { _, _, _ -> },
+          onAddManagerById = {},
+          onRemoveManager = {},
+          onUpdateRoomPinLock = { _, _ -> },
+          onResizeRoomSeats = {},
+          onPickMusicUri = {},
+          onToggleMusicPlayPause = {},
+          onStopMusic = {},
+          onMusicVolumeChange = {},
+          onScanMemoryCardMusic = { scanTriggered = true },
+          onPlayScannedMusicTrack = { track -> selectedTrackId = track.id },
+          onPlayNextMusic = { nextTriggered = true },
+          onPlayPreviousMusic = { prevTriggered = true },
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+
+    composeTestRule.onNodeWithTag("room_settings_music_prev").performScrollTo().performClick()
+    composeTestRule.onNodeWithTag("room_settings_music_next").performScrollTo().performClick()
+    assertTrue(prevTriggered)
+    assertTrue(nextTriggered)
+
+    composeTestRule.onNodeWithTag("room_settings_pick_music_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertTrue(scanTriggered)
+    composeTestRule.onNodeWithTag("memory_card_music_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("music_library_list").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("music_track_row_t1").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("music_track_row_t2").assertIsDisplayed()
+
+    composeTestRule.onNodeWithTag("music_library_search_input").performTextInput("SD गाना")
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("music_track_row_t1").assertDoesNotExist()
+    composeTestRule.onNodeWithTag("music_track_row_t2").assertIsDisplayed().performClick()
+    composeTestRule.waitForIdle()
+
+    assertEquals("t2", selectedTrackId)
+    composeTestRule.onNodeWithTag("memory_card_music_dialog").assertDoesNotExist()
   }
 }
