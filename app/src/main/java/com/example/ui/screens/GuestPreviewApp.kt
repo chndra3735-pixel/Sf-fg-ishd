@@ -109,6 +109,7 @@ fun GuestPreviewSwarRoomApp(
   var previewSeats by remember { mutableStateOf<List<RoomSeat>>(emptyList()) }
   var previewMessages by remember { mutableStateOf<List<RoomMessage>>(emptyList()) }
   var previewCoins by remember { mutableLongStateOf(1500L) }
+  var previewHp by remember { mutableLongStateOf(0L) }
   var latestMarqueeGift by remember { mutableStateOf<GiftEvent?>(null) }
   var activeFullScreenGift by remember { mutableStateOf<GiftEvent?>(null) }
   var isMicMuted by remember { mutableStateOf(true) }
@@ -117,7 +118,7 @@ fun GuestPreviewSwarRoomApp(
   var msgSeq by remember { mutableIntStateOf(0) }
   var blockedPreviewUids by remember { mutableStateOf(emptySet<String>()) }
 
-  val guestProfile = remember(previewCoins) {
+  val guestProfile = remember(previewCoins, previewHp) {
     UserProfile(
       id = PREVIEW_GUEST_UID,
       userId = PREVIEW_GUEST_UID,
@@ -126,6 +127,7 @@ fun GuestPreviewSwarRoomApp(
       bio = "बिना लॉगिन ऐप लेआउट और पैनल प्रीव्यू मोड।",
       clubTag = "SWAR",
       coins = previewCoins,
+      hp = previewHp,
     )
   }
 
@@ -260,6 +262,7 @@ fun GuestPreviewSwarRoomApp(
         isAdminUser = false,
         isUploadingMedia = false,
         userCoins = previewCoins,
+        userHp = previewHp,
         emojiCatalog = SwarCatalogDefaults.builtInEmojis,
         giftCatalog = SwarCatalogDefaults.builtInGifts,
         latestMarqueeGift = latestMarqueeGift,

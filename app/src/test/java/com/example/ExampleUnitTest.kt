@@ -664,5 +664,36 @@ class ExampleUnitTest {
     assertFalse(audienceWithMusic.clientRoleBroadcaster)
     assertTrue(audienceWithMusic.muteLocalAudioStream)
   }
+
+  @Test
+  fun isCpLoveEmojiCategory_recognizesLoveCategoryOnly() {
+    assertTrue(SwarCatalogDefaults.isCpLoveEmojiCategory(SwarCatalogDefaults.LOVE_CP_EMOJI_CATEGORY))
+    assertTrue(SwarCatalogDefaults.isCpLoveEmojiCategory("प्यार"))
+    assertTrue(SwarCatalogDefaults.isCpLoveEmojiCategory("Love"))
+    assertFalse(SwarCatalogDefaults.isCpLoveEmojiCategory("ट्रेंडिंग"))
+    assertFalse(SwarCatalogDefaults.isCpLoveEmojiCategory("मस्ती"))
+    assertFalse(SwarCatalogDefaults.isCpLoveEmojiCategory("प्रतिक्रिया"))
+  }
+
+  @Test
+  fun effectiveHpForProfile_ignoresRechargedWalletCoinsAndGrowsStrictlyFromEarnedHp() {
+    assertEquals(0L, SwarUserIdentity.effectiveHpForProfile(null))
+
+    val rechargedZeroHp = com.example.data.model.UserProfile(
+      userId = "u_recharged",
+      coins = 50_000_000L,
+      hp = 0L,
+    )
+    assertEquals(0L, SwarUserIdentity.effectiveHpForProfile(rechargedZeroHp))
+    assertEquals(1, SwarUserIdentity.levelForProfile(rechargedZeroHp).level)
+
+    val rocketLv1EarnedHp = rechargedZeroHp.copy(hp = 2_000L)
+    assertEquals(2_000L, SwarUserIdentity.effectiveHpForProfile(rocketLv1EarnedHp))
+    assertEquals(
+      SwarUserIdentity.levelForCoins(2_000L).level,
+      SwarUserIdentity.levelForProfile(rocketLv1EarnedHp).level,
+    )
+    assertTrue(SwarUserIdentity.levelForProfile(rocketLv1EarnedHp).level < 10)
+  }
 }
 

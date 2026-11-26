@@ -230,13 +230,15 @@ class SwarRoomRepositoryRuleTest : FirestoreEmulatorTestBase() {
     assertEquals(600L, sentEvent.coinCost)
     assertEquals("video", sentEvent.giftMediaType)
 
-    // Verify coins deducted (1500 - 600 = 900)
+    // Verify coins deducted (1500 - 600 = 900) and HP remains 0 until a rocket blasts
     val updatedProfile = repo.getUserProfile(senderUid)
     assertEquals(900L, updatedProfile?.coins)
+    assertEquals(0L, updatedProfile?.hp)
 
-    // Verify bonus coins claim (900 + 500 = 1400)
+    // Verify bonus coins claim (900 + 500 = 1400) does NOT boost HP
     val afterBonus = withTimeout(TIMEOUT_MS) { repo.claimBonusCoins(500L).getOrThrow() }
     assertEquals(1400L, afterBonus)
+    assertEquals(0L, repo.getUserProfile(senderUid)?.hp)
 
     // Verify global gift_events stream receives the event
     val globalEvents = withTimeout(TIMEOUT_MS) {

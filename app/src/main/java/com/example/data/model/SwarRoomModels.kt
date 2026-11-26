@@ -393,7 +393,8 @@ data class RocketLaunchEvent(
 
 object SwarCatalogDefaults {
   const val LUCKY_CP_CATEGORY = "लकी"
-  val emojiCategories = listOf("ट्रेंडिंग", "मस्ती", "प्यार", "प्रतिक्रिया")
+  const val LOVE_CP_EMOJI_CATEGORY = "प्यार"
+  val emojiCategories = listOf("ट्रेंडिंग", "मस्ती", LOVE_CP_EMOJI_CATEGORY, "प्रतिक्रिया")
   val giftCategories = listOf("हॉट", "लग्ज़री", "वीडियो VIP", LUCKY_CP_CATEGORY)
 
   fun isCpLuckyGiftCategory(category: String): Boolean {
@@ -401,6 +402,13 @@ object SwarCatalogDefaults {
     return clean == LUCKY_CP_CATEGORY ||
       clean.equals("lucky", ignoreCase = true) ||
       clean == "लकी गिफ्ट"
+  }
+
+  fun isCpLoveEmojiCategory(category: String): Boolean {
+    val clean = category.trim()
+    return clean == LOVE_CP_EMOJI_CATEGORY ||
+      clean.equals("love", ignoreCase = true) ||
+      clean == "प्यार इमोजी"
   }
 
   val builtInEmojis = listOf(

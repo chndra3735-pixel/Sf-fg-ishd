@@ -193,10 +193,10 @@ fun ProfileScreen(
   val numericId = remember(profile?.userId) {
     SwarUserIdentity.numericIdForUid(profile?.userId.orEmpty())
   }
-  val effectiveHp = remember(profile?.coins, profile?.hp) {
+  val effectiveHp = remember(profile?.hp) {
     SwarUserIdentity.effectiveHpForProfile(profile)
   }
-  val levelInfo = remember(profile?.coins, profile?.hp) {
+  val levelInfo = remember(profile?.hp) {
     SwarUserIdentity.levelForProfile(profile)
   }
   val activeFrameUrl = remember(levelInfo.level, levelConfigs) {
@@ -660,7 +660,7 @@ fun ProfileScreen(
             activeFeatureInfo = ProfileInfoPayload(
               title = "उपलब्धि पदक",
               highlight = "वर्तमान पदक स्तर: Lv.${levelInfo.level}",
-              description = "उपाधि '${levelInfo.title}' सक्रिय है! अधिक कॉइंस और लाइव रूम गतिविधि से नए गोल्डन पदक अनलॉक होते हैं।",
+              description = "उपाधि '${levelInfo.title}' सक्रिय है! रॉकेट ब्लास्ट से मिलने वाले HP और लाइव रूम गतिविधि से नए गोल्डन पदक अनलॉक होते हैं।",
             )
           },
         )

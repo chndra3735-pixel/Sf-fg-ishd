@@ -898,6 +898,36 @@ class SwarRoomViewModel(
         }
       }
     }
+    // Also claim any winning Rocket HP & Coin rewards globally even if user left the room before blast
+    viewModelScope.launch {
+      repository.observeMyWinningRocketLaunches()
+        .catch { emit(emptyList()) }
+        .collect { winningLaunches ->
+          winningLaunches
+            .filter { launch ->
+              launch.id.isNotBlank() &&
+                currentUserId in launch.winnerUids &&
+                currentUserId !in launch.claimedUids
+            }
+            .forEach { launch ->
+              if (claimingRocketLaunchIds.add(launch.id)) {
+                viewModelScope.launch {
+                  try {
+                    repository.claimRocketLaunchReward(launch.id).onSuccess { (c, h) ->
+                      if (c > 0L || h > 0L) {
+                        _events.tryEmit(
+                          "🚀 रॉकेट LV.${launch.rocketLevel} ब्लास्ट इनाम: +${SwarUserIdentity.formatIndianNumber(c)} कॉइंस और +${SwarUserIdentity.formatIndianNumber(h)} HP आपके लेवल में जुड़ गए!"
+                        )
+                      }
+                    }
+                  } finally {
+                    claimingRocketLaunchIds.remove(launch.id)
+                  }
+                }
+              }
+            }
+        }
+    }
     viewModelScope.launch {
       activeRoomSeats.collect { seats ->
         seats.asSequence()
@@ -3268,6 +3298,13 @@ class SwarRoomViewModel(
   }
 
   fun sendEmojiReaction(item: EmojiCatalogItem) {
+    if (SwarCatalogDefaults.isCpLoveEmojiCategory(item.category)) {
+      val ownCp = SwarUserIdentity.findAcceptedCpForUser(currentUserId, acceptedCpLinks.value)
+      if (ownCp == null) {
+        _events.tryEmit("🔒 'प्यार' इमोजी केवल जुड़ी हुई दो CP / दोस्त ID के लिए अनलॉक होते हैं। पहले प्रोफ़ाइल → CP में ID जोड़ें!")
+        return
+      }
+    }
     val display = buildString {
       if (item.symbol.isNotBlank()) append(item.symbol).append(" ")
       append(item.label)

@@ -420,8 +420,7 @@ object SwarUserIdentity {
   }
 
   fun effectiveHpForProfile(profile: UserProfile?): Long {
-    if (profile == null) return 1500L
-    return maxOf(profile.hp.coerceAtLeast(0L), profile.coins.coerceAtLeast(0L))
+    return profile?.hp?.coerceAtLeast(0L) ?: 0L
   }
 
   fun levelForProfile(profile: UserProfile?): UserLevelInfo {

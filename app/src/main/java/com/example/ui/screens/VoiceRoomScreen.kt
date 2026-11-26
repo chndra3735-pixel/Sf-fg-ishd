@@ -290,7 +290,7 @@ fun VoiceRoomScreen(
   },
   acceptedCpLinks: List<CpRelationship> = emptyList(),
   onSendCpRequestById: (recipientNumericId: String, bondTitle: String) -> Unit = { _, _ -> },
-  userHp: Long = userCoins,
+  userHp: Long = 0L,
   roomRocketState: RoomRocketState? = null,
   activeRocketLaunch: RocketLaunchEvent? = null,
   onDismissRocketLaunch: () -> Unit = {},
@@ -333,7 +333,7 @@ fun VoiceRoomScreen(
   var showRocketDetailsDialog by remember { mutableStateOf(false) }
   var selectedSeatForSheet by remember { mutableStateOf<RoomSeat?>(null) }
   var selectedProfileTarget by remember { mutableStateOf<RoomProfileTarget?>(null) }
-  val effectiveOwnHp = maxOf(userHp, userCoins)
+  val effectiveOwnHp = userHp.coerceAtLeast(0L)
 
   val visibleMessages = remember(messages, blockedUserIds) {
     if (blockedUserIds.isEmpty()) messages
@@ -485,7 +485,7 @@ fun VoiceRoomScreen(
         currentUserId = currentUserId,
         currentUserName = currentUserName,
         currentUserAvatar = currentUserAvatar,
-        userCoins = effectiveOwnHp,
+        userHp = effectiveOwnHp,
         userProfiles = userProfiles,
         liveListeners = liveListeners,
         onOwnProfileClick = {
@@ -1812,6 +1812,9 @@ fun VoiceRoomScreen(
       onDismiss = { showEmojiPanel = false },
       emojiUploadError = emojiUploadError,
       onClearEmojiUploadError = onClearEmojiUploadError,
+      currentUserId = currentUserId,
+      acceptedCpLinks = acceptedCpLinks,
+      onBlockedCpEmoji = onShowToast,
     )
   }
 
@@ -1959,7 +1962,7 @@ private fun RoomParticipantsDrawerSheet(
   currentUserId: String,
   currentUserName: String,
   currentUserAvatar: String,
-  userCoins: Long,
+  userHp: Long,
   userProfiles: Map<String, UserProfile>,
   liveListeners: List<RoomPresenceMember>,
   onOwnProfileClick: () -> Unit,
@@ -1970,7 +1973,7 @@ private fun RoomParticipantsDrawerSheet(
   onClose: () -> Unit,
 ) {
   val ownNumericId = remember(currentUserId) { SwarUserIdentity.numericIdForUid(currentUserId) }
-  val ownLevel = remember(userCoins) { SwarUserIdentity.levelForCoins(userCoins) }
+  val ownLevel = remember(userHp) { SwarUserIdentity.levelForCoins(userHp) }
 
   ModalDrawerSheet(
     drawerContainerColor = Color(0xFF140C29),

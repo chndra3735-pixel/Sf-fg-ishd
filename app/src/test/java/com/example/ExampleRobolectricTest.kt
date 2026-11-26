@@ -1955,5 +1955,135 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     assertEquals(true, speakerState)
   }
+
+  @Test
+  fun `emoji panel locks love category for single user and blocks sending`() {
+    var sentEmoji: com.example.data.model.EmojiCatalogItem? = null
+    var blockedReason: String? = null
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.EmojiPanelSheet(
+          emojis = com.example.data.model.SwarCatalogDefaults.builtInEmojis,
+          isAdminUser = false,
+          isUploading = false,
+          onSelectEmoji = { sentEmoji = it },
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onDismiss = {},
+          currentUserId = "single_user_1",
+          acceptedCpLinks = emptyList(),
+          onBlockedCpEmoji = { blockedReason = it },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    // Category index 2 is "प्यार"
+    composeTestRule.onNodeWithTag("emoji_category_tab_2").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("cp_love_emoji_banner").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("emoji_locked_badge_def_e9", useUnmergedTree = true).assertIsDisplayed()
+
+    composeTestRule.onNodeWithTag("emoji_item_def_e9").performClick()
+    composeTestRule.waitForIdle()
+    assertNull(sentEmoji)
+    assertNotNull(blockedReason)
+    assertTrue(blockedReason!!.contains("CP"))
+  }
+
+  @Test
+  fun `emoji panel unlocks love category for joined CP partners and sends cleanly`() {
+    val joinedCp = com.example.data.model.CpRelationship(
+      id = SwarUserIdentity.cpPairId("u_one", "u_two"),
+      memberUids = listOf("u_one", "u_two"),
+      memberNames = mapOf("u_one" to "कबीर", "u_two" to "मीरा"),
+      memberNumericIds = mapOf(
+        "u_one" to SwarUserIdentity.numericIdForUid("u_one"),
+        "u_two" to SwarUserIdentity.numericIdForUid("u_two"),
+      ),
+      requesterUid = "u_one",
+      recipientUid = "u_two",
+      status = "accepted",
+      cpXp = 400L,
+      acceptedAtMs = 1_700_000_000_000L,
+    )
+    var sentEmoji: com.example.data.model.EmojiCatalogItem? = null
+    var blockedReason: String? = null
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.EmojiPanelSheet(
+          emojis = com.example.data.model.SwarCatalogDefaults.builtInEmojis,
+          isAdminUser = false,
+          isUploading = false,
+          onSelectEmoji = { sentEmoji = it },
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onDismiss = {},
+          currentUserId = "u_one",
+          acceptedCpLinks = listOf(joinedCp),
+          onBlockedCpEmoji = { blockedReason = it },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("emoji_category_tab_2").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("cp_love_emoji_banner").assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("मीरा", substring = true).onFirst().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("emoji_locked_badge_def_e9", useUnmergedTree = true).assertDoesNotExist()
+
+    composeTestRule.onNodeWithTag("emoji_item_def_e9").performClick()
+    composeTestRule.waitForIdle()
+    assertNull(blockedReason)
+    assertEquals("def_e9", sentEmoji?.id)
+  }
+
+  @Test
+  fun `profile level stays at LV1 when wallet coins are recharged high and advances strictly with earned rocket HP`() {
+    val profileState = androidx.compose.runtime.mutableStateOf<com.example.ui.viewmodel.UiState<com.example.data.model.UserProfile?>>(
+      com.example.ui.viewmodel.UiState.Success(
+        com.example.data.model.UserProfile(
+          id = "u_lvl_check",
+          userId = "u_lvl_check",
+          displayName = "राहुल",
+          coins = 50_000_000L,
+          hp = 0L,
+        )
+      )
+    )
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.ProfileScreen(
+          profileState = profileState.value,
+          isUploadingMedia = false,
+          isSupabaseConfigured = true,
+          onUploadAvatarDp = {},
+          onUpdateProfile = { _, _, _, _, _ -> },
+          onSignOut = {},
+          onClaimBonusCoins = {},
+          giftCatalog = emptyList(),
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onAllNodesWithText("LV.1 • नया स्वर", substring = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("वर्तमान HP: 0 HP", substring = true).onFirst().assertIsDisplayed()
+    assertEquals(0, composeTestRule.onAllNodesWithText("LV.120", substring = true).fetchSemanticsNodes().size)
+
+    // Earn Rocket HP -> Level converts strictly from HP
+    profileState.value = com.example.ui.viewmodel.UiState.Success(
+      com.example.data.model.UserProfile(
+        id = "u_lvl_check",
+        userId = "u_lvl_check",
+        displayName = "राहुल",
+        coins = 50_000_000L,
+        hp = 31_149L,
+      )
+    )
+    composeTestRule.waitForIdle()
+    composeTestRule.onAllNodesWithText("LV.10", substring = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("31,149 HP", substring = true).onFirst().assertIsDisplayed()
+  }
 }
 

@@ -67,6 +67,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -126,6 +127,9 @@ fun EmojiPanelSheet(
   onDismiss: () -> Unit,
   emojiUploadError: String? = null,
   onClearEmojiUploadError: () -> Unit = {},
+  currentUserId: String = "",
+  acceptedCpLinks: List<CpRelationship> = emptyList(),
+  onBlockedCpEmoji: (String) -> Unit = {},
 ) {
   val categories = SwarCatalogDefaults.emojiCategories
   var selectedCategoryIdx by remember { mutableIntStateOf(0) }
@@ -134,6 +138,10 @@ fun EmojiPanelSheet(
   var deletingDefaultEmoji by remember { mutableStateOf<EmojiCatalogItem?>(null) }
 
   val currentCategory = categories[selectedCategoryIdx]
+  val isLoveCpTabSelected = SwarCatalogDefaults.isCpLoveEmojiCategory(currentCategory)
+  val activeOwnCp = remember(currentUserId, acceptedCpLinks) {
+    SwarUserIdentity.findAcceptedCpForUser(currentUserId, acceptedCpLinks)
+  }
   val filteredEmojis = remember(emojis, currentCategory) {
     emojis.filter { it.category == currentCategory }
   }
@@ -204,17 +212,70 @@ fun EmojiPanelSheet(
         edgePadding = 12.dp,
       ) {
         categories.forEachIndexed { idx, cat ->
+          val isLoveCat = SwarCatalogDefaults.isCpLoveEmojiCategory(cat)
+          val tabLabel = when {
+            isLoveCat && activeOwnCp != null -> "$cat 💞"
+            isLoveCat -> "$cat 🔒"
+            else -> cat
+          }
           Tab(
             selected = selectedCategoryIdx == idx,
             onClick = { selectedCategoryIdx = idx },
+            modifier = Modifier.testTag("emoji_category_tab_$idx"),
             text = {
               Text(
-                text = cat,
+                text = tabLabel,
                 fontWeight = if (selectedCategoryIdx == idx) FontWeight.Bold else FontWeight.Medium,
-                color = if (selectedCategoryIdx == idx) SwarCyan else Color(0xFFB5ACDA),
+                color = when {
+                  selectedCategoryIdx == idx && isLoveCat && activeOwnCp != null -> Color(0xFFFF79B0)
+                  selectedCategoryIdx == idx && isLoveCat -> SwarCoral
+                  selectedCategoryIdx == idx -> SwarCyan
+                  else -> Color(0xFFB5ACDA)
+                },
               )
             },
           )
+        }
+      }
+
+      if (isLoveCpTabSelected) {
+        Surface(
+          color = if (activeOwnCp != null) Color(0x33E91E63) else Color(0x33FF5252),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .border(
+              width = 1.dp,
+              color = if (activeOwnCp != null) Color(0xFFFF4081) else SwarCoral.copy(alpha = 0.75f),
+              shape = RoundedCornerShape(12.dp),
+            )
+            .testTag("cp_love_emoji_banner"),
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Icon(
+              imageVector = if (activeOwnCp != null) Icons.Filled.Favorite else Icons.Filled.Lock,
+              contentDescription = null,
+              tint = if (activeOwnCp != null) Color(0xFFFF80AB) else SwarCoral,
+              modifier = Modifier.size(16.dp),
+            )
+            Text(
+              text = if (activeOwnCp != null) {
+                "अनलॉक • ${activeOwnCp.partnerNameFor(currentUserId)} के साथ जुड़ी CP ID के लिए 'प्यार' इमोजी खुले हैं!"
+              } else {
+                "केवल जुड़ी हुई CP / दोस्त ID के लिए: सिंगल ID इसे उपयोग नहीं कर सकती। पहले प्रोफ़ाइल → CP में ID जोड़ें।"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = Color.White,
+              fontWeight = FontWeight.SemiBold,
+            )
+          }
         }
       }
 
@@ -229,16 +290,27 @@ fun EmojiPanelSheet(
       ) {
         items(filteredEmojis, key = { it.id.ifBlank { "${it.category}_${it.label}" } }) { item ->
           val isCustomEmoji = !item.id.startsWith("def_") && item.createdByUid.isNotBlank()
+          val isItemLocked = SwarCatalogDefaults.isCpLoveEmojiCategory(item.category) && activeOwnCp == null
           Surface(
-            color = Color(0xFF281C4C),
+            color = if (isItemLocked) Color(0xFF211639) else Color(0xFF281C4C),
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
               .clip(RoundedCornerShape(16.dp))
-              .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+              .alpha(if (isItemLocked) 0.58f else 1f)
+              .border(
+                width = 1.dp,
+                color = if (isItemLocked) SwarCoral.copy(alpha = 0.45f) else Color(0x33FFFFFF),
+                shape = RoundedCornerShape(16.dp),
+              )
+              .testTag("emoji_item_${item.id}")
               .combinedClickable(
                 onClick = {
-                  onSelectEmoji(item)
-                  onDismiss()
+                  if (isItemLocked) {
+                    onBlockedCpEmoji("🔒 'प्यार' इमोजी केवल जुड़ी हुई दो CP / दोस्त ID के लिए अनलॉक होते हैं। पहले ID जॉइंट करें!")
+                  } else {
+                    onSelectEmoji(item)
+                    onDismiss()
+                  }
                 },
                 onLongClick = {
                   if (isAdminUser) {
@@ -263,6 +335,26 @@ fun EmojiPanelSheet(
                     contentDescription = "इमोजी संपादित करें",
                     tint = SwarCyan,
                     modifier = Modifier.size(10.dp),
+                  )
+                }
+              }
+
+              if (isItemLocked) {
+                Box(
+                  modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(SwarCoral.copy(alpha = 0.9f))
+                    .testTag("emoji_locked_badge_${item.id}"),
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = "CP के लिए लॉक्ड",
+                    tint = Color.White,
+                    modifier = Modifier.size(11.dp),
                   )
                 }
               }
@@ -1236,10 +1328,11 @@ private fun AddEmojiAdminDialog(
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           SwarCatalogDefaults.emojiCategories.forEach { cat ->
+            val labelText = if (SwarCatalogDefaults.isCpLoveEmojiCategory(cat)) "$cat (CP लॉक)" else cat
             FilterChip(
               selected = category == cat,
               onClick = { category = cat },
-              label = { Text(cat) },
+              label = { Text(labelText) },
             )
           }
         }
@@ -1713,10 +1806,11 @@ private fun EditEmojiAdminDialog(
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           SwarCatalogDefaults.emojiCategories.forEach { cat ->
+            val labelText = if (SwarCatalogDefaults.isCpLoveEmojiCategory(cat)) "$cat (CP लॉक)" else cat
             FilterChip(
               selected = category == cat,
               onClick = { category = cat },
-              label = { Text(cat) },
+              label = { Text(labelText) },
             )
           }
         }

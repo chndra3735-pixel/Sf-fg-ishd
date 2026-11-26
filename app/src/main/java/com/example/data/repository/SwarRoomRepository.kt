@@ -105,7 +105,7 @@ class SwarRoomRepository(
       "gender" to "male",
       "clubTag" to "SWAR",
       "coins" to 1500L,
-      "hp" to 1500L,
+      "hp" to 0L,
       "createdAt" to FieldValue.serverTimestamp(),
       "updatedAt" to FieldValue.serverTimestamp(),
     )
@@ -1676,7 +1676,6 @@ class SwarRoomRepository(
 
         val currentCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
         val currentHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
-        val preservedHp = maxOf(currentHp, currentCoins)
         if (currentCoins < totalCost) {
           throw IllegalStateException("कॉइंस कम हैं! इस गिफ्ट के लिए $totalCost कॉइंस चाहिए।")
         }
@@ -1725,7 +1724,7 @@ class SwarRoomRepository(
         val senderWinnerShare = winners.firstOrNull { it.uid == uid }
         val finalUserCoins = (currentCoins - totalCost + (senderWinnerShare?.rewardCoins ?: 0L))
           .coerceIn(0L, 999_999_999_999L)
-        val finalUserHp = (preservedHp + (senderWinnerShare?.rewardHp ?: 0L))
+        val finalUserHp = (currentHp + (senderWinnerShare?.rewardHp ?: 0L))
           .coerceIn(0L, 999_999_999_999L)
 
         tx.update(
@@ -1863,14 +1862,11 @@ class SwarRoomRepository(
       db.runTransaction { tx ->
         val snap = tx.get(docRef)
         val current = (snap.getLong("coins") ?: 0L).coerceAtLeast(0L)
-        val currentHp = (snap.getLong("hp") ?: 0L).coerceAtLeast(0L)
         val next = (current + safeBonus).coerceAtMost(999_999_999_999L)
-        val nextHp = maxOf(currentHp, next)
         tx.update(
           docRef,
           mapOf(
             "coins" to next,
-            "hp" to nextHp,
             "updatedAt" to FieldValue.serverTimestamp(),
           ),
         )
@@ -1963,14 +1959,11 @@ class SwarRoomRepository(
         }
         val userSnap = tx.get(userRef)
         val currentCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
-        val currentHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
         val nextCoins = (currentCoins + safeReward).coerceAtMost(999_999_999_999L)
-        val nextHp = maxOf(currentHp, nextCoins)
         tx.update(
           userRef,
           mapOf(
             "coins" to nextCoins,
-            "hp" to nextHp,
             "updatedAt" to FieldValue.serverTimestamp(),
           ),
         )
@@ -2699,6 +2692,19 @@ class SwarRoomRepository(
     )
   }
 
+  fun observeMyWinningRocketLaunches(): Flow<List<RocketLaunchEvent>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("rocket_launches").whereArrayContains("winnerUids", uid)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(RocketLaunchEvent::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "rocket_launches", uid); throw error }
+    )
+  }
+
   suspend fun claimRocketLaunchReward(launchId: String): Result<Pair<Long, Long>> = runCatching {
     val uid = requireUserId()
     val launchRef = db.collection("rocket_launches").document(launchId)
@@ -2716,9 +2722,8 @@ class SwarRoomRepository(
         val rewardHp = (launch.winnerRewardHp[uid] ?: 0L).coerceAtLeast(0L)
         val currentCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
         val currentHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
-        val preservedHp = maxOf(currentHp, currentCoins)
         val nextCoins = (currentCoins + rewardCoins).coerceIn(0L, 999_999_999_999L)
-        val nextHp = (preservedHp + rewardHp).coerceIn(0L, 999_999_999_999L)
+        val nextHp = (currentHp + rewardHp).coerceIn(0L, 999_999_999_999L)
         tx.update(
           launchRef,
           mapOf("claimedUids" to (launch.claimedUids + uid)),
