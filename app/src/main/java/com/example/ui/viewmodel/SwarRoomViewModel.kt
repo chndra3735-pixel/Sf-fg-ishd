@@ -19,6 +19,7 @@ import com.example.audio.DeviceMusicTrack
 import com.example.audio.RoomMusicPlayer
 import com.example.audio.RoomMusicState
 import com.example.audio.VoiceAudioEngine
+import com.example.data.model.AdminCoinGrantSummary
 import com.example.data.model.Conversation
 import com.example.data.model.CpRelationship
 import com.example.data.model.DirectMessage
@@ -147,6 +148,12 @@ class SwarRoomViewModel(
 
   private val _isPurgingExpiredLogs = MutableStateFlow(false)
   val isPurgingExpiredLogs: StateFlow<Boolean> = _isPurgingExpiredLogs.asStateFlow()
+
+  private val _isGrantingAdminCoins = MutableStateFlow(false)
+  val isGrantingAdminCoins: StateFlow<Boolean> = _isGrantingAdminCoins.asStateFlow()
+
+  private val _lastAdminCoinGrant = MutableStateFlow<AdminCoinGrantSummary?>(null)
+  val lastAdminCoinGrant: StateFlow<AdminCoinGrantSummary?> = _lastAdminCoinGrant.asStateFlow()
 
   // --- CP / Best-Friend Partner Linking & Progression ---
   val myCpLinks: StateFlow<List<CpRelationship>> =
@@ -2164,6 +2171,66 @@ class SwarRoomViewModel(
           }
       } finally {
         _isPurgingExpiredLogs.value = false
+      }
+    }
+  }
+
+  fun lookupAdminCoinTargetPreview(numericId: String) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन ही यूज़र वॉलेट देख सकते हैं।")
+      return
+    }
+    val cleanId = numericId.filter { it.isDigit() }
+    if (cleanId.length != 10) {
+      _events.tryEmit("कृपया सही 10 अंकों की ID दर्ज करें।")
+      return
+    }
+    viewModelScope.launch {
+      repository.fetchUserWalletPreviewByNumericId(cleanId)
+        .onSuccess { summary ->
+          _lastAdminCoinGrant.value = summary
+        }
+        .onFailure { err ->
+          _events.tryEmit(err.message ?: "यूज़र वॉलेट जानकारी नहीं मिल सकी।")
+        }
+    }
+  }
+
+  fun grantCoinsByNumericId(
+    numericId: String,
+    rawAmount: String,
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन ही कोइंस जोड़ सकते हैं।")
+      return
+    }
+    val cleanId = numericId.filter { it.isDigit() }
+    if (cleanId.length != 10) {
+      _events.tryEmit("कृपया सही 10 अंकों की ID दर्ज करें।")
+      return
+    }
+    val amount = rawAmount.filter { it.isDigit() }.toLongOrNull()
+    if (amount == null || amount !in 1L..999_999_999_999L) {
+      _events.tryEmit("कृपया 1 से 999999999999 के बीच कोइंस संख्या दर्ज करें।")
+      return
+    }
+    if (_isGrantingAdminCoins.value) return
+    viewModelScope.launch {
+      _isGrantingAdminCoins.value = true
+      try {
+        repository.addCoinsByNumericId(cleanId, amount)
+          .onSuccess { summary ->
+            _lastAdminCoinGrant.value = summary
+            val safeName = summary.displayName.ifBlank { "यूज़र" }
+            _events.tryEmit(
+              "$safeName (ID: ${summary.numericId}) के खाते में ${summary.addedCoins} कोइंस जोड़े गए! नया बैलेंस: ${summary.newBalance} कोइंस"
+            )
+          }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "कोइंस जोड़ने में त्रुटि हुई।")
+          }
+      } finally {
+        _isGrantingAdminCoins.value = false
       }
     }
   }

@@ -1552,4 +1552,117 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("music_grant_permission_button").assertIsDisplayed()
     composeTestRule.onNodeWithTag("music_library_list").assertIsDisplayed()
   }
+
+  @Test
+  fun `admin user audit dialog allows entering 10 digit ID and adding custom coins`() {
+    val targetNumericId = SwarUserIdentity.numericIdForUid("u_coin_target")
+    var lookedUpId = ""
+    var grantedId = ""
+    var grantedAmount = ""
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.AdminUserAuditDialog(
+          auditProfiles = emptyList(),
+          activityLogs = emptyList(),
+          isPurgingExpired = false,
+          onPurgeExpiredLogs = {},
+          onToggleUserBlock = { _, _, _ -> },
+          onDismiss = {},
+          lastCoinGrantSummary = com.example.data.model.AdminCoinGrantSummary(
+            targetUid = "u_coin_target",
+            numericId = targetNumericId,
+            displayName = "अमित सिंह",
+            previousCoins = 1_500L,
+            addedCoins = 250_000L,
+            newBalance = 251_500L,
+          ),
+          onLookupCoinTargetById = { id -> lookedUpId = id },
+          onGrantCoinsById = { id, amt ->
+            grantedId = id
+            grantedAmount = amt
+          },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("admin_coin_topup_card").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("audit_coin_status_banner").assertIsDisplayed()
+
+    composeTestRule.onNodeWithTag("audit_coin_id_input").performTextReplacement(targetNumericId)
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_coin_lookup_button").performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(targetNumericId, lookedUpId)
+
+    composeTestRule.onNodeWithTag("audit_coin_amount_input").performTextReplacement("250000")
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_coin_grant_button").performClick()
+    composeTestRule.waitForIdle()
+
+    assertEquals(targetNumericId, grantedId)
+    assertEquals("250000", grantedAmount)
+  }
+
+  @Test
+  fun `admin user detail view expands coin grant card and grants coins to selected user`() {
+    val numA = SwarUserIdentity.numericIdForUid("u_alpha")
+    val profiles = listOf(
+      com.example.data.model.UserAuditProfile(
+        id = "u_alpha",
+        userId = "u_alpha",
+        numericId = numA,
+        userEmail = "alpha@gmail.com",
+        displayName = "अमित सिंह",
+      ),
+    )
+    var detailLookedUpId = ""
+    var detailGrantedId = ""
+    var detailGrantedAmt = ""
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.AdminUserAuditDialog(
+          auditProfiles = profiles,
+          activityLogs = emptyList(),
+          isPurgingExpired = false,
+          onPurgeExpiredLogs = {},
+          onToggleUserBlock = { _, _, _ -> },
+          onDismiss = {},
+          lastCoinGrantSummary = com.example.data.model.AdminCoinGrantSummary(
+            targetUid = "u_alpha",
+            numericId = numA,
+            displayName = "अमित सिंह",
+            previousCoins = 2_000L,
+            addedCoins = 0L,
+            newBalance = 2_000L,
+          ),
+          onLookupCoinTargetById = { detailLookedUpId = it },
+          onGrantCoinsById = { id, amt ->
+            detailGrantedId = id
+            detailGrantedAmt = amt
+          },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_search_input").performTextInput(numA)
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_user_card_$numA").assertIsDisplayed().performClick()
+    composeTestRule.waitForIdle()
+
+    composeTestRule.onNodeWithTag("audit_detail_coin_toggle_button").performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(numA, detailLookedUpId)
+
+    composeTestRule.onNodeWithTag("audit_detail_coin_card").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("audit_detail_coin_status_banner").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("audit_detail_coin_amount_input").performTextReplacement("50000")
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("audit_detail_coin_grant_button").performClick()
+    composeTestRule.waitForIdle()
+
+    assertEquals(numA, detailGrantedId)
+    assertEquals("50000", detailGrantedAmt)
+  }
 }

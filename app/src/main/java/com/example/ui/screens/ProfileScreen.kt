@@ -76,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
+import com.example.data.model.AdminCoinGrantSummary
 import com.example.data.model.CpRelationship
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.LevelTierConfig
@@ -155,6 +156,10 @@ fun ProfileScreen(
   isPurgingExpiredLogs: Boolean = false,
   onPurgeExpiredAuditLogs: () -> Unit = {},
   onToggleUserBlockByAdmin: (targetUid: String, targetName: String, blocked: Boolean) -> Unit = { _, _, _ -> },
+  isGrantingAdminCoins: Boolean = false,
+  lastAdminCoinGrant: AdminCoinGrantSummary? = null,
+  onLookupAdminCoinTarget: (String) -> Unit = {},
+  onGrantAdminCoinsById: (numericId: String, amountText: String) -> Unit = { _, _ -> },
   activeCpLink: CpRelationship? = null,
   incomingCpRequests: List<CpRelationship> = emptyList(),
   outgoingCpRequests: List<CpRelationship> = emptyList(),
@@ -786,6 +791,10 @@ fun ProfileScreen(
       onPurgeExpiredLogs = onPurgeExpiredAuditLogs,
       onToggleUserBlock = onToggleUserBlockByAdmin,
       onDismiss = { showAdminAuditDialog = false },
+      isGrantingCoins = isGrantingAdminCoins,
+      lastCoinGrantSummary = lastAdminCoinGrant,
+      onLookupCoinTargetById = onLookupAdminCoinTarget,
+      onGrantCoinsById = onGrantAdminCoinsById,
     )
   }
 

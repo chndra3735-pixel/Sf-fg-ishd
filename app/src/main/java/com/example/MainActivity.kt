@@ -409,6 +409,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val adminAuditProfiles by viewModel.adminAuditProfiles.collectAsStateWithLifecycle()
   val adminActivityLogs by viewModel.adminActivityLogs.collectAsStateWithLifecycle()
   val isPurgingExpiredLogs by viewModel.isPurgingExpiredLogs.collectAsStateWithLifecycle()
+  val isGrantingAdminCoins by viewModel.isGrantingAdminCoins.collectAsStateWithLifecycle()
+  val lastAdminCoinGrant by viewModel.lastAdminCoinGrant.collectAsStateWithLifecycle()
   val activeRoomKickLogs by viewModel.activeRoomKickLogs.collectAsStateWithLifecycle()
   val roomMusicState by viewModel.roomMusicState.collectAsStateWithLifecycle()
   val scannedMusicTracks by viewModel.scannedMusicTracks.collectAsStateWithLifecycle()
@@ -882,6 +884,14 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           onPurgeExpiredAuditLogs = { viewModel.refreshAndPurgeExpiredAuditLogs() },
           onToggleUserBlockByAdmin = { uid, name, blocked ->
             viewModel.setUserBlockedByAdmin(uid, name, blocked)
+          },
+          isGrantingAdminCoins = isGrantingAdminCoins,
+          lastAdminCoinGrant = lastAdminCoinGrant,
+          onLookupAdminCoinTarget = { numericId ->
+            viewModel.lookupAdminCoinTargetPreview(numericId)
+          },
+          onGrantAdminCoinsById = { numericId, amountText ->
+            viewModel.grantCoinsByNumericId(numericId, amountText)
           },
           activeCpLink = activeCpLink,
           incomingCpRequests = incomingCpRequests,

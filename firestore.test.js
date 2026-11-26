@@ -780,5 +780,59 @@ test("CP linking requires partner acceptance, keeps pending private, allows acce
   await assertSucceeds(bob.collection("cp_links").doc(pairId).delete());
 });
 
+// 11. Admin Coin Grant by 10-Digit ID on Target User Profiles
+test("Verified admin can add coins to any user profile; non-admin, spoofed admin, decrement, or field tampering fail", async () => {
+  const verifiedAdmin = testEnv.authenticatedContext(ADMIN_UID, {
+    email: ADMIN_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const spoofedAdmin = testEnv.authenticatedContext("spoof_uid", {
+    email: ADMIN_EMAIL,
+    email_verified: false,
+  }).firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  await assertSucceeds(alice.collection("users").doc(ALICE_UID).set(validUserPayload(ALICE_UID)));
+
+  // Non-admin and unverified email cannot modify Alice's coins
+  await assertFails(
+    bob.collection("users").doc(ALICE_UID).update({
+      coins: 50000,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(
+    spoofedAdmin.collection("users").doc(ALICE_UID).update({
+      coins: 50000,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Admin cannot tamper with displayName or decrease coins
+  await assertFails(
+    verifiedAdmin.collection("users").doc(ALICE_UID).update({
+      displayName: "ChangedByAdmin",
+      coins: 50000,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(
+    verifiedAdmin.collection("users").doc(ALICE_UID).update({
+      coins: 100,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Verified admin succeeds adding large coin amounts (coins + updatedAt only)
+  await assertSucceeds(
+    verifiedAdmin.collection("users").doc(ALICE_UID).update({
+      coins: 5000000500,
+      updatedAt: serverTimestamp(),
+    })
+  );
+});
+
+
 
 

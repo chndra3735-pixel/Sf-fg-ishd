@@ -21,10 +21,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
@@ -32,6 +34,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MeetingRoom
+import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Search
@@ -49,6 +52,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
@@ -58,6 +62,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -71,11 +76,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.data.model.AdminCoinGrantSummary
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserActivityLog
 import com.example.data.model.UserAuditProfile
@@ -84,6 +91,7 @@ import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarDeepNight
 import com.example.ui.theme.SwarGold
+import com.example.ui.theme.SwarMint
 import com.example.ui.theme.SwarStageIndigo
 
 private data class AuditUserSummary(
@@ -124,6 +132,10 @@ fun AdminUserAuditDialog(
   onPurgeExpiredLogs: () -> Unit,
   onToggleUserBlock: (targetUid: String, targetName: String, blocked: Boolean) -> Unit,
   onDismiss: () -> Unit,
+  isGrantingCoins: Boolean = false,
+  lastCoinGrantSummary: AdminCoinGrantSummary? = null,
+  onLookupCoinTargetById: (String) -> Unit = {},
+  onGrantCoinsById: (numericId: String, amountText: String) -> Unit = { _, _ -> },
 ) {
   var searchQuery by remember { mutableStateOf("") }
   var selectedDateKey by remember { mutableStateOf<String?>(null) }
@@ -131,6 +143,8 @@ fun AdminUserAuditDialog(
   var selectedUserId by remember { mutableStateOf<String?>(null) }
   var selectedDetailTab by remember { mutableIntStateOf(0) }
   var previewImageUrl by remember { mutableStateOf<String?>(null) }
+  var coinIdInput by remember { mutableStateOf("") }
+  var coinAmountInput by remember { mutableStateOf("1000") }
 
   val todayKey = remember { AuditDateLocationHelper.dateKeyFromMillis() }
 
@@ -376,29 +390,51 @@ fun AdminUserAuditDialog(
               .testTag("audit_search_input"),
           )
 
-          if (displayedUsers.isEmpty()) {
-            Box(
-              modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-              contentAlignment = Alignment.Center,
-            ) {
-              Text(
-                text = if (selectedDateKey != null) {
-                  "इस तारीख (${AuditDateLocationHelper.formatDateDisplayFromKey(selectedDateKey!!)}) पर कोई गतिविधि रिकॉर्ड नहीं मिला।"
-                } else {
-                  "अभी कोई यूज़र ऑडिट डेटा उपलब्ध नहीं है।"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF5D657A),
-              )
+          val matchedLocalUser = remember(userSummaries, coinIdInput) {
+            val clean = coinIdInput.filter { it.isDigit() }
+            if (clean.length == 10) userSummaries.firstOrNull { it.numericId == clean } else null
+          }
+          LazyColumn(
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxSize(),
+          ) {
+            if (searchQuery.isBlank() || displayedUsers.isEmpty()) {
+              item(key = "admin_coin_topup_card") {
+                AdminCoinTopUpCard(
+                  coinIdInput = coinIdInput,
+                  onCoinIdChange = { raw -> coinIdInput = raw.filter { it.isDigit() }.take(10) },
+                  coinAmountInput = coinAmountInput,
+                  onCoinAmountChange = { raw -> coinAmountInput = raw.filter { it.isDigit() }.take(12) },
+                  matchedUserName = matchedLocalUser?.displayName,
+                  isGrantingCoins = isGrantingCoins,
+                  lastCoinGrantSummary = lastCoinGrantSummary,
+                  onLookupById = { onLookupCoinTargetById(coinIdInput) },
+                  onGrantCoins = { onGrantCoinsById(coinIdInput, coinAmountInput) },
+                )
+              }
             }
-          } else {
-            LazyColumn(
-              contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-              verticalArrangement = Arrangement.spacedBy(10.dp),
-              modifier = Modifier.fillMaxSize(),
-            ) {
+
+            if (displayedUsers.isEmpty()) {
+              item(key = "empty_audit_users") {
+                Box(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 24.dp, horizontal = 12.dp),
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Text(
+                    text = if (selectedDateKey != null) {
+                      "इस तारीख (${AuditDateLocationHelper.formatDateDisplayFromKey(selectedDateKey!!)}) पर कोई गतिविधि रिकॉर्ड नहीं मिला।"
+                    } else {
+                      "अभी कोई यूज़र ऑडिट डेटा उपलब्ध नहीं है। आप ऊपर 10 अंकों की ID डालकर सीधे कोइंस जोड़ सकते हैं।"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF5D657A),
+                  )
+                }
+              }
+            } else {
               items(displayedUsers, key = { it.userId }) { user ->
                 AuditUserSummaryCard(
                   user = user,
@@ -407,6 +443,21 @@ fun AdminUserAuditDialog(
                     selectedUserId = user.userId
                   },
                 )
+              }
+              if (searchQuery.isNotBlank()) {
+                item(key = "admin_coin_topup_card") {
+                  AdminCoinTopUpCard(
+                    coinIdInput = coinIdInput,
+                    onCoinIdChange = { raw -> coinIdInput = raw.filter { it.isDigit() }.take(10) },
+                    coinAmountInput = coinAmountInput,
+                    onCoinAmountChange = { raw -> coinAmountInput = raw.filter { it.isDigit() }.take(12) },
+                    matchedUserName = matchedLocalUser?.displayName,
+                    isGrantingCoins = isGrantingCoins,
+                    lastCoinGrantSummary = lastCoinGrantSummary,
+                    onLookupById = { onLookupCoinTargetById(coinIdInput) },
+                    onGrantCoins = { onGrantCoinsById(coinIdInput, coinAmountInput) },
+                  )
+                }
               }
             }
           }
@@ -423,6 +474,10 @@ fun AdminUserAuditDialog(
               )
             },
             onPreviewImage = { previewImageUrl = it },
+            isGrantingCoins = isGrantingCoins,
+            lastCoinGrantSummary = lastCoinGrantSummary,
+            onLookupCoinTargetById = onLookupCoinTargetById,
+            onGrantCoinsById = onGrantCoinsById,
           )
         }
       }
@@ -625,13 +680,221 @@ private fun AuditMiniStatPill(
 }
 
 @Composable
+private fun AdminCoinTopUpCard(
+  coinIdInput: String,
+  onCoinIdChange: (String) -> Unit,
+  coinAmountInput: String,
+  onCoinAmountChange: (String) -> Unit,
+  matchedUserName: String?,
+  isGrantingCoins: Boolean,
+  lastCoinGrantSummary: AdminCoinGrantSummary?,
+  onLookupById: () -> Unit,
+  onGrantCoins: () -> Unit,
+) {
+  val cleanId = coinIdInput.filter { it.isDigit() }
+  val isValidId = cleanId.length == 10
+  val parsedAmount = coinAmountInput.filter { it.isDigit() }.toLongOrNull()
+  val isValidAmount = parsedAmount != null && parsedAmount in 1L..999_999_999_999L
+  val previewForCurrentId = lastCoinGrantSummary?.takeIf { it.numericId == cleanId && cleanId.length == 10 }
+
+  Card(
+    shape = RoundedCornerShape(16.dp),
+    colors = CardDefaults.cardColors(containerColor = Color.White),
+    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    modifier = Modifier
+      .fillMaxWidth()
+      .border(1.2.dp, SwarGold.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
+      .testTag("admin_coin_topup_card"),
+  ) {
+    Column(
+      modifier = Modifier.padding(14.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Surface(
+          shape = CircleShape,
+          color = SwarGold.copy(alpha = 0.2f),
+          modifier = Modifier.size(34.dp),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Filled.MonetizationOn,
+              contentDescription = null,
+              tint = Color(0xFFB77900),
+              modifier = Modifier.size(20.dp),
+            )
+          }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "10-अंक ID से कोइंस जोड़ें",
+            style = MaterialTheme.typography.titleSmall,
+            color = Color(0xFF171A23),
+            fontWeight = FontWeight.ExtraBold,
+          )
+          Text(
+            text = "किसी भी यूज़र की 10 अंकों की ID डालकर तुरंत अनलिमिटेड कोइंस भेजें",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF5D657A),
+          )
+        }
+      }
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        OutlinedTextField(
+          value = coinIdInput,
+          onValueChange = onCoinIdChange,
+          label = { Text("10 अंकों की ID") },
+          placeholder = { Text("उदा. 4829103756") },
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier
+            .weight(1f)
+            .testTag("audit_coin_id_input"),
+        )
+        OutlinedButton(
+          onClick = onLookupById,
+          enabled = isValidId && !isGrantingCoins,
+          shape = RoundedCornerShape(12.dp),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
+          modifier = Modifier.testTag("audit_coin_lookup_button"),
+        ) {
+          Text("जांचें", fontWeight = FontWeight.Bold)
+        }
+      }
+
+      if (!matchedUserName.isNullOrBlank() && previewForCurrentId == null) {
+        Text(
+          text = "लक्ष्य यूज़र: $matchedUserName (ID: $cleanId)",
+          style = MaterialTheme.typography.labelSmall,
+          color = Color(0xFF006CB5),
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+
+      OutlinedTextField(
+        value = coinAmountInput,
+        onValueChange = onCoinAmountChange,
+        label = { Text("जोड़ने के लिए कोइंस की संख्या") },
+        placeholder = { Text("जितना चाहे उतना कोइंस डालें") },
+        leadingIcon = {
+          Icon(Icons.Filled.MonetizationOn, contentDescription = null, tint = Color(0xFFD99000))
+        },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+          .fillMaxWidth()
+          .testTag("audit_coin_amount_input"),
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        val presets = listOf(500L, 1_000L, 10_000L, 100_000L)
+        presets.forEach { preset ->
+          FilterChip(
+            selected = coinAmountInput == preset.toString(),
+            onClick = { onCoinAmountChange(preset.toString()) },
+            label = {
+              Text(
+                text = "+$preset",
+                maxLines = 1,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+              )
+            },
+            colors = FilterChipDefaults.filterChipColors(
+              selectedContainerColor = Color(0xFFFFF3CD),
+              selectedLabelColor = Color(0xFF946200),
+            ),
+            modifier = Modifier
+              .weight(1f)
+              .testTag("audit_coin_preset_$preset"),
+          )
+        }
+      }
+
+      if (lastCoinGrantSummary != null) {
+        val statusText = if (lastCoinGrantSummary.addedCoins > 0L) {
+          "✅ ${lastCoinGrantSummary.displayName} (ID: ${lastCoinGrantSummary.numericId}) में +${lastCoinGrantSummary.addedCoins} कोइंस जोड़े गए • नया बैलेंस: ${lastCoinGrantSummary.newBalance} कोइंस"
+        } else {
+          "👤 ${lastCoinGrantSummary.displayName} (ID: ${lastCoinGrantSummary.numericId}) • मौजूदा बैलेंस: ${lastCoinGrantSummary.newBalance} कोइंस"
+        }
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = if (lastCoinGrantSummary.addedCoins > 0L) Color(0xFFEAF9EF) else Color(0xFFEDF7FF),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("audit_coin_status_banner"),
+        ) {
+          Text(
+            text = statusText,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (lastCoinGrantSummary.addedCoins > 0L) Color(0xFF145E2C) else Color(0xFF004F87),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+          )
+        }
+      }
+
+      Button(
+        onClick = onGrantCoins,
+        enabled = isValidId && isValidAmount && !isGrantingCoins,
+        colors = ButtonDefaults.buttonColors(
+          containerColor = Color(0xFF1B873F),
+          contentColor = Color.White,
+        ),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+          .fillMaxWidth()
+          .testTag("audit_coin_grant_button"),
+      ) {
+        if (isGrantingCoins) {
+          CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("कोइंस जोड़े जा रहे हैं...", fontWeight = FontWeight.Bold)
+        } else {
+          Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(6.dp))
+          Text("कोइंस जोड़ें", fontWeight = FontWeight.ExtraBold)
+        }
+      }
+    }
+  }
+}
+
+@Composable
 private fun AdminAuditUserDetailView(
   user: AuditUserSummary,
   selectedTab: Int,
   onTabSelected: (Int) -> Unit,
   onToggleBlock: () -> Unit,
   onPreviewImage: (String) -> Unit,
+  isGrantingCoins: Boolean = false,
+  lastCoinGrantSummary: AdminCoinGrantSummary? = null,
+  onLookupCoinTargetById: (String) -> Unit = {},
+  onGrantCoinsById: (numericId: String, amountText: String) -> Unit = { _, _ -> },
 ) {
+  var showCoinBox by remember(user.userId) { mutableStateOf(false) }
+  var detailCoinAmount by remember(user.userId) { mutableStateOf("1000") }
+  val detailPreview = lastCoinGrantSummary?.takeIf { it.numericId == user.numericId }
+
+  LaunchedEffect(showCoinBox, user.numericId) {
+    if (showCoinBox && user.numericId.length == 10) {
+      onLookupCoinTargetById(user.numericId)
+    }
+  }
+
   Column(modifier = Modifier.fillMaxSize()) {
     // Identity & Block Control Card
     Surface(color = Color.White, modifier = Modifier.fillMaxWidth()) {
@@ -667,27 +930,52 @@ private fun AdminAuditUserDetailView(
               )
             }
           }
-          Button(
-            onClick = onToggleBlock,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = if (user.isBlockedByAdmin) Color(0xFF1B873F) else SwarCoral,
-              contentColor = Color.White,
-            ),
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-            modifier = Modifier.testTag("audit_toggle_block_button"),
+          Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
           ) {
-            Icon(
-              imageVector = if (user.isBlockedByAdmin) Icons.Filled.CheckCircle else Icons.Filled.Block,
-              contentDescription = null,
-              modifier = Modifier.size(16.dp),
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-              text = if (user.isBlockedByAdmin) "अनब्लॉक" else "ब्लॉक करें",
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = FontWeight.Bold,
-            )
+            Button(
+              onClick = onToggleBlock,
+              colors = ButtonDefaults.buttonColors(
+                containerColor = if (user.isBlockedByAdmin) Color(0xFF1B873F) else SwarCoral,
+                contentColor = Color.White,
+              ),
+              shape = RoundedCornerShape(12.dp),
+              contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+              modifier = Modifier.testTag("audit_toggle_block_button"),
+            ) {
+              Icon(
+                imageVector = if (user.isBlockedByAdmin) Icons.Filled.CheckCircle else Icons.Filled.Block,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+              )
+              Spacer(modifier = Modifier.width(4.dp))
+              Text(
+                text = if (user.isBlockedByAdmin) "अनब्लॉक" else "ब्लॉक करें",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+              )
+            }
+            OutlinedButton(
+              onClick = { showCoinBox = !showCoinBox },
+              shape = RoundedCornerShape(12.dp),
+              contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+              modifier = Modifier.testTag("audit_detail_coin_toggle_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.MonetizationOn,
+                contentDescription = null,
+                tint = Color(0xFFD99000),
+                modifier = Modifier.size(16.dp),
+              )
+              Spacer(modifier = Modifier.width(4.dp))
+              Text(
+                text = if (showCoinBox) "कोइंस बंद" else "कोइंस जोड़ें",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF946200),
+              )
+            }
           }
         }
 
@@ -707,6 +995,115 @@ private fun AdminAuditUserDetailView(
               style = MaterialTheme.typography.labelSmall,
               color = Color(0xFF333B4E),
             )
+          }
+        }
+
+        if (showCoinBox) {
+          val parsedDetailAmount = detailCoinAmount.filter { it.isDigit() }.toLongOrNull()
+          val isDetailAmountValid = parsedDetailAmount != null && parsedDetailAmount in 1L..999_999_999_999L
+          Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBF0)),
+            modifier = Modifier
+              .fillMaxWidth()
+              .border(1.dp, SwarGold.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+              .testTag("audit_detail_coin_card"),
+          ) {
+            Column(
+              modifier = Modifier.padding(12.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(
+                  text = "इस यूज़र को कोइंस जोड़ें (ID: ${user.numericId})",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = Color(0xFF7D5200),
+                  fontWeight = FontWeight.ExtraBold,
+                  modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                  onClick = { onLookupCoinTargetById(user.numericId) },
+                  enabled = user.numericId.length == 10 && !isGrantingCoins,
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                  modifier = Modifier.testTag("audit_detail_coin_lookup_button"),
+                ) {
+                  Text("बैलेंस जांचें", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+              }
+
+              if (detailPreview != null) {
+                val msg = if (detailPreview.addedCoins > 0L) {
+                  "✅ +${detailPreview.addedCoins} कोइंस जोड़े गए • नया बैलेंस: ${detailPreview.newBalance} कोइंस"
+                } else {
+                  "मौजूदा बैलेंस: ${detailPreview.newBalance} कोइंस"
+                }
+                Surface(
+                  shape = RoundedCornerShape(8.dp),
+                  color = if (detailPreview.addedCoins > 0L) Color(0xFFEAF9EF) else Color(0xFFEDF7FF),
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("audit_detail_coin_status_banner"),
+                ) {
+                  Text(
+                    text = msg,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (detailPreview.addedCoins > 0L) Color(0xFF145E2C) else Color(0xFF004F87),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                  )
+                }
+              }
+
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                listOf(500L, 1_000L, 10_000L, 100_000L).forEach { preset ->
+                  FilterChip(
+                    selected = detailCoinAmount == preset.toString(),
+                    onClick = { detailCoinAmount = preset.toString() },
+                    label = { Text("+$preset", style = MaterialTheme.typography.labelSmall) },
+                    modifier = Modifier.weight(1f),
+                  )
+                }
+              }
+
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                OutlinedTextField(
+                  value = detailCoinAmount,
+                  onValueChange = { raw -> detailCoinAmount = raw.filter { it.isDigit() }.take(12) },
+                  label = { Text("कोइंस संख्या") },
+                  singleLine = true,
+                  keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier
+                    .weight(1f)
+                    .testTag("audit_detail_coin_amount_input"),
+                )
+                Button(
+                  onClick = { onGrantCoinsById(user.numericId, detailCoinAmount) },
+                  enabled = user.numericId.length == 10 && isDetailAmountValid && !isGrantingCoins,
+                  colors = ButtonDefaults.buttonColors(
+                    containerColor = SwarMint,
+                    contentColor = Color(0xFF0A2E1A),
+                  ),
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier.testTag("audit_detail_coin_grant_button"),
+                ) {
+                  Text(
+                    text = if (isGrantingCoins) "..." else "जोड़ें",
+                    fontWeight = FontWeight.ExtraBold,
+                  )
+                }
+              }
+            }
           }
         }
       }

@@ -46,7 +46,7 @@ service cloud.firestore {
              data.bio is string && data.bio.size() <= 160 &&
              data.gender in ['male', 'female', 'other'] &&
              data.clubTag is string && data.clubTag.size() <= 16 &&
-             data.coins is int && data.coins >= 0 && data.coins <= 999999999 &&
+             data.coins is int && data.coins >= 0 && data.coins <= 999999999999 &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
     }
@@ -323,11 +323,15 @@ service cloud.firestore {
 
       allow update: if isSignedIn() &&
                        isValidId(userId) &&
-                       request.auth.uid == userId &&
                        isValidUserProfile(incoming()) &&
                        incoming().userId == existing().userId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'updatedAt']);
+                       incoming().createdAt == existing().createdAt && (
+                         (request.auth.uid == userId &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'updatedAt'])) ||
+                         (isAdmin() &&
+                          incoming().coins >= existing().coins &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'updatedAt']))
+                       );
 
       allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
     }

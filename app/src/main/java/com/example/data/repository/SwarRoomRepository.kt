@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.data.model.AdminCoinGrantSummary
 import com.example.data.model.Conversation
 import com.example.data.model.CpRelationship
 import com.example.data.model.DirectMessage
@@ -2082,6 +2083,125 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  private suspend fun resolveUserForAdminCoinAction(cleanId: String): NumericIdLookup {
+    val lookupRef = db.collection("numeric_id_lookup").document(cleanId)
+    val lookupSnap = try {
+      lookupRef.get().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.GET, lookupRef.path)
+      null
+    }
+    val fromLookup = lookupSnap?.takeIf { it.exists() }
+      ?.toObject(NumericIdLookup::class.java, ServerTimestampBehavior.ESTIMATE)
+    if (fromLookup != null && fromLookup.userId.isNotBlank()) {
+      return fromLookup
+    }
+
+    val auditQuery = db.collection("user_audit_profiles")
+      .whereEqualTo("numericId", cleanId)
+      .limit(1)
+    val auditSnap = try {
+      auditQuery.get().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.LIST, "user_audit_profiles")
+      null
+    }
+    val auditDoc = auditSnap?.documents?.firstOrNull()
+    val auditProfile = auditDoc?.toObject(UserAuditProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+    if (auditProfile != null && auditProfile.userId.isNotBlank()) {
+      return NumericIdLookup(
+        userId = auditProfile.userId,
+        numericId = cleanId,
+        displayName = auditProfile.displayName,
+        avatarUrl = auditProfile.avatarUrl,
+      )
+    }
+
+    throw IllegalStateException("10 अंकों की ID $cleanId वाला कोई सक्रिय यूज़र नहीं मिला।")
+  }
+
+  suspend fun fetchUserWalletPreviewByNumericId(numericId: String): Result<AdminCoinGrantSummary> = runCatching {
+    requireUserId()
+    val cleanId = numericId.filter { it.isDigit() }
+    require(cleanId.length == 10) { "कृपया सही 10 अंकों की ID दर्ज करें।" }
+    val target = resolveUserForAdminCoinAction(cleanId)
+    val userRef = db.collection("users").document(target.userId)
+    val snap = try {
+      userRef.get().await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.GET, userRef.path)
+      throw e
+    }
+    if (!snap.exists()) {
+      throw IllegalStateException("इस यूज़र की वॉलेट प्रोफ़ाइल अभी सक्रिय नहीं है।")
+    }
+    val currentCoins = snap.getLong("coins") ?: 0L
+    AdminCoinGrantSummary(
+      targetUid = target.userId,
+      numericId = cleanId,
+      displayName = snap.getString("displayName")?.ifBlank { target.displayName } ?: target.displayName.ifBlank { "Swar User" },
+      avatarUrl = snap.getString("avatarUrl")?.ifBlank { target.avatarUrl } ?: target.avatarUrl,
+      previousCoins = currentCoins,
+      addedCoins = 0L,
+      newBalance = currentCoins,
+    )
+  }
+
+  suspend fun addCoinsByNumericId(
+    numericId: String,
+    amountToAdd: Long,
+  ): Result<AdminCoinGrantSummary> = runCatching {
+    requireUserId()
+    val cleanId = numericId.filter { it.isDigit() }
+    require(cleanId.length == 10) { "कृपया सही 10 अंकों की ID दर्ज करें।" }
+    require(amountToAdd in 1L..999_999_999_999L) { "कृपया 1 से अधिक सही कोइंस संख्या दर्ज करें।" }
+
+    val target = resolveUserForAdminCoinAction(cleanId)
+    val userRef = db.collection("users").document(target.userId)
+
+    try {
+      db.runTransaction { tx ->
+        val userSnap = tx.get(userRef)
+        if (!userSnap.exists()) {
+          throw IllegalStateException("इस यूज़र की वॉलेट प्रोफ़ाइल अभी सक्रिय नहीं है।")
+        }
+        val prevCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
+        val nextCoins = (prevCoins + amountToAdd).coerceIn(prevCoins, 999_999_999_999L)
+        val actualAdded = (nextCoins - prevCoins).coerceAtLeast(0L)
+        if (actualAdded <= 0L) {
+          throw IllegalStateException("यह खाता अधिकतम कोइंस सीमा पर पहुँच चुका है।")
+        }
+        tx.update(
+          userRef,
+          mapOf(
+            "coins" to nextCoins,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        AdminCoinGrantSummary(
+          targetUid = target.userId,
+          numericId = cleanId,
+          displayName = userSnap.getString("displayName")?.ifBlank { target.displayName } ?: target.displayName.ifBlank { "Swar User" },
+          avatarUrl = userSnap.getString("avatarUrl")?.ifBlank { target.avatarUrl } ?: target.avatarUrl,
+          previousCoins = prevCoins,
+          addedCoins = actualAdded,
+          newBalance = nextCoins,
+        )
+      }.await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, userRef.path)
       throw e
     }
   }

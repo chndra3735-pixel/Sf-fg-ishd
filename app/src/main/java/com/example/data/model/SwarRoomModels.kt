@@ -296,6 +296,17 @@ data class NumericIdLookup(
 )
 
 @androidx.annotation.Keep
+data class AdminCoinGrantSummary(
+  val targetUid: String = "",
+  val numericId: String = "",
+  val displayName: String = "",
+  val avatarUrl: String = "",
+  val previousCoins: Long = 0L,
+  val addedCoins: Long = 0L,
+  val newBalance: Long = 0L,
+)
+
+@androidx.annotation.Keep
 @IgnoreExtraProperties
 data class CpRelationship(
   @DocumentId val id: String = "",
