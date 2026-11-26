@@ -72,6 +72,12 @@ class VoiceAudioEngine(private val appContext: Context) {
   @Volatile
   private var currentIsBroadcaster: Boolean = false
 
+  @Volatile
+  private var isMusicMixingActive: Boolean = false
+
+  @Volatile
+  private var currentMusicVolumePercent: Int = 75
+
   private val _audioLevel = MutableStateFlow(0f)
   val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
 
@@ -101,11 +107,13 @@ class VoiceAudioEngine(private val appContext: Context) {
       Log.d(TAG, "Agora joined channel=$channel uid=$uid")
       _isAgoraConnected.value = true
       _agoraStatusText.value = "Agora लाइव वॉइस कनेक्टेड"
+      applySpeakerOutputAndRouting(rtcEngine)
     }
 
     override fun onRejoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
       _isAgoraConnected.value = true
       _agoraStatusText.value = "Agora लाइव वॉइस कनेक्टेड"
+      applySpeakerOutputAndRouting(rtcEngine)
     }
 
     override fun onConnectionLost() {
@@ -115,6 +123,7 @@ class VoiceAudioEngine(private val appContext: Context) {
 
     override fun onLeaveChannel(stats: RtcStats?) {
       _isAgoraConnected.value = false
+      isMusicMixingActive = false
       _audioLevel.value = 0f
       _isSpeaking.value = false
     }
@@ -193,9 +202,9 @@ class VoiceAudioEngine(private val appContext: Context) {
         setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
         enableAudio()
         enableAudioVolumeIndication(200, 3, true)
-        setDefaultAudioRoutetoSpeakerphone(currentSpeakerEnabled)
-        setEnableSpeakerphone(currentSpeakerEnabled)
-        enableInEarMonitoring(monitorLoopbackEnabled)
+        setDefaultAudioRoutetoSpeakerphone(true)
+        setEnableSpeakerphone(true)
+        applySpeakerOutputAndRouting(this)
       }.also { engine ->
         rtcEngine = engine
       }
@@ -228,7 +237,11 @@ class VoiceAudioEngine(private val appContext: Context) {
     activeChannelName = safeChannel
 
     if (!isTokenServerConfigured) {
-      val options = buildMediaOptions(isBroadcaster = isBroadcaster, isMuted = isMuted)
+      val options = buildMediaOptions(
+        isBroadcaster = isBroadcaster,
+        isMuted = isMuted,
+        musicMixingActive = isMusicMixingActive,
+      )
       val rc = engine.joinChannel(null, safeChannel, 0, options)
       handleJoinResult(engine, rc, isBroadcaster, isMuted, "testing")
       return
@@ -243,7 +256,11 @@ class VoiceAudioEngine(private val appContext: Context) {
           val latestBroadcaster = currentIsBroadcaster
           val latestMuted = currentBroadcasterMuted
           lastJoinedRole = requestedRole
-          val options = buildMediaOptions(isBroadcaster = latestBroadcaster, isMuted = latestMuted)
+          val options = buildMediaOptions(
+            isBroadcaster = latestBroadcaster,
+            isMuted = latestMuted,
+            musicMixingActive = isMusicMixingActive,
+          )
           val rc = engine.joinChannel(fetched.token, safeChannel, fetched.uid, options)
           handleJoinResult(engine, rc, latestBroadcaster, latestMuted, requestedRole)
         }
@@ -270,9 +287,16 @@ class VoiceAudioEngine(private val appContext: Context) {
       } else {
         "Agora चैनल से जुड़ रहा है..."
       }
-      engine.muteLocalAudioStream(!isBroadcaster || isMuted)
-      engine.enableLocalAudio(isBroadcaster && !isMuted)
-      _isCapturing.value = isBroadcaster && !isMuted
+      val policy = resolveAudioPublishPolicy(
+        isSeated = isBroadcaster,
+        isMuted = isMuted,
+        musicMixingActive = isMusicMixingActive,
+      )
+      engine.adjustRecordingSignalVolume(policy.recordingSignalVolume)
+      engine.enableLocalAudio(policy.enableLocalAudio)
+      engine.muteLocalAudioStream(policy.muteLocalAudioStream)
+      applySpeakerOutputAndRouting(engine)
+      _isCapturing.value = policy.isMicCapturing
     } else {
       Log.w(TAG, "Agora joinChannel returned error code=$rc")
       _agoraStatusText.value = "Agora चैनल जॉइन त्रुटि: $rc"
@@ -314,15 +338,25 @@ class VoiceAudioEngine(private val appContext: Context) {
   }
 
   private fun applyRoleAndMediaOptions(engine: RtcEngine, isSeated: Boolean, isMuted: Boolean) {
-    val effectivePublish = isSeated && !isMuted
-    val options = buildMediaOptions(isBroadcaster = isSeated, isMuted = isMuted)
+    val policy = resolveAudioPublishPolicy(
+      isSeated = isSeated,
+      isMuted = isMuted,
+      musicMixingActive = isMusicMixingActive,
+    )
+    val options = buildMediaOptions(
+      isBroadcaster = isSeated,
+      isMuted = isMuted,
+      musicMixingActive = isMusicMixingActive,
+    )
     engine.setClientRole(
-      if (isSeated) Constants.CLIENT_ROLE_BROADCASTER else Constants.CLIENT_ROLE_AUDIENCE
+      if (policy.clientRoleBroadcaster) Constants.CLIENT_ROLE_BROADCASTER else Constants.CLIENT_ROLE_AUDIENCE
     )
     engine.updateChannelMediaOptions(options)
-    engine.enableLocalAudio(effectivePublish)
-    engine.muteLocalAudioStream(!effectivePublish)
-    _isCapturing.value = effectivePublish
+    engine.adjustRecordingSignalVolume(policy.recordingSignalVolume)
+    engine.enableLocalAudio(policy.enableLocalAudio)
+    engine.muteLocalAudioStream(policy.muteLocalAudioStream)
+    applySpeakerOutputAndRouting(engine)
+    _isCapturing.value = policy.isMicCapturing
   }
 
   fun leaveRoomVoice() {
@@ -332,6 +366,7 @@ class VoiceAudioEngine(private val appContext: Context) {
     lastJoinedRole = "subscriber"
     currentIsBroadcaster = false
     currentBroadcasterMuted = true
+    isMusicMixingActive = false
     _isAgoraConnected.value = false
     if (isAgoraConfigured) {
       runCatching {
@@ -350,31 +385,85 @@ class VoiceAudioEngine(private val appContext: Context) {
   fun startMusicMixing(filePath: String, volumePercent: Int): Boolean {
     val engine = rtcEngine ?: return false
     if (!canBroadcastMixingAudio) return false
+    val safeVol = volumePercent.coerceIn(0, 100)
+    currentMusicVolumePercent = safeVol
     return runCatching {
+      isMusicMixingActive = true
+      // Keep local audio publish stream active (with mic recording volume=0 if muted) so everyone hears the music
+      applyRoleAndMediaOptions(
+        engine = engine,
+        isSeated = currentIsBroadcaster,
+        isMuted = currentBroadcasterMuted,
+      )
       val rc = engine.startAudioMixing(filePath, false, 1, 0)
       if (rc == 0) {
-        engine.adjustAudioMixingVolume(volumePercent.coerceIn(0, 100))
+        engine.adjustAudioMixingPublishVolume(safeVol)
+        engine.adjustAudioMixingPlayoutVolume(if (currentSpeakerEnabled) safeVol else 0)
         true
       } else {
+        isMusicMixingActive = false
+        applyRoleAndMediaOptions(
+          engine = engine,
+          isSeated = currentIsBroadcaster,
+          isMuted = currentBroadcasterMuted,
+        )
         false
       }
-    }.getOrDefault(false)
+    }.getOrElse {
+      isMusicMixingActive = false
+      false
+    }
   }
 
   fun pauseMusicMixing() {
-    runCatching { rtcEngine?.pauseAudioMixing() }
+    isMusicMixingActive = false
+    runCatching {
+      val engine = rtcEngine ?: return
+      engine.pauseAudioMixing()
+      applyRoleAndMediaOptions(
+        engine = engine,
+        isSeated = currentIsBroadcaster,
+        isMuted = currentBroadcasterMuted,
+      )
+    }
   }
 
   fun resumeMusicMixing() {
-    runCatching { rtcEngine?.resumeAudioMixing() }
+    val engine = rtcEngine ?: return
+    if (!canBroadcastMixingAudio) return
+    isMusicMixingActive = true
+    runCatching {
+      applyRoleAndMediaOptions(
+        engine = engine,
+        isSeated = currentIsBroadcaster,
+        isMuted = currentBroadcasterMuted,
+      )
+      engine.resumeAudioMixing()
+      engine.adjustAudioMixingPublishVolume(currentMusicVolumePercent)
+      engine.adjustAudioMixingPlayoutVolume(if (currentSpeakerEnabled) currentMusicVolumePercent else 0)
+    }
   }
 
   fun stopMusicMixing() {
-    runCatching { rtcEngine?.stopAudioMixing() }
+    isMusicMixingActive = false
+    runCatching {
+      val engine = rtcEngine ?: return
+      engine.stopAudioMixing()
+      applyRoleAndMediaOptions(
+        engine = engine,
+        isSeated = currentIsBroadcaster,
+        isMuted = currentBroadcasterMuted,
+      )
+    }
   }
 
   fun setMusicMixingVolume(volumePercent: Int) {
-    runCatching { rtcEngine?.adjustAudioMixingVolume(volumePercent.coerceIn(0, 100)) }
+    val safeVol = volumePercent.coerceIn(0, 100)
+    currentMusicVolumePercent = safeVol
+    runCatching {
+      rtcEngine?.adjustAudioMixingPublishVolume(safeVol)
+      rtcEngine?.adjustAudioMixingPlayoutVolume(if (currentSpeakerEnabled) safeVol else 0)
+    }
   }
 
   private data class FetchedToken(val token: String, val uid: Int)
@@ -433,29 +522,52 @@ class VoiceAudioEngine(private val appContext: Context) {
       }
     }
 
-  private fun buildMediaOptions(isBroadcaster: Boolean, isMuted: Boolean): ChannelMediaOptions {
-    val publishMic = isBroadcaster && !isMuted
+  private fun buildMediaOptions(
+    isBroadcaster: Boolean,
+    isMuted: Boolean,
+    musicMixingActive: Boolean,
+  ): ChannelMediaOptions {
+    val policy = resolveAudioPublishPolicy(
+      isSeated = isBroadcaster,
+      isMuted = isMuted,
+      musicMixingActive = musicMixingActive,
+    )
     return ChannelMediaOptions().apply {
       channelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
-      clientRoleType = if (isBroadcaster) {
+      clientRoleType = if (policy.clientRoleBroadcaster) {
         Constants.CLIENT_ROLE_BROADCASTER
       } else {
         Constants.CLIENT_ROLE_AUDIENCE
       }
-      publishMicrophoneTrack = publishMic
-      autoSubscribeAudio = true
+      publishMicrophoneTrack = policy.publishMicrophoneTrack
+      autoSubscribeAudio = currentSpeakerEnabled
     }
   }
 
   fun setSpeakerphone(enabled: Boolean) {
     currentSpeakerEnabled = enabled
+    applySpeakerOutputAndRouting(rtcEngine)
+  }
+
+  private fun applySpeakerOutputAndRouting(engine: RtcEngine? = rtcEngine) {
+    val speakerOn = currentSpeakerEnabled
     runCatching {
-      rtcEngine?.setDefaultAudioRoutetoSpeakerphone(enabled)
-      rtcEngine?.setEnableSpeakerphone(enabled)
+      // ALWAYS force audio route to the Main Loudspeaker ("बड़ा वाला स्पीकर"), NEVER fallback to calling earpiece ("छोटा वाला स्पीकर")!
+      engine?.setDefaultAudioRoutetoSpeakerphone(true)
+      engine?.setEnableSpeakerphone(true)
       val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
       audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
       @Suppress("DEPRECATION")
-      audioManager?.isSpeakerphoneOn = enabled
+      audioManager?.isSpeakerphoneOn = true
+
+      // When muted (speakerOn=false), silence ALL incoming remote streams + local music playout completely!
+      engine?.muteAllRemoteAudioStreams(!speakerOn)
+      engine?.adjustPlaybackSignalVolume(if (speakerOn) 100 else 0)
+      if (isMusicMixingActive) {
+        engine?.adjustAudioMixingPublishVolume(currentMusicVolumePercent)
+        engine?.adjustAudioMixingPlayoutVolume(if (speakerOn) currentMusicVolumePercent else 0)
+      }
+      engine?.enableInEarMonitoring(speakerOn && monitorLoopbackEnabled)
     }.onFailure { Log.w(TAG, "Speaker toggle warning: ${it.message}") }
   }
 
@@ -551,7 +663,7 @@ class VoiceAudioEngine(private val appContext: Context) {
               _isSpeaking.value = false
             }
 
-            if (monitorLoopbackEnabled && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+            if (currentSpeakerEnabled && monitorLoopbackEnabled && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
               track.write(pcmBuffer, 0, readCount)
             }
           }
@@ -596,7 +708,50 @@ class VoiceAudioEngine(private val appContext: Context) {
     scope.cancel()
   }
 
-  private companion object {
+  internal data class AudioPublishPolicy(
+    val clientRoleBroadcaster: Boolean,
+    val publishMicrophoneTrack: Boolean,
+    val enableLocalAudio: Boolean,
+    val muteLocalAudioStream: Boolean,
+    val recordingSignalVolume: Int,
+    val isMicCapturing: Boolean,
+  )
+
+  internal companion object {
     const val TAG = "VoiceAudioEngine"
+
+    /**
+     * Resolves Agora publishing state:
+     * - When seated and mic is unmuted: mic + optional music both publish.
+     * - When seated and mic is muted WHILE music is playing: keep local audio stream unmuted with
+     *   recordingSignalVolume=0 so music continues reaching every room listener while voice stays muted!
+     * - When seated and mic is muted WITHOUT music (or off seat): mute local stream completely.
+     */
+    fun resolveAudioPublishPolicy(
+      isSeated: Boolean,
+      isMuted: Boolean,
+      musicMixingActive: Boolean,
+    ): AudioPublishPolicy {
+      if (!isSeated) {
+        return AudioPublishPolicy(
+          clientRoleBroadcaster = false,
+          publishMicrophoneTrack = false,
+          enableLocalAudio = false,
+          muteLocalAudioStream = true,
+          recordingSignalVolume = 0,
+          isMicCapturing = false,
+        )
+      }
+      val micUnmuted = !isMuted
+      val shouldPublishAudio = micUnmuted || musicMixingActive
+      return AudioPublishPolicy(
+        clientRoleBroadcaster = true,
+        publishMicrophoneTrack = shouldPublishAudio,
+        enableLocalAudio = shouldPublishAudio,
+        muteLocalAudioStream = !shouldPublishAudio,
+        recordingSignalVolume = if (micUnmuted) 100 else 0,
+        isMicCapturing = micUnmuted,
+      )
+    }
   }
 }

@@ -1782,6 +1782,10 @@ class ExampleRobolectricTest {
     }
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("room_rocket_widget").assertIsDisplayed()
+    val rocketBounds = composeTestRule.onNodeWithTag("room_rocket_widget").fetchSemanticsNode().boundsInRoot
+    val giftBounds = composeTestRule.onNodeWithTag("open_gift_panel_button").fetchSemanticsNode().boundsInRoot
+    assertTrue("Rocket should sit above Gift Box", rocketBounds.bottom <= giftBounds.top)
+    assertTrue("Rocket should sit above Gift Box at right edge", rocketBounds.right >= giftBounds.left)
     composeTestRule.onNodeWithTag("room_rocket_level_text", useUnmergedTree = true).assertIsDisplayed()
     composeTestRule.onNodeWithTag("room_rocket_top3_dps", useUnmergedTree = true).assertIsDisplayed()
     composeTestRule.onNodeWithTag("rocket_top3_dp_slot_1", useUnmergedTree = true).assertIsDisplayed()
@@ -1841,6 +1845,115 @@ class ExampleRobolectricTest {
     } finally {
       composeTestRule.mainClock.autoAdvance = true
     }
+  }
+
+  @Test
+  fun `voice room shows mic badge on seat DP only when muted and hides it when unmuted`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_mic_badge",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "ऑडियो टेस्ट रूम",
+      roomCode = "445566",
+      seatCount = 6L,
+    )
+    val seats = listOf(
+      com.example.data.model.RoomSeat(
+        id = "seat_0",
+        roomId = "room_mic_badge",
+        seatIndex = 0L,
+        occupantUid = "host_1",
+        occupantName = "म्यूट होस्ट",
+        isMuted = true,
+      ),
+      com.example.data.model.RoomSeat(
+        id = "seat_1",
+        roomId = "room_mic_badge",
+        seatIndex = 1L,
+        occupantUid = "cohost_2",
+        occupantName = "अनम्यूट कोहोस्ट",
+        isMuted = false,
+      ),
+      com.example.data.model.RoomSeat(
+        id = "seat_2",
+        roomId = "room_mic_badge",
+        seatIndex = 2L,
+        occupantUid = "guest_3",
+        occupantName = "म्यूट गेस्ट",
+        isMuted = true,
+      ),
+      com.example.data.model.RoomSeat(
+        id = "seat_3",
+        roomId = "room_mic_badge",
+        seatIndex = 3L,
+        occupantUid = "guest_4",
+        occupantName = "अनम्यूट गेस्ट",
+        isMuted = false,
+      ),
+    )
+
+    var speakerState = true
+    composeTestRule.setContent {
+      val isSpeakerOn = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = room,
+          seats = seats,
+          messages = emptyList(),
+          currentUserId = "viewer_1",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 1000L,
+          emojiCatalog = emptyList(),
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = null,
+          isMicMuted = true,
+          isSpeakerOn = isSpeakerOn.value,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {
+            isSpeakerOn.value = !isSpeakerOn.value
+            speakerState = isSpeakerOn.value
+          },
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+
+    // Muted host & guest DPs show the muted badge; unmuted host & guest DPs hide it completely
+    composeTestRule.onNodeWithTag("host_seat_muted_badge_0", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("host_seat_muted_badge_1", useUnmergedTree = true).assertDoesNotExist()
+    composeTestRule.onNodeWithTag("guest_seat_muted_badge_2", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("guest_seat_muted_badge_3", useUnmergedTree = true).assertDoesNotExist()
+
+    composeTestRule.onNodeWithTag("room_speaker_toggle").assertIsDisplayed().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(false, speakerState)
+    composeTestRule.onNodeWithTag("room_speaker_toggle").performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(true, speakerState)
   }
 }
 

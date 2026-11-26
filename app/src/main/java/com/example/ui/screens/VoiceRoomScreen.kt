@@ -766,68 +766,58 @@ fun VoiceRoomScreen(
         hostPairCp?.let { SwarUserIdentity.cpLevelInfoFor(it.cpXp, it.acceptedAtMs) }
       }
 
-      Row(
+      Box(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+          .padding(horizontal = 16.dp, vertical = 6.dp),
       ) {
-        Box(
-          modifier = Modifier.weight(1f),
+        if (hostPairInfo != null) {
+          AdjacentCpSeatBridgeCanvas(
+            info = hostPairInfo,
+            startCenterFractionX = 0.34f,
+            endCenterFractionX = 0.66f,
+            modifier = Modifier.matchParentSize(),
+          )
+        }
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          if (hostPairInfo != null) {
-            AdjacentCpSeatBridgeCanvas(
-              info = hostPairInfo,
-              startCenterFractionX = 0.34f,
-              endCenterFractionX = 0.66f,
-              modifier = Modifier.matchParentSize(),
-            )
-          }
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            topSeats.forEach { topSeat ->
-              val occUid = topSeat.occupantUid
-              val occFrameUrl = if (occUid.isNotBlank()) {
-                val occHp = if (occUid == currentUserId) {
-                  effectiveOwnHp
-                } else {
-                  SwarUserIdentity.effectiveHpForProfile(userProfiles[occUid])
-                }
-                SwarUserIdentity.highestUnlockedFrameUrl(
-                  SwarUserIdentity.levelForCoins(occHp).level,
-                  levelConfigs,
-                )
-              } else ""
-              val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
-              HostSeatBadge(
-                seat = topSeat,
-                emptyLabel = if (topSeat.seatIndex == 0L) "होस्ट सीट 1" else "होस्ट सीट 2",
-                localLevel = if (topSeat.occupantUid == currentUserId) micAudioLevel else 0f,
-                frameUrl = occFrameUrl,
-                activeEmoji = topSeat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
-                isCpLinked = isCpPartnerSeated,
-                onClick = { openSeatOrProfileSheet(topSeat) },
+          topSeats.forEach { topSeat ->
+            val occUid = topSeat.occupantUid
+            val occFrameUrl = if (occUid.isNotBlank()) {
+              val occHp = if (occUid == currentUserId) {
+                effectiveOwnHp
+              } else {
+                SwarUserIdentity.effectiveHpForProfile(userProfiles[occUid])
+              }
+              SwarUserIdentity.highestUnlockedFrameUrl(
+                SwarUserIdentity.levelForCoins(occHp).level,
+                levelConfigs,
               )
-            }
-          }
-          if (hostPairInfo != null && topSeats.size >= 2) {
-            AdjacentCpFloatingCrest(
-              info = hostPairInfo,
-              tag = "cp_adjacent_bridge_${topSeats[0].seatIndex}_${topSeats[1].seatIndex}",
-              modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 2.dp),
+            } else ""
+            val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
+            HostSeatBadge(
+              seat = topSeat,
+              emptyLabel = if (topSeat.seatIndex == 0L) "होस्ट सीट 1" else "होस्ट सीट 2",
+              localLevel = if (topSeat.occupantUid == currentUserId) micAudioLevel else 0f,
+              frameUrl = occFrameUrl,
+              activeEmoji = topSeat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
+              isCpLinked = isCpPartnerSeated,
+              onClick = { openSeatOrProfileSheet(topSeat) },
             )
           }
         }
-        Spacer(modifier = Modifier.width(6.dp))
-        RoomRocketCompactWidget(
-          rocketState = roomRocketState,
-          onOpenDetails = { showRocketDetailsDialog = true },
-        )
+        if (hostPairInfo != null && topSeats.size >= 2) {
+          AdjacentCpFloatingCrest(
+            info = hostPairInfo,
+            tag = "cp_adjacent_bridge_${topSeats[0].seatIndex}_${topSeats[1].seatIndex}",
+            modifier = Modifier
+              .align(Alignment.TopCenter)
+              .padding(top = 2.dp),
+          )
+        }
       }
 
       // Multi-Seat Voice Grid (5 columns per row with smooth cross-seat CP Aura Animation when friends sit side-by-side)
@@ -927,8 +917,8 @@ fun VoiceRoomScreen(
         }
       }
 
-      // Real-time Room Chat Stream (Screenshot 1 lower overlay)
-      Column(
+      // Real-time Room Chat Stream + Rocket Widget positioned directly above Gift Box
+      Box(
         modifier = Modifier
           .fillMaxWidth()
           .height(172.dp)
@@ -936,7 +926,9 @@ fun VoiceRoomScreen(
       ) {
         LazyColumn(
           state = listState,
-          modifier = Modifier.fillMaxSize(),
+          modifier = Modifier
+            .fillMaxSize()
+            .padding(end = 114.dp),
           verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           item(key = "welcome_banner") {
@@ -985,6 +977,14 @@ fun VoiceRoomScreen(
             )
           }
         }
+
+        RoomRocketCompactWidget(
+          rocketState = roomRocketState,
+          onOpenDetails = { showRocketDetailsDialog = true },
+          modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(bottom = 2.dp),
+        )
       }
 
       // Quick reaction space handled by EmojiPanelSheet modal below
@@ -1083,12 +1083,13 @@ fun VoiceRoomScreen(
           },
         )
 
-        // Speaker Toggle
+        // Speaker Toggle (Main Loudspeaker Mute / Unmute — never earpiece!)
         RoomRoundActionButton(
           icon = if (isSpeakerOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-          description = "स्पीकर टॉगल",
-          tint = if (isSpeakerOn) SwarCyan else Color.White,
+          description = if (isSpeakerOn) "रूम आवाज़ म्यूट करें" else "रूम आवाज़ चालू करें",
+          tint = if (isSpeakerOn) SwarCyan else SwarCoral,
           containerColor = Color(0x66000000),
+          modifier = Modifier.testTag("room_speaker_toggle"),
           onClick = onToggleSpeaker,
         )
 
@@ -2419,20 +2420,23 @@ private fun HostSeatBadge(
             )
           }
         }
-        Box(
-          modifier = Modifier
-            .align(Alignment.BottomEnd)
-            .size(18.dp)
-            .clip(CircleShape)
-            .background(if (seat?.isMuted == true) SwarCoral else SwarCyan),
-          contentAlignment = Alignment.Center,
-        ) {
-          Icon(
-            imageVector = if (seat?.isMuted == true) Icons.Filled.MicOff else Icons.Filled.Mic,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(11.dp),
-          )
+        if (seat?.isMuted == true) {
+          Box(
+            modifier = Modifier
+              .align(Alignment.BottomEnd)
+              .size(18.dp)
+              .clip(CircleShape)
+              .background(SwarCoral)
+              .testTag("host_seat_muted_badge_${seat.seatIndex}"),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              imageVector = Icons.Filled.MicOff,
+              contentDescription = "माइक म्यूट है",
+              tint = Color.White,
+              modifier = Modifier.size(11.dp),
+            )
+          }
         }
       } else {
         Box(
@@ -2520,20 +2524,23 @@ private fun GuestSeatTile(
             )
           }
         }
-        Box(
-          modifier = Modifier
-            .align(Alignment.BottomEnd)
-            .size(18.dp)
-            .clip(CircleShape)
-            .background(if (seat.isMuted) SwarCoral else SwarMint),
-          contentAlignment = Alignment.Center,
-        ) {
-          Icon(
-            imageVector = if (seat.isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(11.dp),
-          )
+        if (seat.isMuted) {
+          Box(
+            modifier = Modifier
+              .align(Alignment.BottomEnd)
+              .size(18.dp)
+              .clip(CircleShape)
+              .background(SwarCoral)
+              .testTag("guest_seat_muted_badge_${seat.seatIndex}"),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              imageVector = Icons.Filled.MicOff,
+              contentDescription = "माइक म्यूट है",
+              tint = Color.White,
+              modifier = Modifier.size(11.dp),
+            )
+          }
         }
       } else {
         Box(

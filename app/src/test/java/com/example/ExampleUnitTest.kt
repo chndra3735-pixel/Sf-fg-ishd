@@ -618,5 +618,51 @@ class ExampleUnitTest {
     assertEquals(7_080L, info.levelSpanHp)
     assertEquals(7_080L, info.nextLevelRemainingCoins)
   }
+
+  @Test
+  fun audioPublishPolicy_keepsMusicBroadcastingWhenMicIsMutedAndSilencesWhenNoMusic() {
+    val unmutedNoMusic = com.example.audio.VoiceAudioEngine.resolveAudioPublishPolicy(
+      isSeated = true,
+      isMuted = false,
+      musicMixingActive = false,
+    )
+    assertTrue(unmutedNoMusic.clientRoleBroadcaster)
+    assertTrue(unmutedNoMusic.publishMicrophoneTrack)
+    assertFalse(unmutedNoMusic.muteLocalAudioStream)
+    assertEquals(100, unmutedNoMusic.recordingSignalVolume)
+    assertTrue(unmutedNoMusic.isMicCapturing)
+
+    val mutedWithMusic = com.example.audio.VoiceAudioEngine.resolveAudioPublishPolicy(
+      isSeated = true,
+      isMuted = true,
+      musicMixingActive = true,
+    )
+    assertTrue(mutedWithMusic.clientRoleBroadcaster)
+    assertTrue(mutedWithMusic.publishMicrophoneTrack)
+    assertTrue(mutedWithMusic.enableLocalAudio)
+    assertFalse(mutedWithMusic.muteLocalAudioStream)
+    assertEquals(0, mutedWithMusic.recordingSignalVolume)
+    assertFalse(mutedWithMusic.isMicCapturing)
+
+    val mutedNoMusic = com.example.audio.VoiceAudioEngine.resolveAudioPublishPolicy(
+      isSeated = true,
+      isMuted = true,
+      musicMixingActive = false,
+    )
+    assertTrue(mutedNoMusic.clientRoleBroadcaster)
+    assertFalse(mutedNoMusic.publishMicrophoneTrack)
+    assertFalse(mutedNoMusic.enableLocalAudio)
+    assertTrue(mutedNoMusic.muteLocalAudioStream)
+    assertEquals(0, mutedNoMusic.recordingSignalVolume)
+    assertFalse(mutedNoMusic.isMicCapturing)
+
+    val audienceWithMusic = com.example.audio.VoiceAudioEngine.resolveAudioPublishPolicy(
+      isSeated = false,
+      isMuted = true,
+      musicMixingActive = true,
+    )
+    assertFalse(audienceWithMusic.clientRoleBroadcaster)
+    assertTrue(audienceWithMusic.muteLocalAudioStream)
+  }
 }
 

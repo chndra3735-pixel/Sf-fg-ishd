@@ -37,6 +37,8 @@ class RoomMusicPlayer(
 
   private var mediaPlayer: MediaPlayer? = null
   private var cachedTrackFile: File? = null
+  @Volatile
+  private var isSpeakerMuted: Boolean = false
 
   suspend fun playFromUri(uri: Uri, preferredTitle: String = ""): Result<String> = withContext(Dispatchers.IO) {
     runCatching {
@@ -74,7 +76,7 @@ class RoomMusicPlayer(
           onTrackCompleted()
         }
         prepare()
-        val scalar = volume / 100f
+        val scalar = if (isSpeakerMuted) 0f else (volume / 100f)
         setVolume(scalar, scalar)
         start()
       }
@@ -125,7 +127,13 @@ class RoomMusicPlayer(
     if (cur.usingRoomBroadcast) {
       audioEngine.setMusicMixingVolume(safe)
     }
-    val scalar = safe / 100f
+    val scalar = if (isSpeakerMuted) 0f else (safe / 100f)
+    runCatching { mediaPlayer?.setVolume(scalar, scalar) }
+  }
+
+  fun setSpeakerMuted(muted: Boolean) {
+    isSpeakerMuted = muted
+    val scalar = if (muted) 0f else (_state.value.volumePercent.coerceIn(0, 100) / 100f)
     runCatching { mediaPlayer?.setVolume(scalar, scalar) }
   }
 

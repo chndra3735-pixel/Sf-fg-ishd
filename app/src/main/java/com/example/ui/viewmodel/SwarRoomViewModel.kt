@@ -1158,6 +1158,7 @@ class SwarRoomViewModel(
       runCatching { ctx.startService(Intent(ctx, SeatCleanupService::class.java)) }
     }
     audioEngine.setSpeakerphone(_isSpeakerOn.value)
+    roomMusicPlayer.setSpeakerMuted(!_isSpeakerOn.value)
     audioEngine.joinRoomVoice(
       roomId = roomId,
       isBroadcaster = false,
@@ -1708,6 +1709,7 @@ class SwarRoomViewModel(
     val next = !_isSpeakerOn.value
     _isSpeakerOn.value = next
     audioEngine.setSpeakerphone(next)
+    roomMusicPlayer.setSpeakerMuted(!next)
   }
 
   fun toggleMonitorLoopback() {
