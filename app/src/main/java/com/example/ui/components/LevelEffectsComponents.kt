@@ -665,8 +665,10 @@ fun LevelTierDetailConfiguratorDialog(
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,
               )
+              val targetHp = SwarUserIdentity.requiredHpForLevel(tier.minLevel)
               Text(
-                text = if (isUnlocked) "अनलॉक ✓ (लाइव एनीमेशन सक्रिय)" else "लॉक्ड • LV.${tier.minLevel} पर खुलेगा",
+                text = if (isUnlocked) "अनलॉक ✓ (लाइव एनीमेशन सक्रिय)"
+                else "लॉक्ड • LV.${tier.minLevel} पर खुलेगा (${SwarUserIdentity.formatIndianNumber(targetHp)} HP)",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (isUnlocked) SwarMint else SwarGold,
               )

@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -75,10 +77,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.data.model.LevelRoadmapMilestone
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.LevelTierSpec
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserLevelInfo
+import com.example.ui.theme.SwarCoral
 import com.example.ui.theme.SwarCyan
 import com.example.ui.theme.SwarGold
 import com.example.ui.theme.SwarMint
@@ -424,9 +428,9 @@ fun LevelTierLargeCard(
             color = Color(0xFFE5E2F5),
             maxLines = 1,
           )
-          val requiredCoins = (tier.minLevel - 1) * 1000L
+          val requiredCoins = SwarUserIdentity.requiredHpForLevel(tier.minLevel)
           Text(
-            text = if (requiredCoins == 0L) tier.titleHindi else "${tier.titleHindi} • ${requiredCoins / 1000}K+",
+            text = if (requiredCoins == 0L) tier.titleHindi else "${tier.titleHindi} • ${SwarUserIdentity.formatIndianNumber(requiredCoins)} HP",
             fontSize = 10.sp,
             color = if (isCurrentTier) SwarGold else Color(0xFF9C96BE),
             fontWeight = if (isCurrentTier) FontWeight.SemiBold else FontWeight.Normal,
@@ -550,6 +554,7 @@ fun LevelCardsShowcaseDialog(
   val currentTier = remember(levelInfo.level) { SwarUserIdentity.tierForLevel(levelInfo.level) }
   var selectedTier by remember(levelInfo.level) { mutableStateOf(currentTier) }
   var detailTier by remember { mutableStateOf<LevelTierSpec?>(null) }
+  var selectedShowcaseTab by remember { mutableStateOf(0) }
 
   val cardShimmer = rememberInfiniteTransition(label = "levelGridShimmer")
   val shimmerFraction by cardShimmer.animateFloat(
@@ -671,10 +676,17 @@ fun LevelCardsShowcaseDialog(
                   fontWeight = FontWeight.Bold,
                 )
                 Text(
-                  text = "कुल कॉइंस: $coins",
+                  text = "वर्तमान HP: ${SwarUserIdentity.formatIndianNumber(coins)} • आधा: ${SwarUserIdentity.formatHalfHp(coins)}",
                   style = MaterialTheme.typography.labelMedium,
                   color = Color(0xFFD5D0EE),
                 )
+                if (levelInfo.level < 120) {
+                  Text(
+                    text = "इस स्तर में: ${SwarUserIdentity.formatIndianNumber(levelInfo.intoLevelHp)} / ${SwarUserIdentity.formatIndianNumber(levelInfo.levelSpanHp)} HP",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SwarCyan,
+                  )
+                }
               }
             }
 
@@ -690,9 +702,9 @@ fun LevelCardsShowcaseDialog(
 
             Text(
               text = if (levelInfo.level >= 120) {
-                "बधाई हो! आप सर्वोच्च LV.120 स्तर पर हैं।"
+                "बधाई हो! आप सर्वोच्च LV.120 (${SwarUserIdentity.formatIndianNumber(SwarUserIdentity.MAX_LEVEL_120_HP)} HP) स्तर पर हैं।"
               } else {
-                "अगले स्तर (LV.${levelInfo.level + 1}) के लिए ${levelInfo.nextLevelRemainingCoins} कॉइंस और चाहिए।"
+                "अगले स्तर (LV.${levelInfo.level + 1}) के लिए ${SwarUserIdentity.formatIndianNumber(levelInfo.nextLevelRemainingCoins)} HP और चाहिए (लक्ष्य: ${SwarUserIdentity.formatIndianNumber(levelInfo.nextLevelTargetHp)} HP)"
               },
               style = MaterialTheme.typography.labelSmall,
               color = Color(0xFFBDB6E2),
@@ -700,45 +712,118 @@ fun LevelCardsShowcaseDialog(
           }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // Large Adaptive Cards Grid for all 13 Level Tiers with live rewards preview
-        LazyVerticalGrid(
-          columns = GridCells.Adaptive(minSize = 152.dp),
-          modifier = Modifier
-            .weight(1f)
-            .fillMaxWidth()
-            .testTag("level_cards_grid"),
-          contentPadding = PaddingValues(bottom = 8.dp),
-          horizontalArrangement = Arrangement.spacedBy(10.dp),
-          verticalArrangement = Arrangement.spacedBy(10.dp),
+        // Compact 2-Tab Pill Switcher: Level Cards (13) vs Progression Roadmap (LV.1-120)
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          items(tiers, key = { it.badgeLevel }) { tier ->
-            val isCurrent = levelInfo.level in tier.minLevel..tier.maxLevel
-            val isUnlocked = levelInfo.level >= tier.minLevel
-            val tierConfig = levelConfigs[tier.badgeLevel] ?: LevelTierConfig(badgeLevel = tier.badgeLevel.toLong())
-            LevelTierLargeCard(
-              tier = tier,
-              config = tierConfig,
-              isCurrentTier = isCurrent,
-              isUnlocked = isUnlocked,
-              isSelected = selectedTier.badgeLevel == tier.badgeLevel,
-              isAdminUser = isAdminUser,
-              sampleAvatarUrl = sampleAvatarUrl,
-              sampleDisplayName = sampleDisplayName,
-              shimmerFraction = shimmerFraction,
-              onClick = {
-                selectedTier = tier
-                detailTier = tier
-              },
-            )
+          Surface(
+            onClick = { selectedShowcaseTab = 0 },
+            shape = RoundedCornerShape(12.dp),
+            color = if (selectedShowcaseTab == 0) SwarGold else Color(0xFF211B40),
+            modifier = Modifier
+              .weight(1f)
+              .border(
+                1.dp,
+                if (selectedShowcaseTab == 0) SwarGold else Color(0xFF3A3068),
+                RoundedCornerShape(12.dp),
+              )
+              .testTag("level_cards_tab"),
+          ) {
+            Box(
+              modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              Text(
+                text = "🏅 लेवल कार्ड्स (${tiers.size})",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selectedShowcaseTab == 0) Color(0xFF2B1800) else Color(0xFFD5D0EE),
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
           }
+          Surface(
+            onClick = { selectedShowcaseTab = 1 },
+            shape = RoundedCornerShape(12.dp),
+            color = if (selectedShowcaseTab == 1) SwarCyan else Color(0xFF211B40),
+            modifier = Modifier
+              .weight(1f)
+              .border(
+                1.dp,
+                if (selectedShowcaseTab == 1) SwarCyan else Color(0xFF3A3068),
+                RoundedCornerShape(12.dp),
+              )
+              .testTag("level_roadmap_tab"),
+          ) {
+            Box(
+              modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              Text(
+                text = "📊 HP रोडमैप (LV.1–120)",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selectedShowcaseTab == 1) Color(0xFF002030) else Color(0xFFD5D0EE),
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (selectedShowcaseTab == 0) {
+          // Large Adaptive Cards Grid for all 13 Level Tiers with live rewards preview
+          LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 152.dp),
+            modifier = Modifier
+              .weight(1f)
+              .fillMaxWidth()
+              .testTag("level_cards_grid"),
+            contentPadding = PaddingValues(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            items(tiers, key = { it.badgeLevel }) { tier ->
+              val isCurrent = levelInfo.level in tier.minLevel..tier.maxLevel
+              val isUnlocked = levelInfo.level >= tier.minLevel
+              val tierConfig = levelConfigs[tier.badgeLevel] ?: LevelTierConfig(badgeLevel = tier.badgeLevel.toLong())
+              LevelTierLargeCard(
+                tier = tier,
+                config = tierConfig,
+                isCurrentTier = isCurrent,
+                isUnlocked = isUnlocked,
+                isSelected = selectedTier.badgeLevel == tier.badgeLevel,
+                isAdminUser = isAdminUser,
+                sampleAvatarUrl = sampleAvatarUrl,
+                sampleDisplayName = sampleDisplayName,
+                shimmerFraction = shimmerFraction,
+                onClick = {
+                  selectedTier = tier
+                  detailTier = tier
+                },
+              )
+            }
+          }
+        } else {
+          LevelHpRoadmapList(
+            coins = coins,
+            currentLevel = levelInfo.level,
+            modifier = Modifier
+              .weight(1f)
+              .fillMaxWidth(),
+          )
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
         // Selected Tier Quick Open Bar
-        val minRequiredCoins = (selectedTier.minLevel - 1) * 1000L
+        val minRequiredCoins = SwarUserIdentity.requiredHpForLevel(selectedTier.minLevel)
         Surface(
           onClick = { detailTier = selectedTier },
           shape = RoundedCornerShape(14.dp),
@@ -764,7 +849,7 @@ fun LevelCardsShowcaseDialog(
                 text = if (minRequiredCoins == 0L) {
                   "शुरुआती स्तर — सभी नए सदस्यों के लिए खुला"
                 } else {
-                  "अनलॉक लक्ष्य: $minRequiredCoins कॉइंस"
+                  "अनलॉक लक्ष्य: ${SwarUserIdentity.formatIndianNumber(minRequiredCoins)} HP"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFFACA5D6),
@@ -812,5 +897,287 @@ fun LevelCardsShowcaseDialog(
       onClaimRewardCoins = onClaimTierReward,
       onSaveTierConfig = onSaveTierConfig,
     )
+  }
+}
+
+@Composable
+private fun LevelHpRoadmapList(
+  coins: Long,
+  currentLevel: Int,
+  modifier: Modifier = Modifier,
+) {
+  val milestones = SwarUserIdentity.levelRoadmapMilestones
+  val maxHp = SwarUserIdentity.MAX_LEVEL_120_HP
+  val overallProgress = (coins.toFloat() / maxHp.toFloat()).coerceIn(0f, 1f)
+
+  LazyColumn(
+    modifier = modifier.testTag("level_roadmap_list"),
+    contentPadding = PaddingValues(bottom = 12.dp),
+    verticalArrangement = Arrangement.spacedBy(4.dp),
+  ) {
+    item(key = "roadmap_summary_progress") {
+      Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF1E173B),
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(bottom = 6.dp)
+          .border(1.dp, SwarCyan.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
+      ) {
+        Column(
+          modifier = Modifier.padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              text = "कुल सफ़र (LV.1 → LV.120)",
+              style = MaterialTheme.typography.labelLarge,
+              color = Color.White,
+              fontWeight = FontWeight.ExtraBold,
+            )
+            Text(
+              text = "${(overallProgress * 100f).toInt()}% • लक्ष्य ${SwarUserIdentity.formatIndianNumber(maxHp)} HP",
+              style = MaterialTheme.typography.labelSmall,
+              color = SwarGold,
+              fontWeight = FontWeight.Bold,
+            )
+          }
+          LinearProgressIndicator(
+            progress = { overallProgress },
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(7.dp)
+              .clip(RoundedCornerShape(4.dp)),
+            color = SwarGold,
+            trackColor = Color(0xFF332A5B),
+          )
+        }
+      }
+    }
+
+    milestones.forEachIndexed { idx, m ->
+      val nextMilestoneLevel = milestones.getOrNull(idx + 1)?.level
+      val showCurrentPositionAfterThis = if (nextMilestoneLevel != null) {
+        currentLevel >= m.level && currentLevel < nextMilestoneLevel
+      } else {
+        currentLevel >= m.level
+      }
+
+      if (m.deltaFromPrevious > 0L) {
+        item(key = "roadmap_delta_${m.level}") {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(start = 24.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Box(
+              modifier = Modifier
+                .width(2.5.dp)
+                .height(22.dp)
+                .background(
+                  if (coins >= m.totalHp) SwarMint else Color(0xFF473C78),
+                  RoundedCornerShape(2.dp),
+                ),
+            )
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = Color(0xFF241D48),
+            ) {
+              Text(
+                text = "▼ +${SwarUserIdentity.formatIndianNumber(m.deltaFromPrevious)} HP",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (coins >= m.totalHp) SwarMint else Color(0xFFB5ACDA),
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+              )
+            }
+          }
+        }
+      }
+
+      item(key = "roadmap_node_${m.level}") {
+        val tier = SwarUserIdentity.tierForLevel(m.level)
+        val reached = coins >= m.totalHp
+        Surface(
+          shape = RoundedCornerShape(14.dp),
+          color = if (reached) Color(0xFF231D46) else Color(0xFF191433),
+          modifier = Modifier
+            .fillMaxWidth()
+            .border(
+              1.dp,
+              if (reached) tier.rimColor.copy(alpha = 0.65f) else Color(0xFF312A56),
+              RoundedCornerShape(14.dp),
+            )
+            .testTag("roadmap_milestone_${m.level}"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            Surface(
+              shape = RoundedCornerShape(10.dp),
+              color = tier.capsuleBottomColor.copy(alpha = 0.85f),
+              modifier = Modifier.border(1.dp, tier.rimColor, RoundedCornerShape(10.dp)),
+            ) {
+              Text(
+                text = "LV.${m.level}",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+              )
+            }
+
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text(
+                  text = if (m.level == 1) "शुरुआत: 0 HP" else "कुल HP: ${SwarUserIdentity.formatIndianNumber(m.totalHp)}",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = Color.White,
+                  fontWeight = FontWeight.Bold,
+                )
+                if (m.level == 120) {
+                  Text(
+                    text = "(अंतिम लक्ष्य)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SwarGold,
+                    fontWeight = FontWeight.ExtraBold,
+                  )
+                }
+              }
+              Text(
+                text = if (m.level == 1) {
+                  "${tier.titleHindi} • प्रारंभिक पड़ाव"
+                } else {
+                  "आधा (50%): ${SwarUserIdentity.formatHalfHp(m.totalHp)} HP • ${tier.titleHindi}"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (reached) SwarCyan else Color(0xFFA7A0CE),
+              )
+            }
+
+            Icon(
+              imageVector = if (reached) Icons.Filled.CheckCircle else Icons.Filled.Lock,
+              contentDescription = if (reached) "पूर्ण" else "लॉक्ड",
+              tint = if (reached) SwarMint else Color(0xFF6B658E),
+              modifier = Modifier.size(18.dp),
+            )
+          }
+        }
+      }
+
+      if (showCurrentPositionAfterThis) {
+        item(key = "roadmap_current_status") {
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF33250B),
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(vertical = 3.dp)
+              .border(1.2.dp, SwarGold, RoundedCornerShape(12.dp))
+              .testTag("roadmap_current_status_banner"),
+          ) {
+            val curInfo = SwarUserIdentity.levelForCoins(coins)
+            val neededLabel = if (curInfo.level >= 120) {
+              "सर्वोच्च LV.120 पूर्ण"
+            } else {
+              "अगले LV.${curInfo.level + 1} के लिए ${SwarUserIdentity.formatIndianNumber(curInfo.nextLevelRemainingCoins)} HP और चाहिए"
+            }
+            Column(
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+              verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+              Text(
+                text = "★ आपकी वर्तमान स्थिति: LV.$currentLevel (कुल HP: ${SwarUserIdentity.formatIndianNumber(coins)} | आधा: ${SwarUserIdentity.formatHalfHp(coins)})",
+                style = MaterialTheme.typography.labelMedium,
+                color = SwarGold,
+                fontWeight = FontWeight.ExtraBold,
+              )
+              Text(
+                text = neededLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = SwarCyan,
+                fontWeight = FontWeight.Bold,
+              )
+            }
+          }
+        }
+      }
+
+      if (m.isHalfwayZoneAfter) {
+        item(key = "roadmap_halfway_lv85") {
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF122C3D),
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(vertical = 3.dp)
+              .border(1.dp, SwarCyan, RoundedCornerShape(12.dp))
+              .testTag("roadmap_halfway_banner"),
+          ) {
+            Text(
+              text = "◆ पूरे 120 लेवल का ठीक आधा (50%) पड़ाव ≈ LV.85 (${SwarUserIdentity.formatHalfHp(maxHp)} HP)",
+              style = MaterialTheme.typography.labelSmall,
+              color = SwarCyan,
+              fontWeight = FontWeight.ExtraBold,
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+          }
+        }
+      }
+    }
+
+    item(key = "roadmap_key_points") {
+      Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF1D163A),
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(top = 8.dp)
+          .border(1.dp, Color(0xFF3B3068), RoundedCornerShape(14.dp)),
+      ) {
+        Column(
+          modifier = Modifier.padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+          Text(
+            text = "डायग्राम के मुख्य बिंदु (10-10 लेवल के अंतर से)",
+            style = MaterialTheme.typography.labelLarge,
+            color = SwarGold,
+            fontWeight = FontWeight.ExtraBold,
+          )
+          Text(
+            text = "• शुरुआती रफ़्तार (LV.1 से LV.30): पहले 10 लेवल में सिर्फ 31,149 HP, और LV.20 से LV.30 के बीच 1,89,714 HP।",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFD5D0EE),
+          )
+          Text(
+            text = "• मध्यम पड़ाव (LV.30 से LV.80): हर 10 लेवल के ब्लॉक में लगभग 65,800 HP अतिरिक्त जुड़ते जाते हैं।",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFD5D0EE),
+          )
+          Text(
+            text = "• आधा सफ़र (50% बंटवारा): LV.120 (47,78,163 HP) का ठीक आधा (23,89,081.5 HP) LV.85 पर पूरा होता है।",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFD5D0EE),
+          )
+          Text(
+            text = "• अंतिम छलाँग (LV.110 से LV.120): आखिरी 10 लेवल में 7,58,410 HP की आवश्यकता पड़ती है।",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFD5D0EE),
+          )
+        }
+      }
+    }
   }
 }

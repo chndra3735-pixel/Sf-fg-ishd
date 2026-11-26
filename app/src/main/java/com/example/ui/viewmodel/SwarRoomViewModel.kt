@@ -28,9 +28,11 @@ import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
+import com.example.data.model.RocketLaunchEvent
 import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
+import com.example.data.model.RoomRocketState
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
@@ -467,6 +469,19 @@ class SwarRoomViewModel(
       else repository.observeRoomKickLogs(roomId).catch { emit(emptyList()) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
+  val activeRoomRocket: StateFlow<RoomRocketState?> =
+    _activeRoomId.flatMapLatest { roomId ->
+      if (roomId == null) flowOf(null)
+      else repository.observeRoomRocket(roomId).catch { emit(null) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), null)
+
+  private val _activeRocketLaunchEvent = MutableStateFlow<RocketLaunchEvent?>(null)
+  val activeRocketLaunchEvent: StateFlow<RocketLaunchEvent?> = _activeRocketLaunchEvent.asStateFlow()
+
+  private val seenRocketLaunchIds = mutableSetOf<String>()
+  private val claimingRocketLaunchIds = mutableSetOf<String>()
+  private var handledInitialRocketLaunchToken = -1L
+
   private val seenKickLogIds = mutableSetOf<String>()
 
   private val _isMicMuted = MutableStateFlow(true)
@@ -818,6 +833,71 @@ class SwarRoomViewModel(
         }
       }
     }
+    // Observe Rocket Launches in active room: trigger full-screen launch+blast animation & auto-claim Top-3 rewards
+    viewModelScope.launch {
+      _activeRoomId.flatMapLatest { roomId ->
+        if (roomId == null) {
+          flowOf(null)
+        } else {
+          val visitToken = activeRoomVisitToken
+          repository.observeRoomRocketLaunches(roomId)
+            .catch { emit(emptyList()) }
+            .map { launches -> Triple(visitToken, roomId, launches) }
+        }
+      }.collect { payload ->
+        if (payload == null) return@collect
+        val (visitToken, activeId, launches) = payload
+        if (_activeRoomId.value != activeId || visitToken != activeRoomVisitToken) return@collect
+        val isPostInitialLaunchSnapshot = handledInitialRocketLaunchToken == visitToken
+        val joinedAt = _roomJoinedAtMs.value
+        launches
+          .filter { it.id.isNotBlank() && it.roomId == activeId }
+          .forEach { launch ->
+            // Auto-claim pending Top-3 partner reward if current user won and hasn't claimed yet
+            if (currentUserId in launch.winnerUids &&
+              currentUserId !in launch.claimedUids &&
+              claimingRocketLaunchIds.add(launch.id)
+            ) {
+              viewModelScope.launch {
+                try {
+                  repository.claimRocketLaunchReward(launch.id).onSuccess { (c, h) ->
+                    if (c > 0L || h > 0L) {
+                      _events.tryEmit(
+                        "🚀 रॉकेट LV.${launch.rocketLevel} ब्लास्ट इनाम: +${SwarUserIdentity.formatIndianNumber(c)} कॉइंस और +${SwarUserIdentity.formatIndianNumber(h)} HP आपके लेवल में जुड़ गए!"
+                      )
+                    }
+                  }
+                } finally {
+                  claimingRocketLaunchIds.remove(launch.id)
+                }
+              }
+            }
+
+            // Show full-screen launch & blast overlay for launches occurring in this active room session
+            if (seenRocketLaunchIds.add(launch.id)) {
+              val createdMs = launch.createdAt?.toDate()?.time
+              val isRecentEnough = createdMs == null ||
+                joinedAt <= 0L ||
+                createdMs >= (joinedAt + serverClockOffsetMs) - 30_000L
+              if (isPostInitialLaunchSnapshot || isRecentEnough) {
+                _activeRocketLaunchEvent.value = launch
+                if (launch.launcherUid == currentUserId && currentUserId in launch.winnerUids) {
+                  val myCoins = launch.winnerRewardCoins[currentUserId] ?: 0L
+                  val myHp = launch.winnerRewardHp[currentUserId] ?: 0L
+                  if (myCoins > 0L || myHp > 0L) {
+                    _events.tryEmit(
+                      "🚀 रॉकेट LV.${launch.rocketLevel} ब्लास्ट इनाम: +${SwarUserIdentity.formatIndianNumber(myCoins)} कॉइंस और +${SwarUserIdentity.formatIndianNumber(myHp)} HP आपके लेवल में जुड़ गए!"
+                    )
+                  }
+                }
+              }
+            }
+          }
+        if (handledInitialRocketLaunchToken != visitToken) {
+          handledInitialRocketLaunchToken = visitToken
+        }
+      }
+    }
     viewModelScope.launch {
       activeRoomSeats.collect { seats ->
         seats.asSequence()
@@ -1047,8 +1127,9 @@ class SwarRoomViewModel(
       _isRoomMinimized.value = false
       return
     }
-    // Always stop/clear any active or queued full-screen gift from the previous room
+    // Always stop/clear any active or queued full-screen gift / rocket launch from the previous room
     _activeFullScreenGift.value = null
+    _activeRocketLaunchEvent.value = null
     pendingGiftQueue.clear()
     latestRoomRemoteEventIds.clear()
     activeRoomVisitToken++
@@ -1150,8 +1231,9 @@ class SwarRoomViewModel(
 
   fun leaveActiveRoom(onComplete: (() -> Unit)? = null) {
     val roomId = _activeRoomId.value
-    // Immediately cancel any full-screen gift playing for this room
+    // Immediately cancel any full-screen gift / rocket launch playing for this room
     _activeFullScreenGift.value = null
+    _activeRocketLaunchEvent.value = null
     pendingGiftQueue.clear()
     latestRoomRemoteEventIds.clear()
     activeRoomVisitToken++
@@ -3233,6 +3315,10 @@ class SwarRoomViewModel(
         _events.tryEmit(err.message ?: "गिफ्ट भेजा नहीं जा सका")
       }
     }
+  }
+
+  fun dismissRocketLaunchOverlay() {
+    _activeRocketLaunchEvent.value = null
   }
 
   fun checkForAppUpdate(manual: Boolean = true) {

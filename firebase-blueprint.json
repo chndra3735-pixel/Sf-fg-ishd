@@ -13,6 +13,7 @@
         "gender": { "type": "string", "enum": ["male", "female", "other"] },
         "clubTag": { "type": "string", "description": "Club badge tag such as UP55." },
         "coins": { "type": "integer", "description": "Virtual social coin balance." },
+        "hp": { "type": "integer", "description": "Accumulated level progression HP / Exp." },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
       },
@@ -353,6 +354,48 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["memberUids", "memberNumericIds", "memberNames", "memberAvatars", "requesterUid", "recipientUid", "status", "cpXp", "totalGiftsCount", "bondTitle", "acceptedAtMs", "createdAt", "updatedAt"]
+    },
+    "RoomRocketState": {
+      "title": "RoomRocketState",
+      "description": "Live per-room 5-tier rocket charge state and cycle contributor leaderboard.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "roomOwnerId": { "type": "string" },
+        "isRoomPublic": { "type": "boolean" },
+        "rocketLevel": { "type": "integer" },
+        "currentCoins": { "type": "integer" },
+        "targetCoins": { "type": "integer" },
+        "contributors": { "type": "object" },
+        "contributorNames": { "type": "object" },
+        "contributorAvatars": { "type": "object" },
+        "lastLaunchId": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "roomOwnerId", "isRoomPublic", "rocketLevel", "currentCoins", "targetCoins", "contributors", "contributorNames", "contributorAvatars", "lastLaunchId", "updatedAt"]
+    },
+    "RocketLaunchEvent": {
+      "title": "RocketLaunchEvent",
+      "description": "Completed rocket launch & blast event recording Top-3 partners' coin/HP payouts and claim status.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "roomTitle": { "type": "string" },
+        "launcherUid": { "type": "string" },
+        "rocketLevel": { "type": "integer" },
+        "targetCoins": { "type": "integer" },
+        "totalRewardCoins": { "type": "integer" },
+        "totalRewardHp": { "type": "integer" },
+        "winnerUids": { "type": "array" },
+        "winnerNames": { "type": "object" },
+        "winnerAvatars": { "type": "object" },
+        "winnerContributions": { "type": "object" },
+        "winnerRewardCoins": { "type": "object" },
+        "winnerRewardHp": { "type": "object" },
+        "claimedUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "roomTitle", "launcherUid", "rocketLevel", "targetCoins", "totalRewardCoins", "totalRewardHp", "winnerUids", "winnerNames", "winnerAvatars", "winnerContributions", "winnerRewardCoins", "winnerRewardHp", "claimedUids", "createdAt"]
     }
   },
   "firestore": {
@@ -431,6 +474,14 @@
     "/cp_links/{pairId}": {
       "schema": { "$ref": "#/entities/CpRelationship" },
       "description": "Linked CP / Best-Friend pairs supporting ID lookup invites, agreement notifications, gift-based level XP, and paired seat animations."
+    },
+    "/room_rockets/{roomId}": {
+      "schema": { "$ref": "#/entities/RoomRocketState" },
+      "description": "Live per-room 5-tier rocket charge progress and ranked cycle contributors."
+    },
+    "/rocket_launches/{launchId}": {
+      "schema": { "$ref": "#/entities/RocketLaunchEvent" },
+      "description": "Atomic rocket blast payout records for Top-3 contributors (Coins + HP)."
     }
   }
 }

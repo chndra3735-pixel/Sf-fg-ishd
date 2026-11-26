@@ -85,6 +85,7 @@ import coil.compose.AsyncImage
 import com.example.data.model.CpRelationship
 import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
+import com.example.data.model.RoomPresenceMember
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
@@ -419,6 +420,7 @@ fun GiftPanelSheet(
   onClearGiftUploadError: () -> Unit = {},
   currentUserId: String = "",
   acceptedCpLinks: List<CpRelationship> = emptyList(),
+  presenceMembers: List<RoomPresenceMember> = emptyList(),
 ) {
   val categories = SwarCatalogDefaults.giftCategories
   var selectedCategoryIdx by remember { mutableIntStateOf(0) }
@@ -438,8 +440,8 @@ fun GiftPanelSheet(
     activeOwnCp?.partnerNameFor(currentUserId).orEmpty()
   }
 
-  // Recipient options: Host + seated guests (+ linked CP partner if not already listed) + All Members
-  val recipients = remember(room.id, seats, myCpPartnerUid, myCpPartnerName) {
+  // Recipient options: Host + seated guests + room presence listeners (+ linked CP partner) + All Members
+  val recipients = remember(room.id, seats, presenceMembers, myCpPartnerUid, myCpPartnerName) {
     buildList {
       val seen = mutableSetOf<String>()
       val hostSuffix = if (room.ownerId == myCpPartnerUid && myCpPartnerUid.isNotBlank()) " (CP ❤️)" else ""
@@ -452,6 +454,15 @@ fun GiftPanelSheet(
           val cpMark = if (seat.occupantUid == myCpPartnerUid && myCpPartnerUid.isNotBlank()) " ❤️ (CP)" else ""
           add(seat.occupantUid to "${seat.occupantName}$cpMark")
           seen.add(seat.occupantUid)
+        }
+      presenceMembers
+        .filter { it.userId.isNotBlank() && it.userId !in seen }
+        .distinctBy { it.userId }
+        .forEach { member ->
+          val cpMark = if (member.userId == myCpPartnerUid && myCpPartnerUid.isNotBlank()) " ❤️ (CP)" else ""
+          val memberName = member.displayName.ifBlank { "लिसनर" }
+          add(member.userId to "$memberName$cpMark")
+          seen.add(member.userId)
         }
       if (myCpPartnerUid.isNotBlank() && seen.add(myCpPartnerUid)) {
         add(myCpPartnerUid to "❤️ ${myCpPartnerName.ifBlank { "CP पार्टनर" }} (CP)")
@@ -1442,7 +1453,7 @@ private fun AddGiftAdminDialog(
 
           OutlinedTextField(
             value = coinCostText,
-            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
+            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(8) },
             label = { Text("कॉइंस") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
@@ -1485,7 +1496,7 @@ private fun AddGiftAdminDialog(
 
         Button(
           onClick = {
-            val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: 100L
+            val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 99_999_999L) ?: 100L
             onSubmit(
               name.ifBlank { "स्पेशल गिफ्ट" },
               category,
@@ -1964,7 +1975,7 @@ private fun EditGiftAdminDialog(
           )
           OutlinedTextField(
             value = coinCostText,
-            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(6) },
+            onValueChange = { coinCostText = it.filter { ch -> ch.isDigit() }.take(8) },
             label = { Text("कॉइंस कीमत") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
@@ -2007,7 +2018,7 @@ private fun EditGiftAdminDialog(
     confirmButton = {
       Button(
         onClick = {
-          val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 999999L) ?: existing.coinCost
+          val parsedCost = coinCostText.toLongOrNull()?.coerceIn(1L, 99_999_999L) ?: existing.coinCost
           onUpdate(
             name.ifBlank { "स्पेशल गिफ्ट" },
             category,

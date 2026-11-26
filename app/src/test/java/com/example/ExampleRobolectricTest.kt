@@ -18,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
@@ -154,6 +155,9 @@ class ExampleRobolectricTest {
     }
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("profile_unlocked_badges_line").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("profile_level_hp_card").assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("वर्तमान HP:", substring = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("HP चाहिए", substring = true).onFirst().assertIsDisplayed()
     composeTestRule.onNodeWithTag("profile_level_row").performScrollTo().performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("level_cards_showcase_dialog").assertIsDisplayed()
@@ -1665,4 +1669,178 @@ class ExampleRobolectricTest {
     assertEquals(numA, detailGrantedId)
     assertEquals("50000", detailGrantedAmt)
   }
+
+  @Test
+  fun `level showcase roadmap tab renders progressive milestones current LV26 status and LV85 halfway marker`() {
+    val coins = 247_545L
+    val levelInfo = SwarUserIdentity.levelForCoins(coins)
+    assertEquals(26, levelInfo.level)
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.LevelCardsShowcaseDialog(
+          levelInfo = levelInfo,
+          coins = coins,
+          onDismiss = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("level_cards_showcase_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_roadmap_tab").performClick()
+    composeTestRule.waitForIdle()
+
+    composeTestRule.onNodeWithTag("level_roadmap_list").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_roadmap_list")
+      .performScrollToNode(hasTestTag("roadmap_current_status_banner"))
+    composeTestRule.onNodeWithTag("roadmap_current_status_banner").assertIsDisplayed()
+    composeTestRule.onNodeWithText("★ आपकी वर्तमान स्थिति: LV.26 (कुल HP: 2,47,545 | आधा: 1,23,772.5)")
+      .assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("अगले LV.27 के लिए", substring = true).onFirst().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_roadmap_list")
+      .performScrollToNode(hasTestTag("roadmap_halfway_banner"))
+    composeTestRule.onNodeWithTag("roadmap_halfway_banner").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_roadmap_list")
+      .performScrollToNode(hasTestTag("roadmap_milestone_120"))
+    composeTestRule.onNodeWithText("कुल HP: 47,78,163").assertIsDisplayed()
+  }
+
+  @Test
+  fun `voice room rocket widget displays top 3 DPs below rocket and opens 5 tier details dialog`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_rkt_ui",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "रॉकेट लॉन्च रूम",
+      roomCode = "555666",
+      seatCount = 8L,
+    )
+    val rocket = com.example.data.model.RoomRocketState(
+      id = room.id,
+      roomId = room.id,
+      roomOwnerId = room.ownerId,
+      rocketLevel = 3,
+      currentCoins = 2_862_820L,
+      targetCoins = 5_725_640L,
+      contributors = mapOf(
+        "u1" to 1_200_000L,
+        "u2" to 900_000L,
+        "u3" to 600_000L,
+        "u4" to 162_820L,
+      ),
+      contributorNames = mapOf(
+        "u1" to "राजा #1",
+        "u2" to "प्रिया #2",
+        "u3" to "अमित #3",
+        "u4" to "विकास #4",
+      ),
+    )
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = room,
+          seats = emptyList(),
+          messages = emptyList(),
+          currentUserId = "u1",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 10_000L,
+          emojiCatalog = emptyList(),
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = null,
+          isMicMuted = true,
+          isSpeakerOn = true,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          roomRocketState = rocket,
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {},
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_rocket_widget").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_rocket_level_text", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_rocket_top3_dps", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("rocket_top3_dp_slot_1", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("rocket_top3_dp_slot_2", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("rocket_top3_dp_slot_3", useUnmergedTree = true).assertIsDisplayed()
+
+    composeTestRule.onNodeWithTag("room_rocket_widget").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("rocket_details_dialog").assertIsDisplayed()
+    composeTestRule.onNodeWithText("टॉप 3 से बाहर").assertExists()
+    composeTestRule.onNodeWithTag("rocket_tier_row_1").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("rocket_tier_row_5").performScrollTo().assertIsDisplayed()
+  }
+
+  @Test
+  fun `full screen rocket launch overlay rides rank 1 DP on rocket blasts and displays top 3 payouts`() {
+    val launchEvent = com.example.data.model.RocketLaunchEvent(
+      id = "rkt_anim_1",
+      roomId = "room_anim",
+      roomTitle = "सेलिब्रेशन स्टेज",
+      launcherUid = "u1",
+      rocketLevel = 2,
+      targetCoins = 1_900_040L,
+      totalRewardCoins = 52_500L,
+      totalRewardHp = 6_000L,
+      winnerUids = listOf("u1", "u2", "u3"),
+      winnerNames = mapOf("u1" to "सुपरस्टार राज", "u2" to "प्रिया", "u3" to "रोहन"),
+      winnerContributions = mapOf("u1" to 900_000L, "u2" to 600_000L, "u3" to 400_040L),
+      winnerRewardCoins = mapOf("u1" to 17_500L, "u2" to 17_500L, "u3" to 17_500L),
+      winnerRewardHp = mapOf("u1" to 2_000L, "u2" to 2_000L, "u3" to 2_000L),
+    )
+    var dismissed = false
+    composeTestRule.mainClock.autoAdvance = false
+    try {
+      composeTestRule.setContent {
+        SwarRoomTheme {
+          com.example.ui.components.FullScreenRocketLaunchOverlay(
+            event = launchEvent,
+            onDismiss = { dismissed = true },
+          )
+        }
+      }
+      // Mid-ascent: #1 contributor's DP rides the rocket upward
+      composeTestRule.mainClock.advanceTimeBy(800L)
+      composeTestRule.onNodeWithTag("full_screen_rocket_launch_overlay").assertIsDisplayed()
+      composeTestRule.onNodeWithTag("rocket_launch_rank1_dp").assertIsDisplayed()
+
+      // Post-blast celebration: Top-3 winners & payout card appears
+      composeTestRule.mainClock.advanceTimeBy(4_500L)
+      composeTestRule.onNodeWithTag("rocket_launch_winners_card").assertIsDisplayed()
+      composeTestRule.onNodeWithText("सुपरस्टार राज").assertIsDisplayed()
+      composeTestRule.onAllNodesWithText("+17,500 🪙", substring = true).onFirst().assertExists()
+      composeTestRule.onAllNodesWithText("+2,000 HP", substring = true).onFirst().assertExists()
+
+      composeTestRule.onNodeWithTag("dismiss_rocket_launch_button").performClick()
+      assertTrue(dismissed)
+    } finally {
+      composeTestRule.mainClock.autoAdvance = true
+    }
+  }
 }
+

@@ -30,6 +30,7 @@ function validUserPayload(uid) {
     gender: "male",
     clubTag: "UP55",
     coins: 500,
+    hp: 1500,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -202,6 +203,13 @@ test("Only verified admin Gmail can add emojis & gifts; all signed-in users can 
   };
   await assertFails(bob.collection("gift_catalog").doc("gift_1").set({ ...giftPayload, createdByUid: BOB_UID }));
   await assertSucceeds(verifiedAdmin.collection("gift_catalog").doc("gift_1").set(giftPayload));
+  await assertSucceeds(
+    verifiedAdmin.collection("gift_catalog").doc("gift_high").set({
+      ...giftPayload,
+      name: "मेगा रॉकेट बूस्ट",
+      coinCost: 5000000,
+    })
+  );
 
   // All signed-in users can read active catalog items
   await assertSucceeds(bob.collection("emoji_catalog").where("isActive", "==", true).get());
@@ -833,6 +841,146 @@ test("Verified admin can add coins to any user profile; non-admin, spoofed admin
   );
 });
 
+// 12. Room 5-Tier Rocket Charge & Top-3 Launch Payout Claims + User HP Updates
+test("Room rocket charge requires valid room & tier (1..5), allows Top-3 claim once, and updates winner HP & coins", async () => {
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieUid = "charlie_uid_3";
+  const daveUid = "dave_uid_4";
+  const charlie = testEnv.authenticatedContext(charlieUid).firestore();
+  const dave = testEnv.authenticatedContext(daveUid).firestore();
 
+  await assertSucceeds(alice.collection("users").doc(ALICE_UID).set(validUserPayload(ALICE_UID)));
+  await assertSucceeds(bob.collection("users").doc(BOB_UID).set(validUserPayload(BOB_UID)));
+  await assertSucceeds(alice.collection("rooms").doc("room_rkt_1").set(validRoomPayload(ALICE_UID, true)));
 
+  // Reject rocket state for missing room or invalid level 6
+  await assertFails(
+    alice.collection("room_rockets").doc("missing_room").set({
+      roomId: "missing_room",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      rocketLevel: 1,
+      currentCoins: 50000,
+      targetCoins: 1063040,
+      contributors: { [ALICE_UID]: 50000 },
+      contributorNames: { [ALICE_UID]: "Alice" },
+      contributorAvatars: { [ALICE_UID]: "" },
+      lastLaunchId: "",
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertFails(
+    alice.collection("room_rockets").doc("room_rkt_1").set({
+      roomId: "room_rkt_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      rocketLevel: 6,
+      currentCoins: 50000,
+      targetCoins: 1063040,
+      contributors: { [ALICE_UID]: 50000 },
+      contributorNames: { [ALICE_UID]: "Alice" },
+      contributorAvatars: { [ALICE_UID]: "" },
+      lastLaunchId: "",
+      updatedAt: serverTimestamp(),
+    })
+  );
 
+  // Valid room rocket creation and charge update
+  const rocketRef = alice.collection("room_rockets").doc("room_rkt_1");
+  await assertSucceeds(
+    rocketRef.set({
+      roomId: "room_rkt_1",
+      roomOwnerId: ALICE_UID,
+      isRoomPublic: true,
+      rocketLevel: 1,
+      currentCoins: 500000,
+      targetCoins: 1063040,
+      contributors: { [ALICE_UID]: 500000 },
+      contributorNames: { [ALICE_UID]: "Alice" },
+      contributorAvatars: { [ALICE_UID]: "" },
+      lastLaunchId: "",
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(
+    bob.collection("room_rockets").doc("room_rkt_1").update({
+      isRoomPublic: true,
+      rocketLevel: 2,
+      currentCoins: 0,
+      targetCoins: 1900040,
+      contributors: {},
+      contributorNames: {},
+      contributorAvatars: {},
+      lastLaunchId: "launch_1",
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Launch event created by Bob (with Top 3 = Alice, Bob, Charlie; Dave ranked 4th is NOT in winnerUids)
+  const launchPayload = {
+    roomId: "room_rkt_1",
+    roomTitle: "Swar Lounge",
+    launcherUid: BOB_UID,
+    rocketLevel: 1,
+    targetCoins: 1063040,
+    totalRewardCoins: 28000,
+    totalRewardHp: 2000,
+    winnerUids: [ALICE_UID, BOB_UID, charlieUid],
+    winnerNames: { [ALICE_UID]: "Alice", [BOB_UID]: "Bob", [charlieUid]: "Charlie" },
+    winnerAvatars: { [ALICE_UID]: "", [BOB_UID]: "", [charlieUid]: "" },
+    winnerContributions: { [ALICE_UID]: 600000, [BOB_UID]: 300000, [charlieUid]: 163040 },
+    winnerRewardCoins: { [ALICE_UID]: 9334, [BOB_UID]: 9333, [charlieUid]: 9333 },
+    winnerRewardHp: { [ALICE_UID]: 668, [BOB_UID]: 666, [charlieUid]: 666 },
+    claimedUids: [BOB_UID],
+    createdAt: serverTimestamp(),
+  };
+
+  await assertSucceeds(bob.collection("rocket_launches").doc("launch_1").set(launchPayload));
+
+  // Query matches repository observeRoomRocketLaunches
+  await assertSucceeds(alice.collection("rocket_launches").where("roomId", "==", "room_rkt_1").get());
+
+  // Non-winner Dave (#4) CANNOT claim launch_1
+  await assertFails(
+    dave.collection("rocket_launches").doc("launch_1").update({
+      claimedUids: [BOB_UID, daveUid],
+    })
+  );
+
+  // Winner Bob CANNOT double-claim
+  await assertFails(
+    bob.collection("rocket_launches").doc("launch_1").update({
+      claimedUids: [BOB_UID, BOB_UID],
+    })
+  );
+
+  // Winner Alice CANNOT tamper with winnerRewardCoins while claiming
+  await assertFails(
+    alice.collection("rocket_launches").doc("launch_1").update({
+      claimedUids: [BOB_UID, ALICE_UID],
+      winnerRewardCoins: { [ALICE_UID]: 999999, [BOB_UID]: 0, [charlieUid]: 0 },
+    })
+  );
+
+  // Winner Alice claims once cleanly and updates her HP + coins
+  await assertSucceeds(
+    alice.collection("rocket_launches").doc("launch_1").update({
+      claimedUids: [BOB_UID, ALICE_UID],
+    })
+  );
+  await assertSucceeds(
+    alice.collection("users").doc(ALICE_UID).update({
+      coins: 10834,
+      hp: 2168,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Winner Charlie claims once too
+  await assertSucceeds(
+    charlie.collection("rocket_launches").doc("launch_1").update({
+      claimedUids: [BOB_UID, ALICE_UID, charlieUid],
+    })
+  );
+});

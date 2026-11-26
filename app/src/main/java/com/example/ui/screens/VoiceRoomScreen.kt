@@ -132,9 +132,11 @@ import com.example.data.model.EmojiCatalogItem
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.GiftEvent
 import com.example.data.model.LevelTierConfig
+import com.example.data.model.RocketLaunchEvent
 import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
+import com.example.data.model.RoomRocketState
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserProfile
@@ -145,11 +147,14 @@ import com.example.ui.components.CrossRoomGiftMarqueeStrip
 import com.example.ui.components.EmojiPanelSheet
 import com.example.ui.components.FramedUserAvatar
 import com.example.ui.components.FullScreenGiftOverlay
+import com.example.ui.components.FullScreenRocketLaunchOverlay
 import com.example.ui.components.GiftPanelSheet
 import com.example.ui.components.JointCpProfileCard
 import com.example.ui.components.LevelCardsShowcaseDialog
 import com.example.ui.components.OrnateWingedLevelCrest
 import com.example.ui.components.ProfileSideBadgesShowcaseCard
+import com.example.ui.components.RocketDetailsDialog
+import com.example.ui.components.RoomRocketCompactWidget
 import com.example.ui.components.RoomSettingsSheet
 import com.example.ui.components.TypingBannerChatBubble
 import com.example.ui.components.UserAvatar
@@ -285,6 +290,10 @@ fun VoiceRoomScreen(
   },
   acceptedCpLinks: List<CpRelationship> = emptyList(),
   onSendCpRequestById: (recipientNumericId: String, bondTitle: String) -> Unit = { _, _ -> },
+  userHp: Long = userCoins,
+  roomRocketState: RoomRocketState? = null,
+  activeRocketLaunch: RocketLaunchEvent? = null,
+  onDismissRocketLaunch: () -> Unit = {},
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -321,8 +330,10 @@ fun VoiceRoomScreen(
   var showEmojiPanel by remember { mutableStateOf(false) }
   var showGiftPanel by remember { mutableStateOf(false) }
   var showSettingsDialog by remember { mutableStateOf(false) }
+  var showRocketDetailsDialog by remember { mutableStateOf(false) }
   var selectedSeatForSheet by remember { mutableStateOf<RoomSeat?>(null) }
   var selectedProfileTarget by remember { mutableStateOf<RoomProfileTarget?>(null) }
+  val effectiveOwnHp = maxOf(userHp, userCoins)
 
   val visibleMessages = remember(messages, blockedUserIds) {
     if (blockedUserIds.isEmpty()) messages
@@ -474,7 +485,7 @@ fun VoiceRoomScreen(
         currentUserId = currentUserId,
         currentUserName = currentUserName,
         currentUserAvatar = currentUserAvatar,
-        userCoins = userCoins,
+        userCoins = effectiveOwnHp,
         userProfiles = userProfiles,
         liveListeners = liveListeners,
         onOwnProfileClick = {
@@ -755,54 +766,68 @@ fun VoiceRoomScreen(
         hostPairCp?.let { SwarUserIdentity.cpLevelInfoFor(it.cpXp, it.acceptedAtMs) }
       }
 
-      Box(
+      Row(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(top = 6.dp, bottom = 8.dp),
+          .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
       ) {
-        if (hostPairInfo != null) {
-          AdjacentCpSeatBridgeCanvas(
-            info = hostPairInfo,
-            startCenterFractionX = 0.36f,
-            endCenterFractionX = 0.64f,
-            modifier = Modifier.matchParentSize(),
-          )
-        }
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
-          verticalAlignment = Alignment.CenterVertically,
+        Box(
+          modifier = Modifier.weight(1f),
         ) {
-          topSeats.forEach { topSeat ->
-            val occUid = topSeat.occupantUid
-            val occFrameUrl = if (occUid.isNotBlank()) {
-              val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
-              SwarUserIdentity.highestUnlockedFrameUrl(
-                SwarUserIdentity.levelForCoins(occCoins).level,
-                levelConfigs,
+          if (hostPairInfo != null) {
+            AdjacentCpSeatBridgeCanvas(
+              info = hostPairInfo,
+              startCenterFractionX = 0.34f,
+              endCenterFractionX = 0.66f,
+              modifier = Modifier.matchParentSize(),
+            )
+          }
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            topSeats.forEach { topSeat ->
+              val occUid = topSeat.occupantUid
+              val occFrameUrl = if (occUid.isNotBlank()) {
+                val occHp = if (occUid == currentUserId) {
+                  effectiveOwnHp
+                } else {
+                  SwarUserIdentity.effectiveHpForProfile(userProfiles[occUid])
+                }
+                SwarUserIdentity.highestUnlockedFrameUrl(
+                  SwarUserIdentity.levelForCoins(occHp).level,
+                  levelConfigs,
+                )
+              } else ""
+              val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
+              HostSeatBadge(
+                seat = topSeat,
+                emptyLabel = if (topSeat.seatIndex == 0L) "होस्ट सीट 1" else "होस्ट सीट 2",
+                localLevel = if (topSeat.occupantUid == currentUserId) micAudioLevel else 0f,
+                frameUrl = occFrameUrl,
+                activeEmoji = topSeat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
+                isCpLinked = isCpPartnerSeated,
+                onClick = { openSeatOrProfileSheet(topSeat) },
               )
-            } else ""
-            val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
-            HostSeatBadge(
-              seat = topSeat,
-              emptyLabel = if (topSeat.seatIndex == 0L) "होस्ट सीट 1" else "होस्ट सीट 2",
-              localLevel = if (topSeat.occupantUid == currentUserId) micAudioLevel else 0f,
-              frameUrl = occFrameUrl,
-              activeEmoji = topSeat.occupantUid.takeIf { it.isNotBlank() }?.let { activeSeatReactions[it] },
-              isCpLinked = isCpPartnerSeated,
-              onClick = { openSeatOrProfileSheet(topSeat) },
+            }
+          }
+          if (hostPairInfo != null && topSeats.size >= 2) {
+            AdjacentCpFloatingCrest(
+              info = hostPairInfo,
+              tag = "cp_adjacent_bridge_${topSeats[0].seatIndex}_${topSeats[1].seatIndex}",
+              modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 2.dp),
             )
           }
         }
-        if (hostPairInfo != null && topSeats.size >= 2) {
-          AdjacentCpFloatingCrest(
-            info = hostPairInfo,
-            tag = "cp_adjacent_bridge_${topSeats[0].seatIndex}_${topSeats[1].seatIndex}",
-            modifier = Modifier
-              .align(Alignment.TopCenter)
-              .padding(top = 2.dp),
-          )
-        }
+        Spacer(modifier = Modifier.width(6.dp))
+        RoomRocketCompactWidget(
+          rocketState = roomRocketState,
+          onOpenDetails = { showRocketDetailsDialog = true },
+        )
       }
 
       // Multi-Seat Voice Grid (5 columns per row with smooth cross-seat CP Aura Animation when friends sit side-by-side)
@@ -855,9 +880,13 @@ fun VoiceRoomScreen(
                   val seat = rowSeats[col]
                   val occUid = seat.occupantUid
                   val occFrameUrl = if (occUid.isNotBlank()) {
-                    val occCoins = if (occUid == currentUserId) userCoins else (userProfiles[occUid]?.coins ?: 1500L)
+                    val occHp = if (occUid == currentUserId) {
+                      effectiveOwnHp
+                    } else {
+                      SwarUserIdentity.effectiveHpForProfile(userProfiles[occUid])
+                    }
                     SwarUserIdentity.highestUnlockedFrameUrl(
-                      SwarUserIdentity.levelForCoins(occCoins).level,
+                      SwarUserIdentity.levelForCoins(occHp).level,
                       levelConfigs,
                     )
                   } else ""
@@ -929,12 +958,12 @@ fun VoiceRoomScreen(
                 onRequestUserProfile(msg.senderUid)
               }
             }
-            val senderCoins = if (msg.senderUid == currentUserId) {
-              userCoins
+            val senderHp = if (msg.senderUid == currentUserId) {
+              effectiveOwnHp
             } else {
-              userProfiles[msg.senderUid]?.coins ?: 1500L
+              SwarUserIdentity.effectiveHpForProfile(userProfiles[msg.senderUid])
             }
-            val senderLevel = SwarUserIdentity.levelForCoins(senderCoins).level
+            val senderLevel = SwarUserIdentity.levelForCoins(senderHp).level
             val senderTypingBannerUrl = if (msg.messageType == "text") {
               SwarUserIdentity.highestUnlockedTypingBannerUrl(senderLevel, levelConfigs)
             } else {
@@ -1107,8 +1136,23 @@ fun VoiceRoomScreen(
         onPlaybackMessage = onShowToast,
       )
     }
+
+    // Full-Screen Rocket Launch & Blast Overlay (#1 Rank DP rides on rocket -> Blast -> Top-3 Rewards)
+    if (activeRocketLaunch != null && activeRocketLaunch.roomId == room.id) {
+      FullScreenRocketLaunchOverlay(
+        event = activeRocketLaunch,
+        onDismiss = onDismissRocketLaunch,
+      )
+    }
   }
   } // End ModalNavigationDrawer
+
+  if (showRocketDetailsDialog) {
+    RocketDetailsDialog(
+      rocketState = roomRocketState,
+      onDismiss = { showRocketDetailsDialog = false },
+    )
+  }
 
   // Profile Card Sheet (Own DP/Seat OR Other User's DP/Seat/Listener/Chat)
   val profileTarget = selectedProfileTarget
@@ -1137,8 +1181,8 @@ fun VoiceRoomScreen(
     val numericId = remember(profileTarget.uid) {
       SwarUserIdentity.numericIdForUid(profileTarget.uid)
     }
-    val levelInfo = remember(isSelf, userCoins, remoteProfile?.coins) {
-      if (isSelf) SwarUserIdentity.levelForCoins(userCoins)
+    val levelInfo = remember(isSelf, effectiveOwnHp, remoteProfile?.coins, remoteProfile?.hp) {
+      if (isSelf) SwarUserIdentity.levelForCoins(effectiveOwnHp)
       else SwarUserIdentity.levelForProfile(remoteProfile)
     }
     val isBlocked = profileTarget.uid in blockedUserIds
@@ -1300,6 +1344,25 @@ fun VoiceRoomScreen(
                 trackColor = Color(0x33FFFFFF),
               )
               Text(
+                text = "वर्तमान: ${SwarUserIdentity.formatIndianNumber(levelInfo.currentHp)} HP",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFFE6E0FF),
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+              Text(
+                text = if (levelInfo.level >= 120) {
+                  "सर्वोच्च LV.120 पूर्ण"
+                } else {
+                  "अगले LV.${levelInfo.level + 1}: ${SwarUserIdentity.formatIndianNumber(levelInfo.nextLevelRemainingCoins)} HP बाकी"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = SwarCyan,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+              Text(
                 text = if (liveSeat != null) {
                   when (liveSeat.seatIndex) {
                     0L -> "होस्ट सीट 1"
@@ -1366,7 +1429,7 @@ fun VoiceRoomScreen(
         }
 
         if (showSheetLevelCards) {
-          val sheetCoins = if (isSelf) userCoins else (remoteProfile?.coins ?: 1500L)
+          val sheetCoins = if (isSelf) effectiveOwnHp else SwarUserIdentity.effectiveHpForProfile(remoteProfile)
           LevelCardsShowcaseDialog(
             levelInfo = levelInfo,
             coins = sheetCoins,
@@ -1762,6 +1825,7 @@ fun VoiceRoomScreen(
       isUploading = isUploadingMedia,
       currentUserId = currentUserId,
       acceptedCpLinks = acceptedCpLinks,
+      presenceMembers = livePresenceMembers,
       onClaimBonusCoins = onClaimBonusCoins,
       onSendGift = onSendGift,
       onAddCustomGift = onAddCustomGift,

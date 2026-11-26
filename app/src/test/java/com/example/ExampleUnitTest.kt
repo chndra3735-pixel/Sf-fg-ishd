@@ -39,12 +39,32 @@ class ExampleUnitTest {
   fun levelForCoins_calculatesLevelAndProgress() {
     val lvl1 = SwarUserIdentity.levelForCoins(500L)
     assertEquals(1, lvl1.level)
-    assertEquals(0.5f, lvl1.progress, 0.01f)
-    assertEquals(500L, lvl1.nextLevelRemainingCoins)
+    assertEquals(500f / 829f, lvl1.progress, 0.01f)
+    assertEquals(329L, lvl1.nextLevelRemainingCoins)
 
-    val lvl15 = SwarUserIdentity.levelForCoins(14_250L)
-    assertEquals(15, lvl15.level)
-    assertEquals("गोल्डन वॉइस", lvl15.title)
+    val lvl26 = SwarUserIdentity.levelForCoins(247_545L)
+    assertEquals(26, lvl26.level)
+    assertEquals("गोल्डन वॉइस", lvl26.title)
+
+    assertEquals(10, SwarUserIdentity.levelForCoins(31_149L).level)
+    assertEquals(20, SwarUserIdentity.levelForCoins(131_559L).level)
+    assertEquals(30, SwarUserIdentity.levelForCoins(321_273L).level)
+    assertEquals(40, SwarUserIdentity.levelForCoins(553_283L).level)
+    assertEquals(50, SwarUserIdentity.levelForCoins(851_093L).level)
+    assertEquals(60, SwarUserIdentity.levelForCoins(1_214_703L).level)
+    assertEquals(70, SwarUserIdentity.levelForCoins(1_644_113L).level)
+    assertEquals(80, SwarUserIdentity.levelForCoins(2_139_323L).level)
+    assertEquals(84, SwarUserIdentity.levelForCoins(2_389_082L).level)
+    assertEquals(90, SwarUserIdentity.levelForCoins(2_700_333L).level)
+    assertEquals(100, SwarUserIdentity.levelForCoins(3_327_143L).level)
+    assertEquals(110, SwarUserIdentity.levelForCoins(4_019_753L).level)
+    assertEquals(120, SwarUserIdentity.levelForCoins(4_778_163L).level)
+
+    assertEquals("31,149", SwarUserIdentity.formatIndianNumber(31_149L))
+    assertEquals("15,574.5", SwarUserIdentity.formatHalfHp(31_149L))
+    assertEquals("2,47,545", SwarUserIdentity.formatIndianNumber(247_545L))
+    assertEquals("47,78,163", SwarUserIdentity.formatIndianNumber(4_778_163L))
+    assertEquals("23,89,081.5", SwarUserIdentity.formatHalfHp(4_778_163L))
   }
 
   @Test
@@ -159,7 +179,8 @@ class ExampleUnitTest {
     assertEquals("LV.120", tiers.last().rangeLabel)
     assertEquals("LV.50", SwarUserIdentity.tierForLevel(54).badgeLabel)
     assertEquals("LV.110~LV.119", SwarUserIdentity.tierForLevel(115).rangeLabel)
-    assertEquals(120, SwarUserIdentity.levelForCoins(250_000L).level)
+    assertEquals(26, SwarUserIdentity.levelForCoins(247_545L).level)
+    assertEquals(120, SwarUserIdentity.levelForCoins(4_778_163L).level)
   }
 
   @Test
@@ -511,4 +532,91 @@ class ExampleUnitTest {
     assertEquals("01:05", com.example.audio.DeviceMusicScanner.formatDurationClock(65_000L))
     assertEquals("1:01:01", com.example.audio.DeviceMusicScanner.formatDurationClock(3_661_000L))
   }
+
+  @Test
+  fun rocketTierSpecs_matchExactFiveTierEconomyAndProgression() {
+    val t1 = SwarUserIdentity.rocketTierSpec(1)
+    assertEquals(1_063_040L, t1.targetCoins)
+    assertEquals(2_000L, t1.rewardHp)
+    assertEquals(28_000L, t1.rewardCoins)
+
+    val t2 = SwarUserIdentity.rocketTierSpec(2)
+    assertEquals(1_900_040L, t2.targetCoins)
+    assertEquals(6_000L, t2.rewardHp)
+    assertEquals(52_500L, t2.rewardCoins)
+
+    val t3 = SwarUserIdentity.rocketTierSpec(3)
+    assertEquals(5_725_640L, t3.targetCoins)
+    assertEquals(9_000L, t3.rewardHp)
+    assertEquals(175_000L, t3.rewardCoins)
+
+    val t4 = SwarUserIdentity.rocketTierSpec(4)
+    assertEquals(13_168_972L, t4.targetCoins)
+    assertEquals(15_000L, t4.rewardHp)
+    assertEquals(700_000L, t4.rewardCoins)
+
+    val t5 = SwarUserIdentity.rocketTierSpec(5)
+    assertEquals(30_288_636L, t5.targetCoins)
+    assertEquals(24_000L, t5.rewardHp)
+    assertEquals(2_450_000L, t5.rewardCoins)
+
+    assertEquals(2, SwarUserIdentity.nextRocketLevel(1))
+    assertEquals(5, SwarUserIdentity.nextRocketLevel(4))
+    assertEquals(1, SwarUserIdentity.nextRocketLevel(5))
+  }
+
+  @Test
+  fun computeRocketTop3Distribution_rewardsTopThreeOnlyAndSplitsFairly() {
+    // 5 contributors: only top 3 receive rewards; #4 & #5 excluded
+    val contributors5 = mapOf(
+      "u4" to 90_000L,
+      "u1" to 500_000L,
+      "u5" to 20_000L,
+      "u3" to 200_000L,
+      "u2" to 350_000L,
+    )
+    val names = mapOf("u1" to "पहला", "u2" to "दूसरा", "u3" to "तीसरा", "u4" to "चौथा", "u5" to "पाँचवाँ")
+    val winners3 = SwarUserIdentity.computeRocketTop3Distribution(
+      contributors = contributors5,
+      names = names,
+      avatars = emptyMap(),
+      rocketLevel = 1,
+    )
+    assertEquals(listOf("u1", "u2", "u3"), winners3.map { it.uid })
+    assertEquals(listOf(1, 2, 3), winners3.map { it.rank })
+    assertEquals(28_000L, winners3.sumOf { it.rewardCoins })
+    assertEquals(2_000L, winners3.sumOf { it.rewardHp })
+
+    // 2 partners on LV.1 -> exact 50-50 split (14,000 coins & 1,000 HP each)
+    val winners2 = SwarUserIdentity.computeRocketTop3Distribution(
+      contributors = mapOf("a" to 700_000L, "b" to 363_040L),
+      names = mapOf("a" to "ए", "b" to "बी"),
+      avatars = emptyMap(),
+      rocketLevel = 1,
+    )
+    assertEquals(2, winners2.size)
+    assertEquals(14_000L, winners2[0].rewardCoins)
+    assertEquals(14_000L, winners2[1].rewardCoins)
+    assertEquals(1_000L, winners2[0].rewardHp)
+    assertEquals(1_000L, winners2[1].rewardHp)
+  }
+
+  @Test
+  fun effectiveHpForProfile_preservesHigherEarnedHpOverLowerWalletCoins() {
+    val spentCoinsHighHp = com.example.data.model.UserProfile(
+      userId = "u_hp",
+      coins = 500L,
+      hp = 31_149L,
+    )
+    assertEquals(31_149L, SwarUserIdentity.effectiveHpForProfile(spentCoinsHighHp))
+    val info = SwarUserIdentity.levelForProfile(spentCoinsHighHp)
+    assertEquals(10, info.level)
+    assertEquals(31_149L, info.currentHp)
+    assertEquals(31_149L, info.currentLevelFloorHp)
+    assertEquals(38_229L, info.nextLevelTargetHp)
+    assertEquals(0L, info.intoLevelHp)
+    assertEquals(7_080L, info.levelSpanHp)
+    assertEquals(7_080L, info.nextLevelRemainingCoins)
+  }
 }
+

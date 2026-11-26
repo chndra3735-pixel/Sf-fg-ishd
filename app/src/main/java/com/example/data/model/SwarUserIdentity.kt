@@ -14,6 +14,11 @@ data class UserLevelInfo(
   val progress: Float,
   val badgeColor: Color,
   val nextLevelRemainingCoins: Long,
+  val currentHp: Long = 0L,
+  val currentLevelFloorHp: Long = 0L,
+  val nextLevelTargetHp: Long = 0L,
+  val intoLevelHp: Long = 0L,
+  val levelSpanHp: Long = 1L,
 )
 
 data class CpLevelInfo(
@@ -48,7 +53,100 @@ data class LevelTierSpec(
   val glowColor: Color,
 )
 
+data class LevelRoadmapMilestone(
+  val level: Int,
+  val totalHp: Long,
+  val deltaFromPrevious: Long,
+  val isHalfwayZoneAfter: Boolean = false,
+)
+
+data class RocketTierSpec(
+  val level: Int,
+  val titleHindi: String,
+  val targetCoins: Long,
+  val rewardHp: Long,
+  val rewardCoins: Long,
+  val primaryColor: Color,
+  val flameColor: Color,
+  val glowColor: Color,
+)
+
+data class RocketWinnerShare(
+  val rank: Int,
+  val uid: String,
+  val displayName: String,
+  val avatarUrl: String,
+  val contributedCoins: Long,
+  val rewardCoins: Long,
+  val rewardHp: Long,
+)
+
+data class RocketContributorUi(
+  val rank: Int,
+  val uid: String,
+  val displayName: String,
+  val avatarUrl: String,
+  val contributedCoins: Long,
+  val isTop3Partner: Boolean,
+  val projectedRewardCoins: Long,
+  val projectedRewardHp: Long,
+)
+
 object SwarUserIdentity {
+
+  const val MAX_LEVEL_120_HP: Long = 4_778_163L
+  const val HALFWAY_HP_X2: Long = 4_778_163L // 2,389,081.5 HP at ~LV.85
+
+  val levelThresholds: LongArray = LongArray(121).apply {
+    this[1] = 0L
+    var acc = 0L
+    for (lvl in 1 until 120) {
+      val stepCost = when {
+        lvl in 1..9 -> 829L + (lvl - 1).toLong() * 658L
+        lvl in 10..19 -> 7_080L + (lvl - 10).toLong() * 658L
+        lvl in 20..25 -> 17_686L + (lvl - 20).toLong() * 658L
+        lvl in 26..29 -> 17_445L + (lvl - 26).toLong() * 658L
+        else -> 20_240L + (lvl - 30).toLong() * 658L
+      }
+      acc += stepCost
+      this[lvl + 1] = acc
+    }
+  }
+
+  val levelRoadmapMilestones: List<LevelRoadmapMilestone> by lazy {
+    val milestoneLevels = listOf(1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120)
+    milestoneLevels.mapIndexed { idx, lvl ->
+      val total = requiredHpForLevel(lvl)
+      val prev = if (idx == 0) 0L else requiredHpForLevel(milestoneLevels[idx - 1])
+      LevelRoadmapMilestone(
+        level = lvl,
+        totalHp = total,
+        deltaFromPrevious = (total - prev).coerceAtLeast(0L),
+        isHalfwayZoneAfter = lvl == 80,
+      )
+    }
+  }
+
+  fun requiredHpForLevel(level: Int): Long {
+    return levelThresholds[level.coerceIn(1, 120)]
+  }
+
+  fun formatIndianNumber(value: Long): String {
+    val negative = value < 0L
+    val raw = kotlin.math.abs(value).toString()
+    if (raw.length <= 3) return if (negative) "-$raw" else raw
+    val lastThree = raw.takeLast(3)
+    val rest = raw.dropLast(3)
+    val groupedRest = rest.reversed().chunked(2).joinToString(",").reversed()
+    return (if (negative) "-" else "") + "$groupedRest,$lastThree"
+  }
+
+  fun formatHalfHp(value: Long): String {
+    val absVal = kotlin.math.abs(value)
+    val whole = absVal / 2L
+    val suffix = if (absVal % 2L != 0L) ".5" else ""
+    return (if (value < 0L) "-" else "") + formatIndianNumber(whole) + suffix
+  }
 
   val levelTiers: List<LevelTierSpec> = listOf(
     LevelTierSpec(
@@ -285,10 +383,19 @@ object SwarUserIdentity {
 
   fun levelForCoins(coins: Long): UserLevelInfo {
     val safeCoins = coins.coerceAtLeast(0L)
-    val level = ((safeCoins / 1000L).toInt() + 1).coerceIn(1, 120)
-    val remainder = safeCoins % 1000L
-    val progress = if (level >= 120) 1f else (remainder / 1000f).coerceIn(0f, 1f)
-    val remaining = if (level >= 120) 0L else (1000L - remainder)
+    var level = 1
+    for (lvl in 120 downTo 1) {
+      if (safeCoins >= levelThresholds[lvl]) {
+        level = lvl
+        break
+      }
+    }
+    val currentThreshold = levelThresholds[level]
+    val nextThreshold = if (level >= 120) currentThreshold else levelThresholds[level + 1]
+    val span = (nextThreshold - currentThreshold).coerceAtLeast(1L)
+    val intoLevel = (safeCoins - currentThreshold).coerceAtLeast(0L)
+    val progress = if (level >= 120) 1f else (intoLevel.toFloat() / span.toFloat()).coerceIn(0f, 1f)
+    val remaining = if (level >= 120) 0L else (nextThreshold - safeCoins).coerceAtLeast(0L)
     val (title, color) = when {
       level >= 120 -> "सुप्रीम सेलेस्टियल" to SwarCyan
       level >= 100 -> "ब्लैक गोल्ड लीजेंड" to SwarGold
@@ -304,11 +411,151 @@ object SwarUserIdentity {
       progress = progress,
       badgeColor = color,
       nextLevelRemainingCoins = remaining,
+      currentHp = safeCoins,
+      currentLevelFloorHp = currentThreshold,
+      nextLevelTargetHp = nextThreshold,
+      intoLevelHp = if (level >= 120) span else intoLevel,
+      levelSpanHp = span,
     )
   }
 
+  fun effectiveHpForProfile(profile: UserProfile?): Long {
+    if (profile == null) return 1500L
+    return maxOf(profile.hp.coerceAtLeast(0L), profile.coins.coerceAtLeast(0L))
+  }
+
   fun levelForProfile(profile: UserProfile?): UserLevelInfo {
-    return levelForCoins(profile?.coins ?: 1500L)
+    return levelForCoins(effectiveHpForProfile(profile))
+  }
+
+  val rocketTiers: List<RocketTierSpec> = listOf(
+    RocketTierSpec(
+      level = 1,
+      titleHindi = "रॉकेट LV.1 • स्पार्क फाल्कन",
+      targetCoins = 1_063_040L,
+      rewardHp = 2_000L,
+      rewardCoins = 28_000L,
+      primaryColor = Color(0xFF00E5FF),
+      flameColor = Color(0xFFFF9100),
+      glowColor = Color(0xFF18FFFF),
+    ),
+    RocketTierSpec(
+      level = 2,
+      titleHindi = "रॉकेट LV.2 • स्टार ब्लेज़",
+      targetCoins = 1_900_040L,
+      rewardHp = 6_000L,
+      rewardCoins = 52_500L,
+      primaryColor = Color(0xFF2FE6A3),
+      flameColor = Color(0xFFFFAB40),
+      glowColor = Color(0xFF00E676),
+    ),
+    RocketTierSpec(
+      level = 3,
+      titleHindi = "रॉकेट LV.3 • सोलर टाइटन",
+      targetCoins = 5_725_640L,
+      rewardHp = 9_000L,
+      rewardCoins = 175_000L,
+      primaryColor = Color(0xFFFFC107),
+      flameColor = Color(0xFFFF5722),
+      glowColor = Color(0xFFFFD54F),
+    ),
+    RocketTierSpec(
+      level = 4,
+      titleHindi = "रॉकेट LV.4 • रूबी स्टॉर्म",
+      targetCoins = 13_168_972L,
+      rewardHp = 15_000L,
+      rewardCoins = 700_000L,
+      primaryColor = Color(0xFFFF4D94),
+      flameColor = Color(0xFFFFEA00),
+      glowColor = Color(0xFFFF4081),
+    ),
+    RocketTierSpec(
+      level = 5,
+      titleHindi = "रॉकेट LV.5 • ब्रह्मांड सम्राट",
+      targetCoins = 30_288_636L,
+      rewardHp = 24_000L,
+      rewardCoins = 2_450_000L,
+      primaryColor = Color(0xFFB388FF),
+      flameColor = Color(0xFFFF6E40),
+      glowColor = Color(0xFFFFD740),
+    ),
+  )
+
+  fun rocketTierSpec(level: Int): RocketTierSpec {
+    val safeLevel = level.coerceIn(1, 5)
+    return rocketTiers.firstOrNull { it.level == safeLevel } ?: rocketTiers.first()
+  }
+
+  fun nextRocketLevel(level: Int): Int {
+    val safeLevel = level.coerceIn(1, 5)
+    return if (safeLevel >= 5) 1 else safeLevel + 1
+  }
+
+  fun computeRocketTop3Distribution(
+    contributors: Map<String, Long>,
+    names: Map<String, String>,
+    avatars: Map<String, String>,
+    rocketLevel: Int,
+  ): List<RocketWinnerShare> {
+    val spec = rocketTierSpec(rocketLevel)
+    val ranked = contributors.entries
+      .filter { (uid, coins) -> uid.isNotBlank() && coins > 0L }
+      .sortedWith(
+        compareByDescending<Map.Entry<String, Long>> { it.value }
+          .thenBy { it.key }
+      )
+      .take(3)
+    if (ranked.isEmpty()) return emptyList()
+    val partnerCount = ranked.size.toLong()
+    val baseCoins = spec.rewardCoins / partnerCount
+    val remCoins = spec.rewardCoins % partnerCount
+    val baseHp = spec.rewardHp / partnerCount
+    val remHp = spec.rewardHp % partnerCount
+    return ranked.mapIndexed { idx, (uid, contributed) ->
+      val coinsShare = baseCoins + if (idx == 0) remCoins else 0L
+      val hpShare = baseHp + if (idx == 0) remHp else 0L
+      RocketWinnerShare(
+        rank = idx + 1,
+        uid = uid,
+        displayName = names[uid].orEmpty().ifBlank { "पार्टनर #${idx + 1}" },
+        avatarUrl = avatars[uid].orEmpty(),
+        contributedCoins = contributed,
+        rewardCoins = coinsShare,
+        rewardHp = hpShare,
+      )
+    }
+  }
+
+  fun rankedRocketContributors(
+    rocket: RoomRocketState?,
+  ): List<RocketContributorUi> {
+    if (rocket == null) return emptyList()
+    val spec = rocketTierSpec(rocket.rocketLevel)
+    val sorted = rocket.contributors.entries
+      .filter { (uid, coins) -> uid.isNotBlank() && coins > 0L }
+      .sortedWith(
+        compareByDescending<Map.Entry<String, Long>> { it.value }
+          .thenBy { it.key }
+      )
+    if (sorted.isEmpty()) return emptyList()
+    val partnerCount = minOf(sorted.size, 3).toLong().coerceAtLeast(1L)
+    val baseCoins = spec.rewardCoins / partnerCount
+    val remCoins = spec.rewardCoins % partnerCount
+    val baseHp = spec.rewardHp / partnerCount
+    val remHp = spec.rewardHp % partnerCount
+    return sorted.mapIndexed { idx, (uid, contributed) ->
+      val isTop3 = idx < 3
+      RocketContributorUi(
+        rank = idx + 1,
+        uid = uid,
+        displayName = rocket.contributorNames[uid].orEmpty().ifBlank { "सदस्य" },
+        avatarUrl = rocket.contributorAvatars[uid].orEmpty(),
+        contributedCoins = contributed,
+        isTop3Partner = isTop3,
+        projectedRewardCoins = if (isTop3) baseCoins + if (idx == 0) remCoins else 0L else 0L,
+        projectedRewardHp = if (isTop3) baseHp + if (idx == 0) remHp else 0L else 0L,
+      )
+    }
   }
 
   fun unlockedTiersForLevel(level: Int): List<LevelTierSpec> {

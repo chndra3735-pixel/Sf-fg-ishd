@@ -17,6 +17,7 @@ data class UserProfile(
   val gender: String = "male",
   val clubTag: String = "SWAR",
   val coins: Long = 1000L,
+  val hp: Long = 0L,
   @ServerTimestamp val createdAt: Timestamp? = null,
   @ServerTimestamp val updatedAt: Timestamp? = null,
 )
@@ -351,6 +352,44 @@ data class CpRelationship(
     }
   }
 }
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class RoomRocketState(
+  @DocumentId val id: String = "",
+  val roomId: String = "",
+  val roomOwnerId: String = "",
+  @get:PropertyName("isRoomPublic") @field:PropertyName("isRoomPublic") val isRoomPublic: Boolean = true,
+  val rocketLevel: Int = 1,
+  val currentCoins: Long = 0L,
+  val targetCoins: Long = 1_063_040L,
+  val contributors: Map<String, Long> = emptyMap(),
+  val contributorNames: Map<String, String> = emptyMap(),
+  val contributorAvatars: Map<String, String> = emptyMap(),
+  val lastLaunchId: String = "",
+  @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
+@androidx.annotation.Keep
+@IgnoreExtraProperties
+data class RocketLaunchEvent(
+  @DocumentId val id: String = "",
+  val roomId: String = "",
+  val roomTitle: String = "",
+  val launcherUid: String = "",
+  val rocketLevel: Int = 1,
+  val targetCoins: Long = 1_063_040L,
+  val totalRewardCoins: Long = 28_000L,
+  val totalRewardHp: Long = 2_000L,
+  val winnerUids: List<String> = emptyList(),
+  val winnerNames: Map<String, String> = emptyMap(),
+  val winnerAvatars: Map<String, String> = emptyMap(),
+  val winnerContributions: Map<String, Long> = emptyMap(),
+  val winnerRewardCoins: Map<String, Long> = emptyMap(),
+  val winnerRewardHp: Map<String, Long> = emptyMap(),
+  val claimedUids: List<String> = emptyList(),
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
 
 object SwarCatalogDefaults {
   const val LUCKY_CP_CATEGORY = "लकी"

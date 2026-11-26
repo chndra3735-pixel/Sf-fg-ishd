@@ -13,9 +13,11 @@ import com.example.data.model.LevelRewardClaim
 import com.example.data.model.LevelTierConfig
 import com.example.data.model.MomentPost
 import com.example.data.model.NumericIdLookup
+import com.example.data.model.RocketLaunchEvent
 import com.example.data.model.RoomKickLog
 import com.example.data.model.RoomMessage
 import com.example.data.model.RoomPresenceMember
+import com.example.data.model.RoomRocketState
 import com.example.data.model.RoomSeat
 import com.example.data.model.SwarCatalogDefaults
 import com.example.data.model.SwarUserIdentity
@@ -103,6 +105,7 @@ class SwarRoomRepository(
       "gender" to "male",
       "clubTag" to "SWAR",
       "coins" to 1500L,
+      "hp" to 1500L,
       "createdAt" to FieldValue.serverTimestamp(),
       "updatedAt" to FieldValue.serverTimestamp(),
     )
@@ -1454,7 +1457,7 @@ class SwarRoomRepository(
     val giftId = "gift_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val docRef = db.collection("gift_catalog").document(giftId)
     val safeMediaType = if (mediaType in listOf("emoji", "image", "video")) mediaType else "emoji"
-    val safeCost = coinCost.coerceIn(1L, 999999L)
+    val safeCost = coinCost.coerceIn(1L, 99_999_999L)
     val payload = mapOf(
       "createdByUid" to uid,
       "name" to name.trim().take(40).ifBlank { "स्पेशल गिफ्ट" },
@@ -1491,7 +1494,7 @@ class SwarRoomRepository(
     requireUserId()
     val docRef = db.collection("gift_catalog").document(giftId)
     val safeMediaType = if (mediaType in listOf("emoji", "image", "video")) mediaType else "emoji"
-    val safeCost = coinCost.coerceIn(1L, 999999L)
+    val safeCost = coinCost.coerceIn(1L, 99_999_999L)
     val updates = mapOf(
       "name" to name.trim().take(40).ifBlank { "स्पेशल गिफ्ट" },
       "category" to category.trim().take(24).ifBlank { "हॉट" },
@@ -1593,12 +1596,15 @@ class SwarRoomRepository(
   ): Result<GiftEvent> = runCatching {
     val uid = requireUserId()
     val safeQty = quantity.coerceIn(1, 99)
-    val totalCost = (gift.coinCost * safeQty).coerceIn(0L, 999999L)
+    val totalCost = (gift.coinCost * safeQty).coerceIn(0L, 99_999_999L)
     val userRef = db.collection("users").document(uid)
+    val rocketRef = db.collection("room_rockets").document(room.id)
     val eventId = "evt_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val eventRef = db.collection("gift_events").document(eventId)
     val msgId = "gmsg_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val msgRef = db.collection("rooms").document(room.id).collection("messages").document(msgId)
+    val launchId = "rkt_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val launchRef = db.collection("rocket_launches").document(launchId)
 
     val safeGiftName = gift.name.take(40).ifBlank { "गिफ्ट" }
     val safeGiftEmoji = gift.emoji.take(16).ifBlank { "🎁" }
@@ -1656,6 +1662,7 @@ class SwarRoomRepository(
       db.runTransaction { tx ->
         val userSnap = tx.get(userRef)
         val cpSnap = cpPairRef?.let { tx.get(it) }
+        val rocketSnap = tx.get(rocketRef)
         val hasAcceptedCpPair = cpPairRef != null &&
           cpSnap != null &&
           cpSnap.exists() &&
@@ -1667,14 +1674,65 @@ class SwarRoomRepository(
           )
         }
 
-        val currentCoins = userSnap.getLong("coins") ?: 0L
+        val currentCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
+        val currentHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
+        val preservedHp = maxOf(currentHp, currentCoins)
         if (currentCoins < totalCost) {
           throw IllegalStateException("कॉइंस कम हैं! इस गिफ्ट के लिए $totalCost कॉइंस चाहिए।")
         }
+
+        val existingRocket = if (rocketSnap.exists()) {
+          rocketSnap.toObject(RoomRocketState::class.java)
+        } else {
+          null
+        }
+        val activeRocketLevel = (existingRocket?.rocketLevel ?: 1).coerceIn(1, 5)
+        val activeSpec = SwarUserIdentity.rocketTierSpec(activeRocketLevel)
+        val prevRocketCoins = (existingRocket?.currentCoins ?: 0L).coerceAtLeast(0L)
+        val updatedContributors = (existingRocket?.contributors ?: emptyMap()).toMutableMap()
+        val updatedNames = (existingRocket?.contributorNames ?: emptyMap()).toMutableMap()
+        val updatedAvatars = (existingRocket?.contributorAvatars ?: emptyMap()).toMutableMap()
+
+        if (totalCost > 0L) {
+          updatedContributors[uid] = (updatedContributors[uid] ?: 0L) + totalCost
+          updatedNames[uid] = safeSenderName
+          updatedAvatars[uid] = sender.avatarUrl.take(600)
+          if (updatedContributors.size > 90) {
+            val topKeep = updatedContributors.entries
+              .sortedByDescending { it.value }
+              .take(90)
+              .map { it.key }
+              .toSet()
+            updatedContributors.keys.retainAll(topKeep)
+            updatedNames.keys.retainAll(topKeep)
+            updatedAvatars.keys.retainAll(topKeep)
+          }
+        }
+
+        val nextRocketCoins = (prevRocketCoins + totalCost).coerceAtLeast(0L)
+        val triggeredLaunch = totalCost > 0L && nextRocketCoins >= activeSpec.targetCoins
+
+        val winners = if (triggeredLaunch) {
+          SwarUserIdentity.computeRocketTop3Distribution(
+            contributors = updatedContributors,
+            names = updatedNames,
+            avatars = updatedAvatars,
+            rocketLevel = activeRocketLevel,
+          )
+        } else {
+          emptyList()
+        }
+        val senderWinnerShare = winners.firstOrNull { it.uid == uid }
+        val finalUserCoins = (currentCoins - totalCost + (senderWinnerShare?.rewardCoins ?: 0L))
+          .coerceIn(0L, 999_999_999_999L)
+        val finalUserHp = (preservedHp + (senderWinnerShare?.rewardHp ?: 0L))
+          .coerceIn(0L, 999_999_999_999L)
+
         tx.update(
           userRef,
           mapOf(
-            "coins" to (currentCoins - totalCost),
+            "coins" to finalUserCoins,
+            "hp" to finalUserHp,
             "updatedAt" to FieldValue.serverTimestamp(),
           ),
         )
@@ -1691,6 +1749,81 @@ class SwarRoomRepository(
               "updatedAt" to FieldValue.serverTimestamp(),
             ),
           )
+        }
+
+        if (triggeredLaunch && winners.isNotEmpty()) {
+          val nextLevel = SwarUserIdentity.nextRocketLevel(activeRocketLevel)
+          val nextSpec = SwarUserIdentity.rocketTierSpec(nextLevel)
+          val carryOverCoins = (nextRocketCoins - activeSpec.targetCoins)
+            .coerceIn(0L, (nextSpec.targetCoins - 1L).coerceAtLeast(0L))
+          val nextContributors = if (carryOverCoins > 0L) mapOf(uid to carryOverCoins) else emptyMap()
+          val nextNames = if (carryOverCoins > 0L) mapOf(uid to safeSenderName) else emptyMap()
+          val nextAvatars = if (carryOverCoins > 0L) mapOf(uid to sender.avatarUrl.take(600)) else emptyMap()
+
+          val launchPayload = mapOf(
+            "roomId" to room.id,
+            "roomTitle" to room.title.take(60).ifBlank { "लाइव रूम" },
+            "launcherUid" to uid,
+            "rocketLevel" to activeRocketLevel.toLong(),
+            "targetCoins" to activeSpec.targetCoins,
+            "totalRewardCoins" to activeSpec.rewardCoins,
+            "totalRewardHp" to activeSpec.rewardHp,
+            "winnerUids" to winners.map { it.uid },
+            "winnerNames" to winners.associate { it.uid to it.displayName.take(40) },
+            "winnerAvatars" to winners.associate { it.uid to it.avatarUrl.take(600) },
+            "winnerContributions" to winners.associate { it.uid to it.contributedCoins },
+            "winnerRewardCoins" to winners.associate { it.uid to it.rewardCoins },
+            "winnerRewardHp" to winners.associate { it.uid to it.rewardHp },
+            "claimedUids" to if (senderWinnerShare != null) listOf(uid) else emptyList<String>(),
+            "createdAt" to FieldValue.serverTimestamp(),
+          )
+          tx.set(launchRef, launchPayload)
+
+          val rocketNextFields = mapOf(
+            "isRoomPublic" to room.isPublic,
+            "rocketLevel" to nextLevel.toLong(),
+            "currentCoins" to carryOverCoins,
+            "targetCoins" to nextSpec.targetCoins,
+            "contributors" to nextContributors,
+            "contributorNames" to nextNames,
+            "contributorAvatars" to nextAvatars,
+            "lastLaunchId" to launchId,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          )
+          if (rocketSnap.exists()) {
+            tx.update(rocketRef, rocketNextFields)
+          } else {
+            tx.set(
+              rocketRef,
+              rocketNextFields + mapOf(
+                "roomId" to room.id,
+                "roomOwnerId" to room.ownerId,
+              ),
+            )
+          }
+        } else if (totalCost > 0L) {
+          val rocketProgressFields = mapOf(
+            "isRoomPublic" to room.isPublic,
+            "rocketLevel" to activeRocketLevel.toLong(),
+            "currentCoins" to nextRocketCoins.coerceAtMost(999_999_999L),
+            "targetCoins" to activeSpec.targetCoins,
+            "contributors" to updatedContributors,
+            "contributorNames" to updatedNames,
+            "contributorAvatars" to updatedAvatars,
+            "lastLaunchId" to (existingRocket?.lastLaunchId.orEmpty()),
+            "updatedAt" to FieldValue.serverTimestamp(),
+          )
+          if (rocketSnap.exists()) {
+            tx.update(rocketRef, rocketProgressFields)
+          } else {
+            tx.set(
+              rocketRef,
+              rocketProgressFields + mapOf(
+                "roomId" to room.id,
+                "roomOwnerId" to room.ownerId,
+              ),
+            )
+          }
         }
       }.await()
       GiftEvent(
@@ -1729,12 +1862,15 @@ class SwarRoomRepository(
     try {
       db.runTransaction { tx ->
         val snap = tx.get(docRef)
-        val current = snap.getLong("coins") ?: 0L
-        val next = (current + safeBonus).coerceAtMost(999999999L)
+        val current = (snap.getLong("coins") ?: 0L).coerceAtLeast(0L)
+        val currentHp = (snap.getLong("hp") ?: 0L).coerceAtLeast(0L)
+        val next = (current + safeBonus).coerceAtMost(999_999_999_999L)
+        val nextHp = maxOf(currentHp, next)
         tx.update(
           docRef,
           mapOf(
             "coins" to next,
+            "hp" to nextHp,
             "updatedAt" to FieldValue.serverTimestamp(),
           ),
         )
@@ -1826,12 +1962,15 @@ class SwarRoomRepository(
           return@runTransaction 0L
         }
         val userSnap = tx.get(userRef)
-        val currentCoins = userSnap.getLong("coins") ?: 0L
-        val nextCoins = (currentCoins + safeReward).coerceAtMost(999999999L)
+        val currentCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
+        val currentHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
+        val nextCoins = (currentCoins + safeReward).coerceAtMost(999_999_999_999L)
+        val nextHp = maxOf(currentHp, nextCoins)
         tx.update(
           userRef,
           mapOf(
             "coins" to nextCoins,
+            "hp" to nextHp,
             "updatedAt" to FieldValue.serverTimestamp(),
           ),
         )
@@ -2525,6 +2664,79 @@ class SwarRoomRepository(
       throw e
     } catch (e: Exception) {
       handleFirestoreError(e, OperationType.DELETE, docRef.path)
+      throw e
+    }
+  }
+
+  // --- 5-Tier Room Rocket Observers & Top-3 Launch Reward Claim ---
+
+  fun observeRoomRocket(roomId: String): Flow<RoomRocketState?> = flow {
+    val uid = requireUserId()
+    val docRef = db.collection("room_rockets").document(roomId)
+    emitAll(
+      docRef.snapshots()
+        .map { snapshot ->
+          if (snapshot.exists()) {
+            snapshot.toObject(RoomRocketState::class.java, ServerTimestampBehavior.ESTIMATE)
+          } else {
+            null
+          }
+        }
+        .catch { error -> handleFlowError(error, OperationType.GET, docRef.path, uid); throw error }
+    )
+  }
+
+  fun observeRoomRocketLaunches(roomId: String): Flow<List<RocketLaunchEvent>> = flow {
+    val uid = requireUserId()
+    val query = db.collection("rocket_launches").whereEqualTo("roomId", roomId)
+    emitAll(
+      query.snapshots()
+        .map { snapshot ->
+          snapshot.toObjects(RocketLaunchEvent::class.java, ServerTimestampBehavior.ESTIMATE)
+            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+        }
+        .catch { error -> handleFlowError(error, OperationType.LIST, "rocket_launches", uid); throw error }
+    )
+  }
+
+  suspend fun claimRocketLaunchReward(launchId: String): Result<Pair<Long, Long>> = runCatching {
+    val uid = requireUserId()
+    val launchRef = db.collection("rocket_launches").document(launchId)
+    val userRef = db.collection("users").document(uid)
+    try {
+      db.runTransaction { tx ->
+        val launchSnap = tx.get(launchRef)
+        val userSnap = tx.get(userRef)
+        val launch = launchSnap.toObject(RocketLaunchEvent::class.java)
+          ?: return@runTransaction (0L to 0L)
+        if (uid !in launch.winnerUids || uid in launch.claimedUids) {
+          return@runTransaction (0L to 0L)
+        }
+        val rewardCoins = (launch.winnerRewardCoins[uid] ?: 0L).coerceAtLeast(0L)
+        val rewardHp = (launch.winnerRewardHp[uid] ?: 0L).coerceAtLeast(0L)
+        val currentCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
+        val currentHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
+        val preservedHp = maxOf(currentHp, currentCoins)
+        val nextCoins = (currentCoins + rewardCoins).coerceIn(0L, 999_999_999_999L)
+        val nextHp = (preservedHp + rewardHp).coerceIn(0L, 999_999_999_999L)
+        tx.update(
+          launchRef,
+          mapOf("claimedUids" to (launch.claimedUids + uid)),
+        )
+        tx.update(
+          userRef,
+          mapOf(
+            "coins" to nextCoins,
+            "hp" to nextHp,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        rewardCoins to rewardHp
+      }.await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.WRITE, launchRef.path)
       throw e
     }
   }

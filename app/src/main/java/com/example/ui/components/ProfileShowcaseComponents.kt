@@ -493,7 +493,7 @@ fun WalletOverviewDialog(
             Column {
               Text("उपलब्ध बैलेंस", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7D5421))
               Text(
-                text = "$coins कॉइंस",
+                text = "${SwarUserIdentity.formatIndianNumber(coins)} कॉइंस / HP",
                 style = MaterialTheme.typography.titleLarge,
                 color = Color(0xFF422100),
                 fontWeight = FontWeight.ExtraBold,
@@ -516,8 +516,8 @@ fun WalletOverviewDialog(
           trackColor = Color(0xFFE8ECF4),
         )
         Text(
-          text = if (levelInfo.level >= 120) "आप अधिकतम स्तर पर पहुँच चुके हैं!"
-          else "अगले स्तर के लिए ${levelInfo.nextLevelRemainingCoins} कॉइंस और कमाएं।",
+          text = if (levelInfo.level >= 120) "आप अधिकतम LV.120 स्तर पर पहुँच चुके हैं!"
+          else "अगले स्तर (LV.${levelInfo.level + 1}) के लिए ${SwarUserIdentity.formatIndianNumber(levelInfo.nextLevelRemainingCoins)} HP और कमाएं।",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -92,6 +92,7 @@ import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import com.example.audio.VoiceAudioEngine
+import com.example.data.model.SwarUserIdentity
 import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.SupabaseStorageRepository
 import com.example.data.repository.SwarRoomRepository
@@ -382,6 +383,8 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val giftCatalog by viewModel.giftCatalog.collectAsStateWithLifecycle()
   val latestMarqueeGift by viewModel.latestMarqueeGift.collectAsStateWithLifecycle()
   val activeFullScreenGift by viewModel.activeFullScreenGift.collectAsStateWithLifecycle()
+  val activeRoomRocket by viewModel.activeRoomRocket.collectAsStateWithLifecycle()
+  val activeRocketLaunchEvent by viewModel.activeRocketLaunchEvent.collectAsStateWithLifecycle()
   val activeConversationId by viewModel.activeConversationId.collectAsStateWithLifecycle()
   val activeDirectMessages by viewModel.activeDirectMessages.collectAsStateWithLifecycle()
   val isUploadingMedia by viewModel.isUploadingMedia.collectAsStateWithLifecycle()
@@ -580,6 +583,7 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
     Box(modifier = Modifier.fillMaxSize()) {
       val userProfile = (profileState as? UiState.Success)?.data
       val coins = userProfile?.coins ?: 1500L
+      val effectiveHp = SwarUserIdentity.effectiveHpForProfile(userProfile)
       VoiceRoomScreen(
         room = currentRoom,
         seats = activeRoomSeats,
@@ -721,6 +725,10 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         onSendCpRequestById = { recipientNumericId, bondTitle ->
           viewModel.sendCpRequestByNumericId(recipientNumericId, bondTitle)
         },
+        userHp = effectiveHp,
+        roomRocketState = activeRoomRocket,
+        activeRocketLaunch = activeRocketLaunchEvent,
+        onDismissRocketLaunch = { viewModel.dismissRocketLaunchOverlay() },
       )
       SnackbarHost(
         hostState = snackbarHostState,

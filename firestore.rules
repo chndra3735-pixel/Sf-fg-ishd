@@ -47,6 +47,7 @@ service cloud.firestore {
              data.gender in ['male', 'female', 'other'] &&
              data.clubTag is string && data.clubTag.size() <= 16 &&
              data.coins is int && data.coins >= 0 && data.coins <= 999999999999 &&
+             (!('hp' in data.keys()) || (data.hp is int && data.hp >= 0 && data.hp <= 999999999999)) &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
     }
@@ -199,7 +200,7 @@ service cloud.firestore {
              data.thumbnailUrl is string && data.thumbnailUrl.size() <= 800 &&
              data.mediaUrl is string && data.mediaUrl.size() <= 800 &&
              data.mediaType in ['emoji', 'image', 'video'] &&
-             data.coinCost is int && data.coinCost >= 1 && data.coinCost <= 999999 &&
+             data.coinCost is int && data.coinCost >= 1 && data.coinCost <= 99999999 &&
              data.isActive is bool &&
              isValidTimestamp(data.createdAt);
     }
@@ -217,7 +218,7 @@ service cloud.firestore {
              data.giftEmoji is string && data.giftEmoji.size() <= 16 &&
              data.giftMediaUrl is string && data.giftMediaUrl.size() <= 800 &&
              data.giftMediaType in ['emoji', 'image', 'video'] &&
-             data.coinCost is int && data.coinCost >= 0 && data.coinCost <= 999999 &&
+             data.coinCost is int && data.coinCost >= 0 && data.coinCost <= 99999999 &&
              data.quantity is int && data.quantity >= 1 && data.quantity <= 99 &&
              data.isPublic is bool &&
              isValidTimestamp(data.createdAt);
@@ -318,7 +319,7 @@ service cloud.firestore {
                        request.auth.uid == userId &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'hp', 'createdAt', 'updatedAt']) &&
                        isValidUserProfile(incoming());
 
       allow update: if isSignedIn() &&
@@ -327,7 +328,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt && (
                          (request.auth.uid == userId &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'updatedAt'])) ||
+                          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'hp', 'updatedAt'])) ||
                          (isAdmin() &&
                           incoming().coins >= existing().coins &&
                           incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'updatedAt']))
@@ -827,6 +828,107 @@ service cloud.firestore {
       allow delete: if isSignedIn() &&
                        isValidId(pairId) &&
                        request.auth.uid in existing().memberUids;
+    }
+
+    // 15. Room 5-Tier Rocket Charge & Top-3 Contributors State
+    function isValidRoomRocket(data) {
+      return data.roomId is string && isValidId(data.roomId) &&
+             data.roomOwnerId is string && data.roomOwnerId.size() >= 1 && data.roomOwnerId.size() <= 128 &&
+             data.isRoomPublic is bool &&
+             data.rocketLevel is int && data.rocketLevel in [1, 2, 3, 4, 5] &&
+             data.currentCoins is int && data.currentCoins >= 0 && data.currentCoins <= 999999999 &&
+             data.targetCoins is int && data.targetCoins >= 1 && data.targetCoins <= 999999999 &&
+             data.contributors is map && data.contributors.size() <= 100 &&
+             data.contributorNames is map && data.contributorNames.size() <= 100 &&
+             data.contributorAvatars is map && data.contributorAvatars.size() <= 100 &&
+             data.lastLaunchId is string && data.lastLaunchId.size() <= 128 &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    match /room_rockets/{roomId} {
+      allow get: if isSignedIn() && isValidId(roomId) &&
+                    (resource == null || resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+      allow list: if isSignedIn() &&
+                     (resource.data.isRoomPublic == true || resource.data.roomOwnerId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(roomId) &&
+                       incoming().roomId == roomId &&
+                       incoming().keys().hasAll(['roomId', 'roomOwnerId', 'isRoomPublic', 'rocketLevel', 'currentCoins', 'targetCoins', 'contributors', 'contributorNames', 'contributorAvatars', 'lastLaunchId', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['roomId', 'roomOwnerId', 'isRoomPublic', 'rocketLevel', 'currentCoins', 'targetCoins', 'contributors', 'contributorNames', 'contributorAvatars', 'lastLaunchId', 'updatedAt']) &&
+                       isValidRoomRocket(incoming()) &&
+                       exists(/databases/$(database)/documents/rooms/$(roomId));
+
+      allow update: if isSignedIn() &&
+                       isValidId(roomId) &&
+                       isValidRoomRocket(incoming()) &&
+                       incoming().roomId == existing().roomId &&
+                       incoming().roomOwnerId == existing().roomOwnerId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['isRoomPublic', 'rocketLevel', 'currentCoins', 'targetCoins', 'contributors', 'contributorNames', 'contributorAvatars', 'lastLaunchId', 'updatedAt']) &&
+                       exists(/databases/$(database)/documents/rooms/$(roomId));
+
+      allow delete: if isAdmin() && isValidId(roomId);
+    }
+
+    // 16. Rocket Launch & Blast Payout Events (Top 3 Partners Only, One-Time Claim Per Winner)
+    function isValidRocketLaunch(data) {
+      return data.roomId is string && isValidId(data.roomId) &&
+             data.roomTitle is string && data.roomTitle.size() >= 1 && data.roomTitle.size() <= 60 &&
+             data.launcherUid is string && data.launcherUid.size() >= 1 && data.launcherUid.size() <= 128 &&
+             data.rocketLevel is int && data.rocketLevel in [1, 2, 3, 4, 5] &&
+             data.targetCoins is int && data.targetCoins >= 1 && data.targetCoins <= 999999999 &&
+             data.totalRewardCoins is int && data.totalRewardCoins >= 1 && data.totalRewardCoins <= 99999999 &&
+             data.totalRewardHp is int && data.totalRewardHp >= 1 && data.totalRewardHp <= 99999999 &&
+             data.winnerUids is list && data.winnerUids.size() >= 1 && data.winnerUids.size() <= 3 &&
+             data.winnerNames is map && data.winnerNames.size() <= 3 &&
+             data.winnerAvatars is map && data.winnerAvatars.size() <= 3 &&
+             data.winnerContributions is map && data.winnerContributions.size() <= 3 &&
+             data.winnerRewardCoins is map && data.winnerRewardCoins.size() <= 3 &&
+             data.winnerRewardHp is map && data.winnerRewardHp.size() <= 3 &&
+             data.claimedUids is list && data.claimedUids.size() <= 3 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    match /rocket_launches/{launchId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(launchId) &&
+                       incoming().launcherUid == request.auth.uid &&
+                       incoming().keys().hasAll(['roomId', 'roomTitle', 'launcherUid', 'rocketLevel', 'targetCoins', 'totalRewardCoins', 'totalRewardHp', 'winnerUids', 'winnerNames', 'winnerAvatars', 'winnerContributions', 'winnerRewardCoins', 'winnerRewardHp', 'claimedUids', 'createdAt']) &&
+                       incoming().keys().hasOnly(['roomId', 'roomTitle', 'launcherUid', 'rocketLevel', 'targetCoins', 'totalRewardCoins', 'totalRewardHp', 'winnerUids', 'winnerNames', 'winnerAvatars', 'winnerContributions', 'winnerRewardCoins', 'winnerRewardHp', 'claimedUids', 'createdAt']) &&
+                       isValidRocketLaunch(incoming()) &&
+                       (incoming().claimedUids.size() == 0 ||
+                        (incoming().claimedUids.size() == 1 &&
+                         incoming().claimedUids[0] == request.auth.uid &&
+                         request.auth.uid in incoming().winnerUids)) &&
+                       exists(/databases/$(database)/documents/rooms/$(incoming().roomId));
+
+      allow update: if isSignedIn() &&
+                       isValidId(launchId) &&
+                       isValidRocketLaunch(incoming()) &&
+                       incoming().roomId == existing().roomId &&
+                       incoming().roomTitle == existing().roomTitle &&
+                       incoming().launcherUid == existing().launcherUid &&
+                       incoming().rocketLevel == existing().rocketLevel &&
+                       incoming().targetCoins == existing().targetCoins &&
+                       incoming().totalRewardCoins == existing().totalRewardCoins &&
+                       incoming().totalRewardHp == existing().totalRewardHp &&
+                       incoming().winnerUids == existing().winnerUids &&
+                       incoming().winnerNames == existing().winnerNames &&
+                       incoming().winnerAvatars == existing().winnerAvatars &&
+                       incoming().winnerContributions == existing().winnerContributions &&
+                       incoming().winnerRewardCoins == existing().winnerRewardCoins &&
+                       incoming().winnerRewardHp == existing().winnerRewardHp &&
+                       incoming().createdAt == existing().createdAt &&
+                       request.auth.uid in existing().winnerUids &&
+                       !(request.auth.uid in existing().claimedUids) &&
+                       incoming().claimedUids.size() == existing().claimedUids.size() + 1 &&
+                       incoming().claimedUids.hasAll(existing().claimedUids) &&
+                       request.auth.uid in incoming().claimedUids &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['claimedUids']);
+
+      allow delete: if isAdmin() && isValidId(launchId);
     }
   }
 }

@@ -53,6 +53,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -192,7 +193,10 @@ fun ProfileScreen(
   val numericId = remember(profile?.userId) {
     SwarUserIdentity.numericIdForUid(profile?.userId.orEmpty())
   }
-  val levelInfo = remember(profile?.coins) {
+  val effectiveHp = remember(profile?.coins, profile?.hp) {
+    SwarUserIdentity.effectiveHpForProfile(profile)
+  }
+  val levelInfo = remember(profile?.coins, profile?.hp) {
     SwarUserIdentity.levelForProfile(profile)
   }
   val activeFrameUrl = remember(levelInfo.level, levelConfigs) {
@@ -443,6 +447,107 @@ fun ProfileScreen(
       levelConfigs = levelConfigs,
       onOpenLevelCards = { showLevelDialog = true },
     )
+
+    // Live Level & HP Progress Card (वर्तमान HP + अगले लेवल के लिए कितने HP और चाहिए)
+    Surface(
+      onClick = { showLevelDialog = true },
+      shape = RoundedCornerShape(18.dp),
+      color = Color.White,
+      shadowElevation = 2.dp,
+      modifier = Modifier
+        .fillMaxWidth()
+        .border(1.dp, levelInfo.badgeColor.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+        .testTag("profile_level_hp_card"),
+    ) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.weight(1f),
+          ) {
+            GoldenWingedLevelBadge(level = levelInfo.level)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Text(
+                text = "LV.${levelInfo.level} • ${levelInfo.title}",
+                style = MaterialTheme.typography.titleSmall,
+                color = Color(0xFF171A23),
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+              Text(
+                text = "वर्तमान HP: ${SwarUserIdentity.formatIndianNumber(effectiveHp)} HP",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF3A4362),
+                fontWeight = FontWeight.Bold,
+              )
+            }
+          }
+          Surface(
+            color = levelInfo.badgeColor.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(10.dp),
+          ) {
+            Text(
+              text = "${(levelInfo.progress * 100f).toInt()}%",
+              style = MaterialTheme.typography.labelMedium,
+              color = levelInfo.badgeColor,
+              fontWeight = FontWeight.ExtraBold,
+              modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            )
+          }
+        }
+
+        LinearProgressIndicator(
+          progress = { levelInfo.progress },
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(7.dp)
+            .clip(RoundedCornerShape(4.dp)),
+          color = levelInfo.badgeColor,
+          trackColor = Color(0xFFEAEFF8),
+        )
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = if (levelInfo.level >= 120) {
+              "सर्वोच्च LV.120 पूर्ण (${SwarUserIdentity.formatIndianNumber(SwarUserIdentity.MAX_LEVEL_120_HP)} HP)"
+            } else {
+              "इस स्तर में: ${SwarUserIdentity.formatIndianNumber(levelInfo.intoLevelHp)} / ${SwarUserIdentity.formatIndianNumber(levelInfo.levelSpanHp)} HP"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF6B7388),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+          )
+          if (levelInfo.level < 120) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = "अगले LV.${levelInfo.level + 1} के लिए ${SwarUserIdentity.formatIndianNumber(levelInfo.nextLevelRemainingCoins)} HP चाहिए",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFF0A66C2),
+              fontWeight = FontWeight.Bold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+        }
+      }
+    }
 
     if (activeCpLink != null) {
       JointCpProfileCard(
@@ -734,7 +839,7 @@ fun ProfileScreen(
   if (showLevelDialog) {
     LevelDetailsDialog(
       levelInfo = levelInfo,
-      coins = coins,
+      coins = effectiveHp,
       onDismiss = { showLevelDialog = false },
       levelConfigs = levelConfigs,
       claimedTiers = claimedLevelTiers,
