@@ -77,12 +77,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import kotlin.math.PI
@@ -90,7 +93,9 @@ import kotlin.math.cos
 import kotlin.math.sin
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -363,24 +368,65 @@ private fun UnlockedTierBadgeChip(
   sheenFraction: Float,
   isDarkSurface: Boolean,
 ) {
+  val prestige = ((tier.badgeLevel - 1).coerceIn(0, 119) / 119f)
+  val isSovereign = tier.badgeLevel >= 100
   val bgBrush = if (isDarkSurface) {
-    Brush.verticalGradient(listOf(tier.capsuleTopColor.copy(alpha = 0.38f), Color(0xFF140D2C)))
+    Brush.verticalGradient(
+      listOf(
+        tier.capsuleTopColor.copy(alpha = 0.36f + 0.22f * prestige),
+        Color(0xFF140D2C),
+      )
+    )
   } else {
-    Brush.verticalGradient(listOf(tier.capsuleTopColor.copy(alpha = 0.16f), Color(0xFFF6F8FC)))
+    Brush.verticalGradient(
+      listOf(
+        tier.capsuleTopColor.copy(alpha = 0.16f + 0.14f * prestige),
+        Color(0xFFF6F8FC),
+      )
+    )
   }
+  val chipBorderBrush = if (isSovereign) {
+    Brush.horizontalGradient(listOf(tier.rimColor, Color(0xFFFFF8D6), SwarGold, tier.rimColor))
+  } else {
+    Brush.horizontalGradient(listOf(tier.rimColor.copy(alpha = 0.65f + 0.25f * prestige), tier.glowColor.copy(alpha = 0.65f)))
+  }
+  val labelBrush = Brush.linearGradient(
+    colors = if (isDarkSurface) {
+      listOf(
+        tier.textColor,
+        if (isSovereign) Color(0xFFFFF8D6) else Color.White,
+        if (isSovereign) SwarGold else tier.rimColor,
+        tier.textColor,
+      )
+    } else {
+      listOf(
+        Color(0xFF1D2336),
+        if (isSovereign) Color(0xFF8A5400) else Color(0xFF475580),
+        Color(0xFF1D2336),
+      )
+    },
+    start = Offset((sheenFraction - 0.28f) * 140f, 0f),
+    end = Offset((sheenFraction + 0.28f) * 140f, 48f),
+  )
+
   Box(
     modifier = Modifier
       .clip(RoundedCornerShape(12.dp))
       .background(bgBrush)
-      .border(1.dp, tier.rimColor.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+      .border(if (isSovereign) 1.3.dp else 1.dp, chipBorderBrush, RoundedCornerShape(12.dp))
       .padding(horizontal = 8.dp, vertical = 5.dp),
   ) {
     Canvas(modifier = Modifier.matchParentSize()) {
-      val bandW = size.width * 0.35f
+      val bandW = size.width * (0.35f + 0.10f * prestige)
       val sx = (size.width + bandW) * sheenFraction - bandW
       drawRect(
         brush = Brush.linearGradient(
-          colors = listOf(Color.Transparent, Color.White.copy(alpha = 0.22f), Color.Transparent),
+          colors = listOf(
+            Color.Transparent,
+            Color.White.copy(alpha = 0.20f + 0.28f * prestige),
+            if (isSovereign) Color(0xFFFFE57F).copy(alpha = 0.24f) else Color.Transparent,
+            Color.Transparent,
+          ),
           start = Offset(sx, 0f),
           end = Offset(sx + bandW, size.height),
         )
@@ -421,9 +467,10 @@ private fun UnlockedTierBadgeChip(
       }
       Text(
         text = tier.badgeLabel,
-        style = MaterialTheme.typography.labelSmall,
-        color = if (isDarkSurface) Color.White else Color(0xFF1D2336),
-        fontWeight = FontWeight.ExtraBold,
+        style = MaterialTheme.typography.labelSmall.copy(
+          brush = labelBrush,
+          fontWeight = FontWeight.ExtraBold,
+        ),
         maxLines = 1,
       )
     }
@@ -749,24 +796,100 @@ private fun TypingBannerMessageRow(
     verticalAlignment = Alignment.CenterVertically,
   ) {
     if (badgeTag.isNotBlank()) {
-      Surface(
-        color = when (messageType) {
-          "gift" -> SwarCoral
-          "join" -> SwarViolet
-          else -> if (hasBanner) badgeBgColor else SwarCyan.copy(alpha = 0.25f)
-        },
-        shape = RoundedCornerShape(8.dp),
-        modifier = if (hasBanner) {
-          Modifier.border(0.8.dp, SwarGold.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
-        } else Modifier,
-      ) {
-        Text(
-          text = badgeTag,
-          style = MaterialTheme.typography.labelSmall,
-          color = if (hasBanner) SwarGold else Color.White,
-          fontWeight = if (hasBanner) FontWeight.ExtraBold else FontWeight.Medium,
-          modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+      val parsedLevel = remember(badgeTag) {
+        if (badgeTag.startsWith("LV.", ignoreCase = true)) {
+          badgeTag.filter { it.isDigit() }.toIntOrNull()?.coerceIn(1, 120)
+        } else {
+          null
+        }
+      }
+      if (parsedLevel != null) {
+        val levelTier = remember(parsedLevel) { SwarUserIdentity.tierForLevel(parsedLevel) }
+        val prestige = ((parsedLevel - 1).coerceIn(0, 119) / 119f)
+        val isSovereign = parsedLevel >= 101
+        val lvAnim = rememberInfiniteTransition(label = "chatLvShimmer")
+        val sweep by lvAnim.animateFloat(
+          initialValue = -0.35f,
+          targetValue = 1.35f,
+          animationSpec = infiniteRepeatable(
+            tween(durationMillis = if (isSovereign) 1500 else 2200, easing = LinearEasing),
+            RepeatMode.Restart,
+          ),
+          label = "chatLvSweep",
         )
+        val lvTextBrush = Brush.linearGradient(
+          colors = listOf(
+            levelTier.textColor,
+            if (isSovereign) Color(0xFFFFF8D6) else Color.White,
+            if (isSovereign) Color(0xFFFFE57F) else levelTier.rimColor,
+            levelTier.textColor,
+          ),
+          start = Offset((sweep - 0.25f) * 160f, 0f),
+          end = Offset((sweep + 0.25f) * 160f, 52f),
+        )
+        Box(
+          modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+              Brush.horizontalGradient(
+                listOf(levelTier.capsuleTopColor, levelTier.capsuleBottomColor)
+              )
+            )
+            .border(
+              width = if (isSovereign) 1.2.dp else 0.9.dp,
+              brush = Brush.horizontalGradient(
+                listOf(levelTier.rimColor, Color.White.copy(alpha = 0.78f + 0.22f * prestige), levelTier.rimColor)
+              ),
+              shape = RoundedCornerShape(8.dp),
+            ),
+          contentAlignment = Alignment.Center,
+        ) {
+          Canvas(modifier = Modifier.matchParentSize()) {
+            val bw = size.width * 0.42f
+            val sx = (size.width + bw) * sweep - bw
+            drawRect(
+              brush = Brush.linearGradient(
+                colors = listOf(
+                  Color.Transparent,
+                  Color.White.copy(alpha = 0.22f + 0.30f * prestige),
+                  Color.Transparent,
+                ),
+                start = Offset(sx, 0f),
+                end = Offset(sx + bw, size.height),
+              )
+            )
+          }
+          Text(
+            text = badgeTag,
+            style = MaterialTheme.typography.labelSmall.copy(
+              brush = lvTextBrush,
+              fontWeight = FontWeight.ExtraBold,
+              shadow = Shadow(color = Color(0xCC000000), offset = Offset(0f, 1f), blurRadius = 3f),
+            ),
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+          )
+        }
+      } else {
+        Surface(
+          color = when (messageType) {
+            "gift" -> SwarCoral
+            "join" -> SwarViolet
+            else -> if (hasBanner) badgeBgColor else SwarCyan.copy(alpha = 0.25f)
+          },
+          shape = RoundedCornerShape(8.dp),
+          modifier = if (hasBanner) {
+            Modifier.border(0.8.dp, SwarGold.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
+          } else Modifier,
+        ) {
+          Text(
+            text = badgeTag,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (hasBanner) SwarGold else Color.White,
+            fontWeight = if (hasBanner) FontWeight.ExtraBold else FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+          )
+        }
       }
       Spacer(modifier = Modifier.width(6.dp))
     }
@@ -800,6 +923,579 @@ private fun TypingBannerMessageRow(
       },
       style = MaterialTheme.typography.bodySmall,
     )
+  }
+}
+
+/**
+ * Sovereign 24K Golden Royal Entry Banner ("शाही एंट्री पट्टी") rendered over entry videos and previews.
+ * Features sculpted golden wings ("पंख") and crown ("ताज") scaled by level tier, DP with sunburst halo,
+ * ornate LV crest badge, member name, and a continuous shimmering golden light-wave floor underneath.
+ */
+@Composable
+fun RoyalGoldenEntryBanner(
+  senderName: String,
+  senderAvatarUrl: String,
+  entryLevel: Int,
+  frameUrl: String = "",
+  modifier: Modifier = Modifier,
+  compact: Boolean = false,
+) {
+  val safeLevel = entryLevel.coerceIn(1, 120)
+  val tier = remember(safeLevel) { SwarUserIdentity.tierForLevel(safeLevel) }
+  val prestigeProgress = ((safeLevel - 1).coerceIn(0, 119) / 119f)
+  val rankTier = remember(safeLevel) {
+    when {
+      safeLevel >= 101 -> 5
+      safeLevel >= 90 -> 4
+      safeLevel >= 60 -> 3
+      safeLevel >= 30 -> 2
+      else -> 1
+    }
+  }
+
+  val infinite = rememberInfiniteTransition(label = "royalEntryBannerAnim")
+  val sheenX by infinite.animateFloat(
+    initialValue = -0.35f,
+    targetValue = 1.35f,
+    animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing), RepeatMode.Restart),
+    label = "entrySheen",
+  )
+  val glowPulse by infinite.animateFloat(
+    initialValue = 0.62f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(tween(980, easing = LinearEasing), RepeatMode.Reverse),
+    label = "entryGlow",
+  )
+  val sparklePhase by infinite.animateFloat(
+    initialValue = 0f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
+    label = "entrySparkle",
+  )
+  val haloAngleDeg by infinite.animateFloat(
+    initialValue = 0f,
+    targetValue = 360f,
+    animationSpec = infiniteRepeatable(tween(6500, easing = LinearEasing), RepeatMode.Restart),
+    label = "entryHalo",
+  )
+
+  val wingExtend = if (compact) 14.dp else 22.dp
+  val crownHeadroom = if (compact) 12.dp else 18.dp
+  val avatarSize = if (compact) 30.dp else 46.dp
+  val shape = RoundedCornerShape(if (compact) 14.dp else 20.dp)
+
+  val cardBgGradient = Brush.horizontalGradient(
+    colors = listOf(
+      Color(0xEE1C1003),
+      Color(0xF23A2404),
+      tier.capsuleBottomColor.copy(alpha = 0.88f),
+      Color(0xF23A2404),
+      Color(0xEE180D02),
+    )
+  )
+  val goldRimBrush = Brush.horizontalGradient(
+    colors = listOf(
+      Color(0xFFB8730A),
+      Color(0xFFFFD86B),
+      Color(0xFFFFF8D6).copy(alpha = glowPulse),
+      tier.rimColor,
+      Color(0xFFFFD86B),
+      Color(0xFFB8730A),
+    )
+  )
+
+  Box(modifier = modifier.semantics(mergeDescendants = true) {}) {
+    // Back Layer: Sculpted Twin Royal Golden Wings flaring outward on Left & Right
+    Canvas(modifier = Modifier.matchParentSize()) {
+      val w = size.width
+      val h = size.height
+      val bodyTop = crownHeadroom.toPx()
+      val cy = bodyTop + (h - bodyTop) * 0.48f
+      val wingReach = wingExtend.toPx() * 1.15f
+      val wingH = (h - bodyTop) * 0.78f
+
+      val wingBrush = Brush.linearGradient(
+        colors = listOf(
+          Color(0xFFFFF4B8),
+          SwarGold,
+          tier.rimColor,
+          Color(0xFFAA6800),
+        ),
+        start = Offset(0f, cy - wingH * 0.5f),
+        end = Offset(w, cy + wingH * 0.5f),
+      )
+
+      // Outer golden halo behind the whole banner
+      drawRoundRect(
+        brush = Brush.radialGradient(
+          colors = listOf(
+            SwarGold.copy(alpha = 0.34f * glowPulse),
+            tier.glowColor.copy(alpha = 0.16f * glowPulse),
+            Color.Transparent,
+          ),
+          center = Offset(w / 2f, cy),
+          radius = w * 0.55f,
+        ),
+        topLeft = Offset(0f, bodyTop * 0.5f),
+        size = Size(w, h - bodyTop * 0.5f),
+        cornerRadius = CornerRadius(30f, 30f),
+      )
+
+      val featherCount = (rankTier + 1).coerceIn(2, 5)
+      for (layer in 0 until featherCount) {
+        val scale = 1f - layer * 0.16f
+        val dy = (layer - featherCount / 2f) * (wingH * 0.16f)
+        val tipLeftX = (wingReach * (1f - scale)).coerceAtLeast(1.dp.toPx())
+        val tipRightX = w - tipLeftX
+        val anchorLeftX = wingReach * 0.92f
+        val anchorRightX = w - anchorLeftX
+
+        val leftFeather = Path().apply {
+          moveTo(anchorLeftX, cy + dy - wingH * 0.11f * scale)
+          lineTo(tipLeftX, cy + dy - wingH * 0.32f * scale)
+          lineTo(tipLeftX + wingReach * 0.28f, cy + dy)
+          lineTo(anchorLeftX, cy + dy + wingH * 0.13f * scale)
+          close()
+        }
+        drawPath(leftFeather, wingBrush)
+        drawPath(
+          leftFeather,
+          color = Color(0xFFFFF5CC).copy(alpha = 0.85f * glowPulse),
+          style = Stroke(width = 1.dp.toPx(), join = StrokeJoin.Round),
+        )
+
+        val rightFeather = Path().apply {
+          moveTo(anchorRightX, cy + dy - wingH * 0.11f * scale)
+          lineTo(tipRightX, cy + dy - wingH * 0.32f * scale)
+          lineTo(tipRightX - wingReach * 0.28f, cy + dy)
+          lineTo(anchorRightX, cy + dy + wingH * 0.13f * scale)
+          close()
+        }
+        drawPath(rightFeather, wingBrush)
+        drawPath(
+          rightFeather,
+          color = Color(0xFFFFF5CC).copy(alpha = 0.85f * glowPulse),
+          style = Stroke(width = 1.dp.toPx(), join = StrokeJoin.Round),
+        )
+      }
+    }
+
+    // Center Royal 24K Gold Banner Card
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(
+          start = wingExtend * 0.68f,
+          end = wingExtend * 0.68f,
+          top = crownHeadroom,
+        )
+        .clip(shape)
+        .background(cardBgGradient)
+        .border(width = if (compact) 1.5.dp else 2.dp, brush = goldRimBrush, shape = shape),
+    ) {
+      // Specular Gold Sweep + Corner Filigree + Stardust Gems
+      Canvas(modifier = Modifier.matchParentSize()) {
+        val bandW = size.width * 0.32f
+        val sx = (size.width + bandW) * sheenX - bandW
+        drawRect(
+          brush = Brush.linearGradient(
+            colors = listOf(
+              Color.Transparent,
+              Color(0xFFFFE57F).copy(alpha = 0.24f * glowPulse),
+              Color.White.copy(alpha = 0.16f),
+              Color.Transparent,
+            ),
+            start = Offset(sx, 0f),
+            end = Offset(sx + bandW, size.height),
+          )
+        )
+
+        // Engraved inner gold double hairline top accent
+        drawLine(
+          brush = Brush.horizontalGradient(
+            colors = listOf(Color.Transparent, Color(0xFFFFF1A8).copy(alpha = 0.7f), Color.Transparent)
+          ),
+          start = Offset(12.dp.toPx(), 3.dp.toPx()),
+          end = Offset(size.width - 12.dp.toPx(), 3.dp.toPx()),
+          strokeWidth = 1.dp.toPx(),
+        )
+
+        // Floating 4-point sparkles (richer density from LV.1 up to LV.101-120)
+        val sparkleX = if (rankTier >= 5) {
+          listOf(0.14f, 0.25f, 0.39f, 0.52f, 0.66f, 0.79f, 0.90f, 0.96f)
+        } else {
+          listOf(0.22f, 0.43f, 0.64f, 0.82f, 0.93f)
+        }
+        sparkleX.forEachIndexed { idx, frac ->
+          val wave = sin((sparklePhase * 2f * PI + idx * 1.15).toDouble()).toFloat()
+          val a = (wave * 0.45f + 0.55f).coerceIn(0.2f, 1f) * (0.68f + 0.32f * prestigeProgress)
+          val px = size.width * frac
+          val py = size.height * (if (idx % 2 == 0) 0.22f else 0.72f)
+          val r = ((if (compact) 2f else 3f) + (idx % 2) * 1.1f + prestigeProgress * 0.7f).dp.toPx()
+          val star = Path().apply {
+            moveTo(px, py - r)
+            lineTo(px + r * 0.3f, py - r * 0.3f)
+            lineTo(px + r, py)
+            lineTo(px + r * 0.3f, py + r * 0.3f)
+            lineTo(px, py + r)
+            lineTo(px - r * 0.3f, py + r * 0.3f)
+            lineTo(px - r, py)
+            lineTo(px - r * 0.3f, py - r * 0.3f)
+            close()
+          }
+          drawPath(star, Color(0xFFFFF8D6).copy(alpha = a))
+        }
+      }
+
+      Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+              horizontal = if (compact) 8.dp else 14.dp,
+              vertical = if (compact) 6.dp else 10.dp,
+            ),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
+        ) {
+          // User DP inside rotating Golden Sunburst Halo + Frame
+          Box(
+            modifier = Modifier.size(avatarSize + (if (compact) 10.dp else 14.dp)),
+            contentAlignment = Alignment.Center,
+          ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+              val c = Offset(size.width / 2f, size.height / 2f)
+              val outerR = size.minDimension * 0.5f
+              val innerR = size.minDimension * 0.36f
+              drawCircle(
+                brush = Brush.radialGradient(
+                  colors = listOf(SwarGold.copy(alpha = 0.52f * glowPulse), Color.Transparent),
+                  center = c,
+                  radius = outerR,
+                ),
+                center = c,
+                radius = outerR,
+              )
+              val rayCount = 8 + rankTier * 2
+              for (rIdx in 0 until rayCount) {
+                val theta = Math.toRadians((haloAngleDeg + rIdx * (360f / rayCount)).toDouble())
+                val p1 = Offset(
+                  c.x + (cos(theta) * innerR).toFloat(),
+                  c.y + (sin(theta) * innerR).toFloat(),
+                )
+                val p2 = Offset(
+                  c.x + (cos(theta) * outerR).toFloat(),
+                  c.y + (sin(theta) * outerR).toFloat(),
+                )
+                drawLine(
+                  color = Color(0xFFFFE57F).copy(alpha = 0.7f * glowPulse),
+                  start = p1,
+                  end = p2,
+                  strokeWidth = 1.4.dp.toPx(),
+                  cap = StrokeCap.Round,
+                )
+              }
+            }
+            FramedUserAvatar(
+              url = senderAvatarUrl,
+              name = senderName,
+              avatarSize = avatarSize,
+              frameUrl = frameUrl,
+              borderColor = Color(0xFFFFE57F),
+              borderWidth = if (compact) 1.5.dp else 2.2.dp,
+            )
+          }
+
+          // Center: Level Crest + Royal Title + Member Name
+          Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              val chipTextBrush = Brush.linearGradient(
+                colors = listOf(
+                  Color(0xFFFFE57F),
+                  Color(0xFFFFFBE6),
+                  if (rankTier >= 5) Color(0xFFFFD54F) else Color.White,
+                  Color(0xFFFFE57F),
+                ),
+                start = Offset((sheenX - 0.25f) * 180f, 0f),
+                end = Offset((sheenX + 0.25f) * 180f, 60f),
+              )
+              Box(
+                modifier = Modifier
+                  .clip(RoundedCornerShape(10.dp))
+                  .background(
+                    Brush.horizontalGradient(
+                      listOf(Color(0xEE2B1600), tier.capsuleBottomColor.copy(alpha = 0.92f), Color(0xEE2B1600))
+                    )
+                  )
+                  .border(
+                    width = if (rankTier >= 5) 1.3.dp else 1.dp,
+                    brush = goldRimBrush,
+                    shape = RoundedCornerShape(10.dp),
+                  )
+                  .testTag("entry_banner_level_chip"),
+              ) {
+                Canvas(modifier = Modifier.matchParentSize()) {
+                  val bandW = size.width * 0.45f
+                  val sx = (size.width + bandW) * sheenX - bandW
+                  drawRect(
+                    brush = Brush.linearGradient(
+                      colors = listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = (0.24f + 0.34f * prestigeProgress) * glowPulse),
+                        Color.Transparent,
+                      ),
+                      start = Offset(sx, 0f),
+                      end = Offset(sx + bandW, size.height),
+                    )
+                  )
+                }
+                Row(
+                  modifier = Modifier.padding(horizontal = if (compact) 6.dp else 8.dp, vertical = 2.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                  Icon(
+                    imageVector = Icons.Filled.WorkspacePremium,
+                    contentDescription = null,
+                    tint = Color(0xFFFFDF6B),
+                    modifier = Modifier.size(if (compact) 11.dp else 14.dp),
+                  )
+                  Text(
+                    text = "LV.$safeLevel",
+                    style = TextStyle(
+                      brush = chipTextBrush,
+                      fontSize = if (compact) 10.sp else 12.sp,
+                      fontWeight = FontWeight.ExtraBold,
+                      shadow = Shadow(color = Color(0xD9000000), offset = Offset(0f, 1.5f), blurRadius = 4f),
+                    ),
+                    maxLines = 1,
+                  )
+                }
+              }
+              Text(
+                text = tier.titleHindi,
+                color = Color(0xFFFFDF8E),
+                fontSize = if (compact) 10.sp else 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+
+            Text(
+              text = senderName.ifBlank { "शाही सदस्य" },
+              color = Color.White,
+              fontSize = if (compact) 13.sp else 17.sp,
+              fontWeight = FontWeight.ExtraBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              style = MaterialTheme.typography.titleMedium.copy(
+                shadow = Shadow(color = Color(0xF0000000), offset = Offset(1f, 2f), blurRadius = 6f)
+              ),
+              modifier = Modifier.testTag("entry_banner_sender_name"),
+            )
+
+            if (!compact) {
+              Text(
+                text = "✨ रूम में शानदार प्रवेश पधारे ✨",
+                color = Color(0xFFFFE699),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+              )
+            }
+          }
+
+          // Right: Royal Tier Medallion Crest with inner sheen & LV shimmer text
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(12.dp))
+              .background(
+                Brush.verticalGradient(
+                  listOf(tier.capsuleTopColor.copy(alpha = 0.92f), tier.capsuleBottomColor.copy(alpha = 0.92f))
+                )
+              )
+              .border(1.3.dp, goldRimBrush, RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center,
+          ) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+              val bandW = size.width * 0.45f
+              val sx = (size.width + bandW) * sheenX - bandW
+              drawRect(
+                brush = Brush.linearGradient(
+                  colors = listOf(
+                    Color.Transparent,
+                    Color.White.copy(alpha = (0.20f + 0.30f * prestigeProgress) * glowPulse),
+                    Color.Transparent,
+                  ),
+                  start = Offset(sx, 0f),
+                  end = Offset(sx + bandW, size.height),
+                )
+              )
+            }
+            Column(
+              modifier = Modifier.padding(horizontal = if (compact) 7.dp else 10.dp, vertical = if (compact) 3.dp else 6.dp),
+              horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+              Icon(
+                imageVector = Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                tint = Color(0xFFFFF6C7),
+                modifier = Modifier.size(if (compact) 13.dp else 18.dp),
+              )
+              Text(
+                text = tier.badgeLabel,
+                style = TextStyle(
+                  brush = Brush.linearGradient(
+                    colors = listOf(tier.textColor, Color(0xFFFFFBE6), SwarGold, tier.textColor),
+                    start = Offset((sheenX - 0.25f) * 140f, 0f),
+                    end = Offset((sheenX + 0.25f) * 140f, 50f),
+                  ),
+                  fontSize = if (compact) 9.sp else 11.sp,
+                  fontWeight = FontWeight.ExtraBold,
+                  shadow = Shadow(color = Color(0xCC000000), offset = Offset(0f, 1.5f), blurRadius = 3f),
+                ),
+                maxLines = 1,
+              )
+            }
+          }
+        }
+
+        // Bottom Floor: Radiant 24K Gold Animated Under-Glow & Flowing Energy Wave
+        Canvas(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(if (compact) 7.dp else 11.dp),
+        ) {
+          drawRect(
+            brush = Brush.verticalGradient(
+              colors = listOf(
+                Color.Transparent,
+                SwarGold.copy(alpha = 0.38f * glowPulse),
+                Color(0xFFFFF4BD).copy(alpha = 0.72f * glowPulse),
+              )
+            )
+          )
+
+          val wavePath = Path()
+          val baseY = size.height * 0.58f
+          val amp = size.height * 0.28f
+          wavePath.moveTo(0f, baseY)
+          val steps = 28
+          for (i in 0..steps) {
+            val t = i.toFloat() / steps
+            val x = size.width * t
+            val y = baseY + sin((t * 5f + sparklePhase * 2f) * PI).toFloat() * amp
+            wavePath.lineTo(x, y)
+          }
+          drawPath(
+            path = wavePath,
+            brush = Brush.horizontalGradient(
+              colors = listOf(
+                Color(0xFFFF9F1C).copy(alpha = 0.45f),
+                Color(0xFFFFE57F),
+                Color.White,
+                Color(0xFFFFE57F),
+                Color(0xFFFF9F1C).copy(alpha = 0.45f),
+              )
+            ),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+          )
+
+          val cometX = size.width * sparklePhase
+          val cometR = (size.width * 0.24f).coerceAtLeast(22f)
+          drawCircle(
+            brush = Brush.radialGradient(
+              colors = listOf(
+                Color.White,
+                Color(0xFFFFE885).copy(alpha = 0.78f),
+                Color.Transparent,
+              ),
+              center = Offset(cometX, size.height * 0.75f),
+              radius = cometR,
+            ),
+            center = Offset(cometX, size.height * 0.75f),
+            radius = cometR,
+          )
+
+          drawLine(
+            brush = Brush.horizontalGradient(
+              colors = listOf(Color.Transparent, Color(0xFFFFE066), Color.White, Color(0xFFFFE066), Color.Transparent)
+            ),
+            start = Offset(0f, size.height - 1.dp.toPx()),
+            end = Offset(size.width, size.height - 1.dp.toPx()),
+            strokeWidth = 2.2.dp.toPx(),
+          )
+        }
+      }
+    }
+
+    // Floating 24K Golden Royal Crown ("ताज") perched right over the User DP
+    val crownW = if (compact) 30.dp else 44.dp
+    val crownH = if (compact) 16.dp else 24.dp
+    val crownStart = wingExtend * 0.68f + (if (compact) 12.dp else 21.dp)
+    Canvas(
+      modifier = Modifier
+        .align(Alignment.TopStart)
+        .padding(start = crownStart, top = 1.dp)
+        .size(width = crownW, height = crownH),
+    ) {
+      val cw = size.width
+      val ch = size.height
+      val crownPath = Path().apply {
+        moveTo(cw * 0.08f, ch * 0.88f)
+        lineTo(cw * 0.04f, ch * 0.28f)
+        lineTo(cw * 0.28f, ch * 0.56f)
+        if (rankTier >= 3) {
+          lineTo(cw * 0.39f, ch * 0.16f)
+          lineTo(cw * 0.45f, ch * 0.44f)
+        }
+        lineTo(cw * 0.50f, ch * 0.04f)
+        if (rankTier >= 3) {
+          lineTo(cw * 0.55f, ch * 0.44f)
+          lineTo(cw * 0.61f, ch * 0.16f)
+        }
+        lineTo(cw * 0.72f, ch * 0.56f)
+        lineTo(cw * 0.96f, ch * 0.28f)
+        lineTo(cw * 0.92f, ch * 0.88f)
+        close()
+      }
+      drawPath(
+        path = crownPath,
+        brush = Brush.verticalGradient(
+          colors = listOf(Color(0xFFFFF8CC), Color(0xFFFFD54F), Color(0xFFC67B00))
+        ),
+      )
+      drawPath(
+        path = crownPath,
+        color = Color(0xFFFFF8E1),
+        style = Stroke(width = 1.2.dp.toPx(), join = StrokeJoin.Round),
+      )
+      // Base crown band
+      drawRoundRect(
+        color = Color(0xFFD98700),
+        topLeft = Offset(cw * 0.08f, ch * 0.78f),
+        size = Size(cw * 0.84f, ch * 0.18f),
+        cornerRadius = CornerRadius(4f, 4f),
+      )
+      // Center jewel gem on the crown
+      drawCircle(
+        color = tier.gemColor.copy(alpha = glowPulse),
+        radius = ch * 0.14f,
+        center = Offset(cw * 0.50f, ch * 0.64f),
+      )
+      drawCircle(
+        color = Color.White,
+        radius = ch * 0.06f,
+        center = Offset(cw * 0.48f, ch * 0.61f),
+      )
+    }
   }
 }
 
@@ -1104,10 +1800,14 @@ fun LevelTierDetailConfiguratorDialog(
               }
             }
 
-            // Live Entry Video Auto-Playing Preview Box
+            // Live Entry Video Auto-Playing Preview Box with Royal Golden Entry Banner over it
             if (previewVideoSource.isNotBlank()) {
               LevelEntryVideoPreviewBox(
                 videoSource = previewVideoSource,
+                entryLevel = tier.badgeLevel,
+                senderName = sampleDisplayName,
+                senderAvatarUrl = sampleAvatarUrl,
+                frameUrl = previewFrameModel,
                 isMuted = isEntryVideoMuted,
                 onToggleMute = onToggleEntryVideoMuted,
               )
@@ -1536,6 +2236,10 @@ private fun adminFieldColors() = OutlinedTextFieldDefaults.colors(
 @Composable
 private fun LevelEntryVideoPreviewBox(
   videoSource: String,
+  entryLevel: Int = 1,
+  senderName: String = "",
+  senderAvatarUrl: String = "",
+  frameUrl: String = "",
   isMuted: Boolean = true,
   onToggleMute: (() -> Unit)? = null,
 ) {
@@ -1708,10 +2412,27 @@ private fun LevelEntryVideoPreviewBox(
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+          .align(Alignment.BottomCenter)
+          .padding(bottom = 14.dp),
       ) {
         Icon(Icons.Filled.PlayCircleFilled, contentDescription = null, tint = SwarGold, modifier = Modifier.size(22.dp))
         Text("एंट्री वीडियो लिंक सेट ✓ (रूम में प्रवेश पर प्ले होगा)", color = Color.White, style = MaterialTheme.typography.labelSmall)
       }
     }
+
+    // Floating Royal Golden Entry Patti Preview right on top of the Entry Video
+    RoyalGoldenEntryBanner(
+      senderName = senderName.ifBlank { "Swar स्टार" },
+      senderAvatarUrl = senderAvatarUrl,
+      entryLevel = entryLevel,
+      frameUrl = frameUrl,
+      compact = true,
+      modifier = Modifier
+        .align(Alignment.TopCenter)
+        .fillMaxWidth()
+        .padding(top = 6.dp, start = 8.dp, end = 8.dp)
+        .testTag("entry_video_preview_royal_banner"),
+    )
   }
 }

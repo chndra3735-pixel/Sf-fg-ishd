@@ -66,14 +66,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.layout.ContentScale
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -105,6 +111,52 @@ fun OrnateWingedLevelCrest(
   badgeHeight: Dp = 56.dp,
   isCompact: Boolean = false,
 ) {
+  val resolvedLevel = remember(displayText, tier.badgeLevel) {
+    displayText.filter { it.isDigit() }.toIntOrNull()?.coerceIn(1, 120) ?: tier.badgeLevel
+  }
+  val prestigeProgress = ((resolvedLevel - 1).coerceIn(0, 119) / 119f)
+  val prestigeStage = when {
+    resolvedLevel >= 101 -> 5
+    resolvedLevel >= 90 -> 4
+    resolvedLevel >= 60 -> 3
+    resolvedLevel >= 30 -> 2
+    else -> 1
+  }
+
+  val shimmer = rememberInfiniteTransition(label = "levelCrestShimmer")
+  val sheenProgress by shimmer.animateFloat(
+    initialValue = -0.35f,
+    targetValue = 1.35f,
+    animationSpec = infiniteRepeatable(
+      tween(durationMillis = (2600 - prestigeStage * 220).coerceAtLeast(1450), easing = LinearEasing),
+      RepeatMode.Restart,
+    ),
+    label = "crestSheen",
+  )
+  val glowPulse by shimmer.animateFloat(
+    initialValue = 0.56f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Reverse),
+    label = "crestGlow",
+  )
+  val sparklePhase by shimmer.animateFloat(
+    initialValue = 0f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart),
+    label = "crestSparkle",
+  )
+
+  val textShimmerBrush = Brush.linearGradient(
+    colors = listOf(
+      tier.textColor,
+      if (prestigeStage >= 4) Color(0xFFFFF8D6) else Color.White.copy(alpha = 0.92f),
+      if (prestigeStage >= 5) Color(0xFFFFE57F) else tier.rimColor,
+      tier.textColor,
+    ),
+    start = Offset((sheenProgress - 0.28f) * 260f, 0f),
+    end = Offset((sheenProgress + 0.28f) * 260f, 90f),
+  )
+
   Box(
     modifier = modifier.size(width = badgeWidth, height = badgeHeight),
     contentAlignment = Alignment.Center,
@@ -114,16 +166,47 @@ fun OrnateWingedLevelCrest(
       val h = size.height
       val cy = h / 2f
 
-      // Subtle glowing aura behind high-tier crests
+      // Progressive glowing aura + sunburst rays behind crest (intensifies smoothly LV.1 -> LV.120)
+      val auraAlpha = (0.24f + 0.38f * prestigeProgress) * glowPulse
       drawOval(
         brush = Brush.radialGradient(
-          colors = listOf(tier.glowColor.copy(alpha = 0.36f), Color.Transparent),
+          colors = listOf(
+            tier.glowColor.copy(alpha = auraAlpha),
+            if (prestigeStage >= 4) SwarGold.copy(alpha = auraAlpha * 0.65f) else Color.Transparent,
+            Color.Transparent,
+          ),
           center = Offset(w / 2f, cy),
-          radius = w * 0.45f,
+          radius = w * (0.44f + 0.12f * prestigeProgress),
         ),
-        topLeft = Offset(w * 0.08f, h * 0.06f),
-        size = Size(w * 0.84f, h * 0.88f),
+        topLeft = Offset(w * 0.04f, h * 0.02f),
+        size = Size(w * 0.92f, h * 0.96f),
       )
+
+      if (prestigeStage >= 3) {
+        val rayCount = when {
+          prestigeStage >= 5 -> 14
+          prestigeStage == 4 -> 10
+          else -> 6
+        }
+        val innerR = h * 0.24f
+        val outerR = h * (0.48f + 0.12f * prestigeProgress)
+        for (i in 0 until rayCount) {
+          val deg = sparklePhase * 360f + i * (360f / rayCount)
+          val rad = Math.toRadians(deg.toDouble())
+          val rx1 = w / 2f + (cos(rad) * innerR).toFloat()
+          val ry1 = cy + (sin(rad) * innerR * 0.72f).toFloat()
+          val rx2 = w / 2f + (cos(rad) * outerR * 1.45f).toFloat()
+          val ry2 = cy + (sin(rad) * outerR * 0.86f).toFloat()
+          drawLine(
+            color = (if (prestigeStage >= 5) Color(0xFFFFF2B2) else tier.rimColor)
+              .copy(alpha = (0.35f + 0.35f * glowPulse) * if (i % 2 == 0) 1f else 0.6f),
+            start = Offset(rx1, ry1),
+            end = Offset(rx2, ry2),
+            strokeWidth = if (isCompact) 1.dp.toPx() else 1.5.dp.toPx(),
+            cap = StrokeCap.Round,
+          )
+        }
+      }
 
       val wingBrush = Brush.linearGradient(
         colors = listOf(tier.wingHighlightColor, tier.rimColor, tier.wingShadowColor),
@@ -133,39 +216,58 @@ fun OrnateWingedLevelCrest(
 
       // Left multi-feather ornate wing
       val leftWingOuter = Path().apply {
-        moveTo(w * 0.24f, cy - h * 0.12f)
-        lineTo(w * 0.02f, h * 0.08f)
-        lineTo(w * 0.11f, h * 0.34f)
-        lineTo(w * 0.04f, h * 0.44f)
-        lineTo(w * 0.13f, h * 0.58f)
-        lineTo(w * 0.07f, h * 0.72f)
-        lineTo(w * 0.25f, cy + h * 0.26f)
+        moveTo(w * 0.24f, cy - h * 0.14f)
+        lineTo(w * 0.02f, h * 0.06f)
+        lineTo(w * 0.11f, h * 0.33f)
+        lineTo(w * 0.03f, h * 0.44f)
+        lineTo(w * 0.13f, h * 0.59f)
+        lineTo(w * 0.06f, h * 0.74f)
+        lineTo(w * 0.25f, cy + h * 0.28f)
         close()
       }
       drawPath(leftWingOuter, wingBrush)
       drawPath(
         path = leftWingOuter,
-        color = tier.rimColor.copy(alpha = 0.9f),
-        style = Stroke(width = if (isCompact) 1.2f else 1.8f, join = StrokeJoin.Round),
+        color = Color.White.copy(alpha = 0.55f + 0.4f * prestigeProgress),
+        style = Stroke(width = if (isCompact) 1.2f else 1.9f, join = StrokeJoin.Round),
       )
 
       // Right multi-feather ornate wing
       val rightWingOuter = Path().apply {
-        moveTo(w * 0.76f, cy - h * 0.12f)
-        lineTo(w * 0.98f, h * 0.08f)
-        lineTo(w * 0.89f, h * 0.34f)
-        lineTo(w * 0.96f, h * 0.44f)
-        lineTo(w * 0.87f, h * 0.58f)
-        lineTo(w * 0.93f, h * 0.72f)
-        lineTo(w * 0.75f, cy + h * 0.26f)
+        moveTo(w * 0.76f, cy - h * 0.14f)
+        lineTo(w * 0.98f, h * 0.06f)
+        lineTo(w * 0.89f, h * 0.33f)
+        lineTo(w * 0.97f, h * 0.44f)
+        lineTo(w * 0.87f, h * 0.59f)
+        lineTo(w * 0.94f, h * 0.74f)
+        lineTo(w * 0.75f, cy + h * 0.28f)
         close()
       }
       drawPath(rightWingOuter, wingBrush)
       drawPath(
         path = rightWingOuter,
-        color = tier.rimColor.copy(alpha = 0.9f),
-        style = Stroke(width = if (isCompact) 1.2f else 1.8f, join = StrokeJoin.Round),
+        color = Color.White.copy(alpha = 0.55f + 0.4f * prestigeProgress),
+        style = Stroke(width = if (isCompact) 1.2f else 1.9f, join = StrokeJoin.Round),
       )
+
+      // Extra sovereign upper wing crest plumes for LV.90..120 (peak on LV.101..120)
+      if (prestigeStage >= 4) {
+        val leftPlume = Path().apply {
+          moveTo(w * 0.24f, cy - h * 0.14f)
+          lineTo(w * 0.09f, h * 0.01f)
+          lineTo(w * 0.19f, cy - h * 0.04f)
+          close()
+        }
+        val rightPlume = Path().apply {
+          moveTo(w * 0.76f, cy - h * 0.14f)
+          lineTo(w * 0.91f, h * 0.01f)
+          lineTo(w * 0.81f, cy - h * 0.04f)
+          close()
+        }
+        val plumeColor = Color(0xFFFFF4B8).copy(alpha = 0.88f * glowPulse)
+        drawPath(leftPlume, plumeColor)
+        drawPath(rightPlume, plumeColor)
+      }
 
       // Central metallic capsule frame
       val capLeft = w * 0.16f
@@ -178,7 +280,7 @@ fun OrnateWingedLevelCrest(
 
       // Outer dark rim shadow
       drawRoundRect(
-        color = Color(0x88000000),
+        color = Color(0x99000000),
         topLeft = Offset(capLeft - 2f, capTop + 2f),
         size = Size(capW + 4f, capH + 2f),
         cornerRadius = corner,
@@ -199,7 +301,7 @@ fun OrnateWingedLevelCrest(
       // Top satin gloss highlight inside capsule
       drawRoundRect(
         brush = Brush.verticalGradient(
-          colors = listOf(Color.White.copy(alpha = 0.42f), Color.Transparent),
+          colors = listOf(Color.White.copy(alpha = 0.42f + 0.18f * prestigeProgress), Color.Transparent),
           startY = capTop + 2f,
           endY = cy,
         ),
@@ -208,22 +310,102 @@ fun OrnateWingedLevelCrest(
         cornerRadius = CornerRadius(capH * 0.4f, capH * 0.4f),
       )
 
-      // Metallic rim border around capsule
+      // Live animated specular sheen sweeping INSIDE the level capsule behind the LV text
+      val capClip = Path().apply {
+        addRoundRect(RoundRect(capLeft, capTop, capW, capH, corner))
+      }
+      clipPath(capClip) {
+        val bandW = capW * (0.28f + 0.12f * prestigeProgress)
+        val sx = capLeft + (capW + bandW) * sheenProgress - bandW
+        drawRect(
+          brush = Brush.linearGradient(
+            colors = listOf(
+              Color.Transparent,
+              tier.rimColor.copy(alpha = 0.26f + 0.24f * prestigeProgress),
+              Color.White.copy(alpha = (0.30f + 0.36f * prestigeProgress) * glowPulse),
+              tier.rimColor.copy(alpha = 0.24f + 0.20f * prestigeProgress),
+              Color.Transparent,
+            ),
+            start = Offset(sx, capTop),
+            end = Offset(sx + bandW, capBottom),
+          ),
+          topLeft = Offset(capLeft, capTop),
+          size = Size(capW, capH),
+        )
+        // Secondary trailing shimmer ribbon on high tiers (LV.60..120, brightest LV.101..120)
+        if (prestigeStage >= 3) {
+          val trailProgress = ((sheenProgress + 0.55f) % 1.7f) - 0.35f
+          val sx2 = capLeft + (capW + bandW * 0.7f) * trailProgress - bandW * 0.7f
+          drawRect(
+            brush = Brush.linearGradient(
+              colors = listOf(
+                Color.Transparent,
+                Color(0xFFFFF5B8).copy(alpha = (0.22f + 0.26f * prestigeProgress) * glowPulse),
+                Color.Transparent,
+              ),
+              start = Offset(sx2, capTop),
+              end = Offset(sx2 + bandW * 0.7f, capBottom),
+            ),
+            topLeft = Offset(capLeft, capTop),
+            size = Size(capW, capH),
+          )
+        }
+      }
+
+      // Animated Metallic Shimmering Rim border around capsule
+      val rimSweepX = capLeft + capW * sheenProgress.coerceIn(0f, 1f)
       drawRoundRect(
         brush = Brush.horizontalGradient(
-          colors = listOf(tier.rimColor, Color.White.copy(alpha = 0.92f), tier.rimColor),
+          colors = listOf(
+            tier.rimColor,
+            Color.White.copy(alpha = 0.82f + 0.18f * glowPulse),
+            if (prestigeStage >= 4) SwarGold else tier.rimColor,
+            Color.White.copy(alpha = 0.85f),
+            tier.rimColor,
+          ),
+          startX = rimSweepX - capW * 0.6f,
+          endX = rimSweepX + capW * 0.6f,
         ),
         topLeft = Offset(capLeft, capTop),
         size = Size(capW, capH),
         cornerRadius = corner,
-        style = Stroke(width = if (isCompact) 2.2f else 3.4f),
+        style = Stroke(width = if (isCompact) 2.2f else (3.2f + 1.0f * prestigeProgress)),
       )
 
-      // Left & right 4-pointed diamond gems
+      // Top Sovereign Mini-Crown Accent above the capsule for LV.60..120 (jeweled 3-spire for LV.101..120)
+      if (prestigeStage >= 3) {
+        val crownW = capW * (if (prestigeStage >= 5) 0.28f else 0.20f)
+        val crownH = capTop * (if (prestigeStage >= 5) 0.84f else 0.68f)
+        val cx = w / 2f
+        val baseY = capTop + 1.dp.toPx()
+        val crownPath = Path().apply {
+          moveTo(cx - crownW * 0.45f, baseY)
+          lineTo(cx - crownW * 0.52f, baseY - crownH * 0.65f)
+          lineTo(cx - crownW * 0.20f, baseY - crownH * 0.36f)
+          lineTo(cx, baseY - crownH)
+          lineTo(cx + crownW * 0.20f, baseY - crownH * 0.36f)
+          lineTo(cx + crownW * 0.52f, baseY - crownH * 0.65f)
+          lineTo(cx + crownW * 0.45f, baseY)
+          close()
+        }
+        drawPath(
+          crownPath,
+          brush = Brush.verticalGradient(
+            colors = listOf(Color(0xFFFFF8D6), Color(0xFFFFD54F), Color(0xFFB87000))
+          ),
+        )
+        drawCircle(
+          color = tier.gemColor.copy(alpha = glowPulse),
+          radius = crownH * 0.22f,
+          center = Offset(cx, baseY - crownH * 0.42f),
+        )
+      }
+
+      // Left & right 4-pointed diamond gems with twinkling specular gleam
       val gemR = capH * 0.22f
       val leftGemX = capLeft + capH * 0.36f
       val rightGemX = capRight - capH * 0.36f
-      listOf(leftGemX, rightGemX).forEach { gx ->
+      listOf(leftGemX, rightGemX).forEachIndexed { idx, gx ->
         val gemPath = Path().apply {
           moveTo(gx, cy - gemR)
           lineTo(gx + gemR * 0.78f, cy)
@@ -232,18 +414,47 @@ fun OrnateWingedLevelCrest(
           close()
         }
         drawPath(gemPath, color = tier.gemColor)
+        val gemGlow = 0.65f + 0.35f * sin((sparklePhase * 2f * PI + idx * 1.5).toDouble()).toFloat()
         drawCircle(
-          color = Color.White.copy(alpha = 0.85f),
-          radius = gemR * 0.24f,
-          center = Offset(gx - gemR * 0.14f, cy - gemR * 0.16f),
+          color = Color.White.copy(alpha = gemGlow),
+          radius = gemR * (0.24f + 0.14f * prestigeProgress),
+          center = Offset(gx - gemR * 0.12f, cy - gemR * 0.14f),
         )
+      }
+
+      // Twinkling diamond sparkles inside/around the level crest (scales from 2 sparkles to 6 on LV.101..120)
+      val sparkleSpots = when {
+        prestigeStage >= 5 -> listOf(0.24f to 0.24f, 0.38f to 0.74f, 0.50f to 0.22f, 0.62f to 0.76f, 0.76f to 0.25f, 0.90f to 0.50f)
+        prestigeStage == 4 -> listOf(0.25f to 0.24f, 0.42f to 0.74f, 0.58f to 0.24f, 0.75f to 0.74f)
+        prestigeStage == 3 -> listOf(0.28f to 0.26f, 0.50f to 0.74f, 0.72f to 0.26f)
+        prestigeStage == 2 -> listOf(0.32f to 0.26f, 0.68f to 0.72f)
+        else -> listOf(0.72f to 0.28f)
+      }
+      sparkleSpots.forEachIndexed { idx, (xf, yf) ->
+        val pulseAlpha = ((sin((sparklePhase * 2f * PI + idx * 1.25).toDouble()).toFloat() * 0.45f) + 0.55f)
+          .coerceIn(0.18f, 1f) * (0.55f + 0.45f * prestigeProgress)
+        val sx = w * xf
+        val sy = h * yf
+        val r = (if (isCompact) 2.2f else 3.2f + prestigeProgress * 1.4f).dp.toPx()
+        val star = Path().apply {
+          moveTo(sx, sy - r)
+          lineTo(sx + r * 0.28f, sy - r * 0.28f)
+          lineTo(sx + r, sy)
+          lineTo(sx + r * 0.28f, sy + r * 0.28f)
+          lineTo(sx, sy + r)
+          lineTo(sx - r * 0.28f, sy + r * 0.28f)
+          lineTo(sx - r, sy)
+          lineTo(sx - r * 0.28f, sy - r * 0.28f)
+          close()
+        }
+        drawPath(star, Color(0xFFFFFBE6).copy(alpha = pulseAlpha))
       }
     }
 
     Text(
       text = displayText,
       style = TextStyle(
-        color = tier.textColor,
+        brush = textShimmerBrush,
         fontSize = when {
           isCompact -> 10.sp
           displayText.length >= 6 -> 16.sp
@@ -251,11 +462,11 @@ fun OrnateWingedLevelCrest(
         },
         fontWeight = FontWeight.ExtraBold,
         fontFamily = FontFamily.Serif,
-        letterSpacing = 0.4.sp,
+        letterSpacing = if (prestigeStage >= 4) 0.7.sp else 0.4.sp,
         shadow = Shadow(
-          color = Color(0xCC000000),
+          color = if (prestigeStage >= 4) Color(0xF0000000) else Color(0xCC000000),
           offset = Offset(0f, 2f),
-          blurRadius = 4f,
+          blurRadius = if (prestigeStage >= 4) 6f else 4f,
         ),
       ),
       maxLines = 1,
@@ -277,13 +488,24 @@ fun LevelTierLargeCard(
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val borderColor = when {
-    isCurrentTier -> SwarGold
-    isSelected -> tier.glowColor
-    isUnlocked -> tier.rimColor.copy(alpha = 0.45f)
-    else -> Color(0xFF332D58)
+  val prestigeFraction = ((tier.badgeLevel - 1).coerceIn(0, 119) / 119f)
+  val isSovereignTier = tier.badgeLevel >= 100
+  val borderBrush = when {
+    isCurrentTier -> Brush.horizontalGradient(listOf(SwarGold, Color.White, SwarGold))
+    isSelected -> Brush.horizontalGradient(listOf(tier.glowColor, SwarGold, tier.glowColor))
+    isSovereignTier -> Brush.horizontalGradient(
+      listOf(tier.rimColor, Color(0xFFFFF8D6), SwarGold, tier.glowColor, tier.rimColor)
+    )
+    isUnlocked -> Brush.horizontalGradient(
+      listOf(tier.rimColor.copy(alpha = 0.55f), tier.glowColor.copy(alpha = 0.45f))
+    )
+    else -> Brush.horizontalGradient(listOf(Color(0xFF332D58), Color(0xFF423A6E)))
   }
-  val borderWidth = if (isCurrentTier || isSelected) 2.dp else 1.dp
+  val borderWidth = when {
+    isCurrentTier || isSelected -> 2.dp
+    isSovereignTier -> 1.8.dp
+    else -> 1.dp
+  }
 
   Surface(
     shape = RoundedCornerShape(20.dp),
@@ -294,14 +516,22 @@ fun LevelTierLargeCard(
       .clip(RoundedCornerShape(20.dp))
       .background(
         Brush.verticalGradient(
-          colors = listOf(
-            Color(0xFF28214D),
-            Color(0xFF1A1534),
-            Color(0xFF120E26),
-          )
+          colors = if (isSovereignTier) {
+            listOf(
+              Color(0xFF2E224F),
+              tier.capsuleBottomColor.copy(alpha = 0.35f),
+              Color(0xFF130E24),
+            )
+          } else {
+            listOf(
+              Color(0xFF28214D),
+              Color(0xFF1A1534),
+              Color(0xFF120E26),
+            )
+          }
         )
       )
-      .border(borderWidth, borderColor, RoundedCornerShape(20.dp))
+      .border(borderWidth, borderBrush, RoundedCornerShape(20.dp))
       .clickable(onClick = onClick)
       .testTag("level_card_${tier.badgeLevel}"),
   ) {
@@ -310,17 +540,36 @@ fun LevelTierLargeCard(
         .fillMaxSize()
         .padding(horizontal = 10.dp, vertical = 10.dp),
     ) {
-      // Live continuous light sheen across every level card
+      // Live continuous light sheen across every level card (grows brighter LV.1 -> LV.120)
       Canvas(modifier = Modifier.matchParentSize()) {
-        val bandW = size.width * 0.35f
+        val bandW = size.width * (0.34f + 0.10f * prestigeFraction)
         val startX = (size.width + bandW) * shimmerFraction - bandW
         drawRect(
           brush = Brush.linearGradient(
-            colors = listOf(Color.Transparent, tier.glowColor.copy(alpha = 0.14f), Color.Transparent),
+            colors = listOf(
+              Color.Transparent,
+              tier.glowColor.copy(alpha = 0.12f + 0.18f * prestigeFraction),
+              if (isSovereignTier) Color(0xFFFFF8D6).copy(alpha = 0.16f) else Color.Transparent,
+              Color.Transparent,
+            ),
             start = Offset(startX, 0f),
             end = Offset(startX + bandW, size.height),
           )
         )
+        if (tier.badgeLevel >= 60) {
+          drawCircle(
+            brush = Brush.radialGradient(
+              colors = listOf(
+                tier.glowColor.copy(alpha = 0.14f + 0.16f * prestigeFraction),
+                Color.Transparent,
+              ),
+              center = Offset(size.width * 0.5f, size.height * 0.36f),
+              radius = size.width * 0.48f,
+            ),
+            center = Offset(size.width * 0.5f, size.height * 0.36f),
+            radius = size.width * 0.48f,
+          )
+        }
       }
 
       // Top Left: Quick indicator if Entry Video / Frame / Badge live
@@ -1096,6 +1345,23 @@ private fun MyStyleCosmeticsTab(
           badgeTag = "LV.$userLevel",
           bannerUrl = activeTypingUrl,
           modifier = Modifier.fillMaxWidth(),
+        )
+
+        Text(
+          text = "👑 एंट्री वीडियो के ऊपर दिखने वाली गोल्डन एंट्री पट्टी:",
+          style = MaterialTheme.typography.labelSmall,
+          color = SwarGold,
+          fontWeight = FontWeight.Bold,
+        )
+        RoyalGoldenEntryBanner(
+          senderName = sampleDisplayName.ifBlank { "Swar" },
+          senderAvatarUrl = sampleAvatarUrl,
+          entryLevel = userLevel,
+          frameUrl = activeFrameUrl,
+          compact = true,
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("style_entry_banner_preview"),
         )
       }
     }

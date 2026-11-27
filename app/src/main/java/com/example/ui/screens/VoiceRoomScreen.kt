@@ -1181,12 +1181,42 @@ fun VoiceRoomScreen(
     // Full-Screen Gift Playback Overlay (strictly scoped to the active room only)
     if (activeFullScreenGift != null && activeFullScreenGift.roomId == room.id) {
       val isEntryClip = activeFullScreenGift.giftId.startsWith("entry_lv_")
+      LaunchedEffect(activeFullScreenGift.id, activeFullScreenGift.senderUid, isEntryClip) {
+        if (isEntryClip &&
+          activeFullScreenGift.senderUid.isNotBlank() &&
+          activeFullScreenGift.senderUid != currentUserId &&
+          activeFullScreenGift.senderUid !in userProfiles
+        ) {
+          onRequestUserProfile(activeFullScreenGift.senderUid)
+        }
+      }
+      val entrySenderProfile = if (isEntryClip) userProfiles[activeFullScreenGift.senderUid] else null
+      val entrySenderLevel = if (isEntryClip) {
+        when {
+          activeFullScreenGift.senderUid == currentUserId -> SwarUserIdentity.levelForCoins(effectiveOwnHp).level
+          entrySenderProfile != null -> SwarUserIdentity.levelForProfile(entrySenderProfile).level
+          else -> activeFullScreenGift.giftId.removePrefix("entry_lv_").toIntOrNull() ?: 1
+        }
+      } else {
+        null
+      }
+      val entrySenderFrame = if (isEntryClip) {
+        if (activeFullScreenGift.senderUid == currentUserId) {
+          SwarUserIdentity.resolvedFrameUrl(entrySenderLevel ?: 1, levelConfigs, ownEquippedFrameLevel)
+        } else {
+          SwarUserIdentity.resolvedFrameUrl(entrySenderProfile, levelConfigs)
+        }
+      } else {
+        ""
+      }
       FullScreenGiftOverlay(
         event = activeFullScreenGift,
         onDismiss = onDismissFullScreenGift,
         onPlaybackMessage = onShowToast,
         isAudioMuted = if (isEntryClip) isEntryVideoMuted else false,
         onToggleAudioMute = if (isEntryClip) onToggleEntryVideoMuted else null,
+        senderFrameUrl = entrySenderFrame,
+        senderExactLevel = entrySenderLevel,
       )
     }
 

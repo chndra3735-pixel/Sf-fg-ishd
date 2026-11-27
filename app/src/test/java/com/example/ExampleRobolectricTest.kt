@@ -2189,7 +2189,8 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
 
     composeTestRule.onNodeWithTag("style_customizer_panel").assertIsDisplayed()
-    composeTestRule.onNodeWithTag("style_entry_mute_switch").performClick()
+    composeTestRule.onNodeWithTag("style_entry_banner_preview").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("style_entry_mute_switch").performScrollTo().performClick()
     composeTestRule.waitForIdle()
     assertEquals(true, mutedState)
 
@@ -2415,5 +2416,146 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("seat_emoji_overlay", useUnmergedTree = true).assertIsDisplayed()
   }
+
+  @Test
+  fun `entry video overlay displays royal golden entry patti with dp crown wings level and name`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_royal_entry",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "Royal Entry Stage",
+      roomCode = "120120",
+    )
+    val entrantProfile = com.example.data.model.UserProfile(
+      id = "u_maharaja",
+      userId = "u_maharaja",
+      displayName = "सम्राट चंद्र",
+      hp = SwarUserIdentity.requiredHpForLevel(120),
+    )
+    val entryEvent = com.example.data.model.GiftEvent(
+      id = "ent_120",
+      roomId = "room_royal_entry",
+      senderUid = "u_maharaja",
+      senderName = "सम्राट चंद्र",
+      senderAvatarUrl = "",
+      giftId = "entry_lv_120",
+      giftName = "LV.120 रॉयल एंट्री",
+      giftEmoji = "👑",
+      giftMediaUrl = "",
+      giftMediaType = "video",
+    )
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = room,
+          seats = emptyList(),
+          messages = emptyList(),
+          currentUserId = "viewer_1",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 1000L,
+          emojiCatalog = emptyList(),
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = entryEvent,
+          isMicMuted = true,
+          isSpeakerOn = true,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          userProfiles = mapOf("u_maharaja" to entrantProfile),
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {},
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+        )
+      }
+    }
+
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("entry_video_royal_banner").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("entry_banner_level_chip", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onNodeWithTag("entry_banner_sender_name", useUnmergedTree = true).assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("LV.120", substring = true, useUnmergedTree = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("सम्राट चंद्र", substring = true, useUnmergedTree = true).onFirst().assertIsDisplayed()
+  }
+
+  @Test
+  fun `level crests and badges render cleanly with shimmer across lv1 lv60 lv105 and lv120`() {
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        androidx.compose.foundation.layout.Column {
+          com.example.ui.components.GoldenWingedLevelBadge(level = 1)
+          com.example.ui.components.GoldenWingedLevelBadge(level = 60)
+          com.example.ui.components.GoldenWingedLevelBadge(level = 105)
+          com.example.ui.components.GoldenWingedLevelBadge(level = 120)
+          com.example.ui.components.TypingBannerChatBubble(
+            senderName = "सम्राट",
+            messageText = "चमकता स्तर",
+            badgeTag = "LV.112",
+            bannerUrl = "",
+            messageType = "text",
+          )
+          com.example.ui.components.RoyalGoldenEntryBanner(
+            senderName = "महाराजा",
+            senderAvatarUrl = "",
+            entryLevel = 112,
+          )
+        }
+      }
+    }
+
+    composeTestRule.waitForIdle()
+    composeTestRule.onAllNodesWithText("LV.1", substring = false, useUnmergedTree = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("LV.60", substring = false, useUnmergedTree = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("LV.105", substring = false, useUnmergedTree = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("LV.120", substring = true, useUnmergedTree = true).onFirst().assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("LV.112", substring = true, useUnmergedTree = true).onFirst().assertIsDisplayed()
+  }
+
+  @Test
+  fun `level cards showcase dialog displays sovereign lv100 to lv120 cards`() {
+    val hp115 = SwarUserIdentity.requiredHpForLevel(115)
+    val levelInfo = SwarUserIdentity.levelForCoins(hp115)
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.components.LevelCardsShowcaseDialog(
+          levelInfo = levelInfo,
+          coins = hp115,
+          onDismiss = {},
+        )
+      }
+    }
+
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("level_cards_showcase_dialog").assertIsDisplayed()
+    composeTestRule.onAllNodesWithText("LV.115", substring = false).onFirst().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_cards_grid").performScrollToNode(hasTestTag("level_card_100"))
+    composeTestRule.onNodeWithTag("level_card_100").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_cards_grid").performScrollToNode(hasTestTag("level_card_110"))
+    composeTestRule.onNodeWithTag("level_card_110").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("level_cards_grid").performScrollToNode(hasTestTag("level_card_120"))
+    composeTestRule.onNodeWithTag("level_card_120").assertIsDisplayed()
+  }
 }
+
 

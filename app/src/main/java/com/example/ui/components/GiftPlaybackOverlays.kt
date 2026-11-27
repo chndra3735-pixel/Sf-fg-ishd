@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -431,6 +432,8 @@ fun FullScreenGiftOverlay(
   onPlaybackMessage: (String) -> Unit = {},
   isAudioMuted: Boolean = false,
   onToggleAudioMute: (() -> Unit)? = null,
+  senderFrameUrl: String = "",
+  senderExactLevel: Int? = null,
 ) {
   val context = LocalContext.current
   var videoFailed by remember(event.id) { mutableStateOf(false) }
@@ -1001,36 +1004,33 @@ fun FullScreenGiftOverlay(
     }
 
     if (isOverlayVisible && event.giftId.startsWith("entry_lv_")) {
-      Surface(
-        color = Color(0xCC1C0D38),
-        shape = RoundedCornerShape(20.dp),
+      val parsedBadgeLevel = event.giftId.removePrefix("entry_lv_").toIntOrNull() ?: 1
+      val displayEntryLevel = (senderExactLevel ?: parsedBadgeLevel).coerceIn(1, 120)
+      val bannerScale = remember(event.id) { Animatable(0.84f) }
+      LaunchedEffect(event.id, isOverlayVisible) {
+        bannerScale.animateTo(
+          targetValue = 1f,
+          animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.62f,
+            stiffness = 260f,
+          ),
+        )
+      }
+      RoyalGoldenEntryBanner(
+        senderName = event.senderName,
+        senderAvatarUrl = event.senderAvatarUrl,
+        entryLevel = displayEntryLevel,
+        frameUrl = senderFrameUrl,
+        compact = false,
         modifier = Modifier
           .align(Alignment.TopCenter)
           .statusBarsPadding()
-          .padding(top = 18.dp, start = 72.dp, end = 72.dp)
-          .border(1.5.dp, SwarGold, RoundedCornerShape(20.dp)),
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          UserAvatar(
-            url = event.senderAvatarUrl,
-            name = event.senderName,
-            size = 26.dp,
-            borderColor = SwarGold,
-            borderWidth = 1.2.dp,
-          )
-          Text(
-            text = "${event.giftEmoji} ${event.senderName} • ${event.giftName}",
-            style = MaterialTheme.typography.labelLarge,
-            color = Color.White,
-            fontWeight = FontWeight.ExtraBold,
-            maxLines = 1,
-          )
-        }
-      }
+          .padding(top = 66.dp, start = 10.dp, end = 10.dp)
+          .fillMaxWidth()
+          .widthIn(max = 500.dp)
+          .scale(bannerScale.value)
+          .testTag("entry_video_royal_banner"),
+      )
     }
   }
 }
