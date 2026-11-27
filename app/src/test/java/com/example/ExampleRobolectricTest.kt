@@ -2085,5 +2085,320 @@ class ExampleRobolectricTest {
     composeTestRule.onAllNodesWithText("LV.10", substring = true).onFirst().assertIsDisplayed()
     composeTestRule.onAllNodesWithText("31,149 HP", substring = true).onFirst().assertIsDisplayed()
   }
+
+  @Test
+  fun `local media cache manager persists entry mute and server saver preferences`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    com.example.data.repository.LocalMediaCacheManager.setEntryVideoMuted(context, false)
+    com.example.data.repository.LocalMediaCacheManager.setServerSaverEnabled(context, true)
+    assertEquals(false, com.example.data.repository.LocalMediaCacheManager.isEntryVideoMuted(context))
+    assertEquals(true, com.example.data.repository.LocalMediaCacheManager.isServerSaverEnabled(context))
+    assertEquals(context.filesDir, com.example.data.repository.LocalMediaCacheManager.preferredMediaBaseDir(context))
+
+    com.example.data.repository.LocalMediaCacheManager.setEntryVideoMuted(context, true)
+    com.example.data.repository.LocalMediaCacheManager.setServerSaverEnabled(context, false)
+    assertEquals(true, com.example.data.repository.LocalMediaCacheManager.isEntryVideoMuted(context))
+    assertEquals(false, com.example.data.repository.LocalMediaCacheManager.isServerSaverEnabled(context))
+    assertEquals(context.cacheDir, com.example.data.repository.LocalMediaCacheManager.preferredMediaBaseDir(context))
+
+    // Restore clean defaults
+    com.example.data.repository.LocalMediaCacheManager.setEntryVideoMuted(context, false)
+    com.example.data.repository.LocalMediaCacheManager.setServerSaverEnabled(context, true)
+  }
+
+  @Test
+  fun `level showcase style tab equips unlocked tier clears to plain and toggles entry mute`() {
+    val hp120 = SwarUserIdentity.requiredHpForLevel(120)
+    val configs = mapOf(
+      10 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 10,
+        avatarFrameUrl = "https://cdn.example.com/f10.png",
+        typingBannerUrl = "https://cdn.example.com/t10.png",
+        entryVideoUrl = "https://cdn.example.com/e10.mp4",
+      ),
+      120 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 120,
+        avatarFrameUrl = "https://cdn.example.com/f120.png",
+        typingBannerUrl = "https://cdn.example.com/t120.png",
+        entryVideoUrl = "https://cdn.example.com/e120.mp4",
+      ),
+    )
+    var equippedFrame = -1L
+    var equippedTyping = -1L
+    var equippedEntry = -1L
+    var mutedState = false
+
+    composeTestRule.setContent {
+      val frameState = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(-1L) }
+      val typingState = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(-1L) }
+      val entryState = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(-1L) }
+      val muteState = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+      SwarRoomTheme {
+        com.example.ui.components.LevelCardsShowcaseDialog(
+          levelInfo = SwarUserIdentity.levelForCoins(hp120),
+          coins = 10_000L,
+          onDismiss = {},
+          levelConfigs = configs,
+          claimedTiers = emptySet(),
+          isAdminUser = false,
+          isUploadingMedia = false,
+          sampleAvatarUrl = "",
+          sampleDisplayName = "सम्राट",
+          onSaveTierConfig = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
+          onClaimTierReward = {},
+          initialTab = 2,
+          equippedFrameLevel = frameState.value,
+          equippedTypingLevel = typingState.value,
+          equippedEntryVideoLevel = entryState.value,
+          onEquipCosmetic = { f, t, e ->
+            f?.let {
+              frameState.value = it
+              equippedFrame = it
+            }
+            t?.let {
+              typingState.value = it
+              equippedTyping = it
+            }
+            e?.let {
+              entryState.value = it
+              equippedEntry = it
+            }
+          },
+          isEntryVideoMuted = muteState.value,
+          onToggleEntryVideoMuted = {
+            muteState.value = !muteState.value
+            mutedState = muteState.value
+          },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+
+    composeTestRule.onNodeWithTag("style_customizer_panel").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("style_entry_mute_switch").performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(true, mutedState)
+
+    composeTestRule.onNodeWithTag("style_frame_option_10").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(10L, equippedFrame)
+
+    composeTestRule.onNodeWithTag("style_typing_option_10").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(10L, equippedTyping)
+
+    composeTestRule.onNodeWithTag("style_entry_option_10").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(10L, equippedEntry)
+
+    composeTestRule.onNodeWithTag("style_clear_all_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(0L, equippedFrame)
+    assertEquals(0L, equippedTyping)
+    assertEquals(0L, equippedEntry)
+  }
+
+  @Test
+  fun `profile local storage card toggles server saver entry mute and clears local cache`() {
+    var serverSaver = true
+    var entryMuted = false
+    var cacheCleared = false
+    val profileState = com.example.ui.viewmodel.UiState.Success(
+      com.example.data.model.UserProfile(
+        id = "u_storage",
+        userId = "u_storage",
+        displayName = "काव्या",
+        coins = 5_000L,
+        hp = 40_000L,
+      )
+    )
+
+    composeTestRule.setContent {
+      val saverState = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
+      val muteState = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+      val statsState = androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(
+          com.example.data.repository.LocalCacheStats(
+            mediaBytes = 4_194_304L,
+            imageCacheBytes = 1_048_576L,
+            httpCacheBytes = 0L,
+            cachedMediaFiles = 6,
+          )
+        )
+      }
+      SwarRoomTheme {
+        com.example.ui.screens.ProfileScreen(
+          profileState = profileState,
+          isUploadingMedia = false,
+          isSupabaseConfigured = true,
+          onUploadAvatarDp = {},
+          onUpdateProfile = { _, _, _, _, _ -> },
+          onSignOut = {},
+          isEntryVideoMuted = muteState.value,
+          onToggleEntryVideoMuted = {
+            muteState.value = !muteState.value
+            entryMuted = muteState.value
+          },
+          isServerSaverEnabled = saverState.value,
+          onToggleServerSaverEnabled = { enabled ->
+            saverState.value = enabled
+            serverSaver = enabled
+          },
+          localCacheStats = statsState.value,
+          onClearLocalCache = {
+            cacheCleared = true
+            statsState.value = com.example.data.repository.LocalCacheStats()
+          },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+
+    composeTestRule.onNodeWithTag("profile_cosmetic_customizer_button").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("profile_local_storage_card").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("local_cache_size_text").performScrollTo().assertIsDisplayed()
+
+    composeTestRule.onNodeWithTag("profile_entry_mute_toggle").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(true, entryMuted)
+
+    composeTestRule.onNodeWithTag("server_saver_toggle").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(false, serverSaver)
+
+    composeTestRule.onNodeWithTag("clear_local_cache_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(true, cacheCleared)
+  }
+
+  @Test
+  fun `admin audit dialog sets user level up and down freely by 10 digit id`() {
+    var updatedId = ""
+    var updatedLevel = 0
+    val targetNumericId = "4829103756"
+
+    composeTestRule.setContent {
+      val summaryState = androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<com.example.data.model.AdminLevelUpdateSummary?>(null)
+      }
+      SwarRoomTheme {
+        com.example.ui.components.AdminUserAuditDialog(
+          auditProfiles = emptyList(),
+          activityLogs = emptyList(),
+          isPurgingExpired = false,
+          onPurgeExpiredLogs = {},
+          onToggleUserBlock = { _, _, _ -> },
+          onDismiss = {},
+          isUpdatingLevel = false,
+          lastLevelUpdateSummary = summaryState.value,
+          onSetLevelById = { numId, targetLvl ->
+            updatedId = numId
+            updatedLevel = targetLvl
+            summaryState.value = com.example.data.model.AdminLevelUpdateSummary(
+              targetUid = "uid_target",
+              numericId = numId,
+              displayName = "रोहन",
+              previousLevel = 80,
+              newLevel = targetLvl,
+              newHp = SwarUserIdentity.requiredHpForLevel(targetLvl),
+            )
+          },
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+
+    composeTestRule.onNodeWithTag("audit_coin_id_input").performScrollTo().performTextReplacement(targetNumericId)
+    composeTestRule.onNodeWithTag("audit_level_input").performScrollTo().performTextReplacement("120")
+    composeTestRule.onNodeWithTag("audit_level_set_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(targetNumericId, updatedId)
+    assertEquals(120, updatedLevel)
+    composeTestRule.onNodeWithTag("audit_level_status_banner").assertIsDisplayed()
+
+    // Now reduce by 5 (120 -> 115) and apply
+    composeTestRule.onNodeWithTag("audit_level_dec_5").performScrollTo().performClick()
+    composeTestRule.onNodeWithTag("audit_level_set_button").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    assertEquals(115, updatedLevel)
+  }
+
+  @Test
+  fun `voice room renders enlarged emoji overlay over seated user without breaking seat layout`() {
+    val room = com.example.data.model.VoiceRoom(
+      id = "room_emoji_size",
+      ownerId = "host_1",
+      ownerName = "होस्ट",
+      title = "इमोजी टेस्ट रूम",
+      roomCode = "778899",
+      seatCount = 6L,
+    )
+    val seats = listOf(
+      com.example.data.model.RoomSeat(
+        id = "seat_0",
+        roomId = "room_emoji_size",
+        seatIndex = 0L,
+        occupantUid = "host_1",
+        occupantName = "होस्ट",
+        isMuted = false,
+      ),
+    )
+    val emojiMsg = com.example.data.model.RoomMessage(
+      id = "msg_emoji_big",
+      roomId = "room_emoji_size",
+      senderUid = "host_1",
+      senderName = "होस्ट",
+      text = "🥳 पार्टी",
+      messageType = "emoji",
+      createdAt = null,
+    )
+
+    composeTestRule.setContent {
+      SwarRoomTheme {
+        com.example.ui.screens.VoiceRoomScreen(
+          room = room,
+          seats = seats,
+          messages = listOf(emojiMsg),
+          currentUserId = "viewer_1",
+          isAdminUser = false,
+          isUploadingMedia = false,
+          userCoins = 1000L,
+          emojiCatalog = com.example.data.model.SwarCatalogDefaults.builtInEmojis,
+          giftCatalog = emptyList(),
+          latestMarqueeGift = null,
+          activeFullScreenGift = null,
+          isMicMuted = true,
+          isSpeakerOn = true,
+          isMonitorLoopbackOn = false,
+          micAudioLevel = 0f,
+          onLeaveRoom = {},
+          onSeatTapped = { _, _, _ -> },
+          onLeaveSeat = {},
+          onToggleSeatLock = {},
+          onToggleMic = { _, _ -> },
+          onAudioPermissionGranted = {},
+          onToggleSpeaker = {},
+          onToggleMonitorLoopback = {},
+          onSendMessage = { _, _ -> },
+          onSendEmoji = {},
+          onAddCustomEmoji = { _, _, _, _, _, _ -> },
+          onUpdateCustomEmoji = { _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomEmoji = { _, _ -> },
+          onSendGift = { _, _, _, _ -> },
+          onAddCustomGift = { _, _, _, _, _, _, _, _ -> },
+          onUpdateCustomGift = { _, _, _, _, _, _, _, _, _, _, _ -> },
+          onDeleteCustomGift = { _, _ -> },
+          onDismissFullScreenGift = {},
+          onClaimBonusCoins = {},
+          onUpdateRoomSettings = { _, _, _ -> },
+          onStartDirectChat = { _, _, _ -> },
+          onShowToast = {},
+        )
+      }
+    }
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("seat_emoji_overlay", useUnmergedTree = true).assertIsDisplayed()
+  }
 }
 

@@ -984,3 +984,63 @@ test("Room rocket charge requires valid room & tier (1..5), allows Top-3 claim o
     })
   );
 });
+
+// 11. Equipped level cosmetics (choose unlocked tier or plain 0, reject invalid) & Admin Level/HP +/-
+test("Users can equip or clear unlocked cosmetic tiers and verified admin can adjust user HP up or down", async () => {
+  const verifiedAdmin = testEnv.authenticatedContext(ADMIN_UID, {
+    email: ADMIN_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  await assertSucceeds(alice.collection("users").doc(ALICE_UID).set(validUserPayload(ALICE_UID)));
+
+  // Alice equips LV.20 frame, LV.10 typing box, and sets entry video to plain/off (0)
+  await assertSucceeds(
+    alice.collection("users").doc(ALICE_UID).update({
+      equippedFrameLevel: 20,
+      equippedTypingLevel: 10,
+      equippedEntryVideoLevel: 0,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Invalid out-of-range cosmetic level must fail
+  await assertFails(
+    alice.collection("users").doc(ALICE_UID).update({
+      equippedFrameLevel: 150,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Non-admin Bob cannot change Alice's HP
+  await assertFails(
+    bob.collection("users").doc(ALICE_UID).update({
+      hp: 4778163,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Verified admin can increase Alice's HP (e.g. LV.120) AND decrease it later (e.g. LV.10)
+  await assertSucceeds(
+    verifiedAdmin.collection("users").doc(ALICE_UID).update({
+      hp: 4778163,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(
+    verifiedAdmin.collection("users").doc(ALICE_UID).update({
+      hp: 31149,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Verified admin still cannot reduce coins
+  await assertFails(
+    verifiedAdmin.collection("users").doc(ALICE_UID).update({
+      coins: 10,
+      updatedAt: serverTimestamp(),
+    })
+  );
+});

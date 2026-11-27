@@ -53,10 +53,13 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -96,6 +99,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.example.data.model.GiftEvent
+import com.example.data.repository.LocalMediaCacheManager
 import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.VideoLinkResolution
 import com.example.data.repository.VideoLinkResolver
@@ -425,6 +429,8 @@ fun FullScreenGiftOverlay(
   event: GiftEvent,
   onDismiss: () -> Unit,
   onPlaybackMessage: (String) -> Unit = {},
+  isAudioMuted: Boolean = false,
+  onToggleAudioMute: (() -> Unit)? = null,
 ) {
   val context = LocalContext.current
   var videoFailed by remember(event.id) { mutableStateOf(false) }
@@ -479,7 +485,8 @@ fun FullScreenGiftOverlay(
           } else {
             val cached = withTimeoutOrNull(25_000L) {
               withContext(Dispatchers.IO) {
-                SupabaseNetworkClient.cacheRemoteMediaFile(context.cacheDir, resolution.playableUrl)
+                val baseDir = LocalMediaCacheManager.preferredMediaBaseDir(context)
+                SupabaseNetworkClient.cacheRemoteMediaFile(baseDir, resolution.playableUrl)
               }
             }
             resolvedVideoUri = cached?.let { Uri.fromFile(it) } ?: Uri.parse(resolution.playableUrl)
@@ -602,8 +609,9 @@ fun FullScreenGiftOverlay(
               override fun onPageFinished(view: WebView?, url: String?) {
                 if (embedTerminated) return
                 isEmbedLoaded = true
+                val mutedJs = if (isAudioMuted) "true" else "false"
                 view?.evaluateJavascript(
-                  "try{var v=document.querySelector('video');if(v){v.muted=false;v.play();}}catch(e){}",
+                  "try{var v=document.querySelector('video');if(v){v.muted=$mutedJs;v.play();}}catch(e){}",
                   null,
                 )
               }
@@ -659,6 +667,16 @@ fun FullScreenGiftOverlay(
           .fillMaxSize()
           .alpha(if (isEmbedLoaded) 1f else 0f),
       )
+
+      LaunchedEffect(isAudioMuted, isEmbedLoaded, webViewRef) {
+        if (isEmbedLoaded) {
+          val mutedJs = if (isAudioMuted) "true" else "false"
+          webViewRef?.evaluateJavascript(
+            "try{var v=document.querySelector('video');if(v){v.muted=$mutedJs;}}catch(e){}",
+            null,
+          )
+        }
+      }
 
       if (isEmbedLoaded) {
         IconButton(
@@ -777,6 +795,8 @@ fun FullScreenGiftOverlay(
                         if (dur > 0L) {
                           preparedDurationMs = dur
                         }
+                        val vol = if (isAudioMuted) 0f else 1f
+                        mp.setVolume(vol, vol)
                         mp.start()
                         post {
                           applyFitTransform(this@apply, mp.videoWidth, mp.videoHeight)
@@ -792,6 +812,8 @@ fun FullScreenGiftOverlay(
                           resolvedPlayableHttpUrl.isNotBlank()
                         ) {
                           triedRemoteStreamFallback = true
+                          val baseDir = LocalMediaCacheManager.preferredMediaBaseDir(context)
+                          SupabaseNetworkClient.evictCachedMedia(baseDir, resolvedPlayableHttpUrl)
                           SupabaseNetworkClient.evictCachedMedia(context.cacheDir, resolvedPlayableHttpUrl)
                           resolvedVideoUri = Uri.parse(resolvedPlayableHttpUrl)
                         } else {
@@ -866,6 +888,11 @@ fun FullScreenGiftOverlay(
             }
           }
         }
+      }
+
+      LaunchedEffect(isAudioMuted, mediaPlayerRef) {
+        val vol = if (isAudioMuted) 0f else 1f
+        runCatching { mediaPlayerRef?.setVolume(vol, vol) }
       }
 
       DisposableEffect(event.id, playbackUri) {
@@ -951,6 +978,28 @@ fun FullScreenGiftOverlay(
       }
     }
 
+    if (isOverlayVisible && (isVideoGift || isEmbedMode) && onToggleAudioMute != null) {
+      IconButton(
+        onClick = onToggleAudioMute,
+        modifier = Modifier
+          .align(Alignment.TopStart)
+          .statusBarsPadding()
+          .padding(16.dp)
+          .minimumInteractiveComponentSize()
+          .size(48.dp)
+          .clip(CircleShape)
+          .background(Color(0xA6000000))
+          .border(1.dp, if (isAudioMuted) SwarCoral else SwarCyan, CircleShape)
+          .testTag("entry_video_mute_toggle"),
+      ) {
+        Icon(
+          imageVector = if (isAudioMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+          contentDescription = if (isAudioMuted) "एंट्री वीडियो आवाज़ चालू करें" else "एंट्री वीडियो आवाज़ म्यूट करें",
+          tint = if (isAudioMuted) SwarCoral else Color.White,
+        )
+      }
+    }
+
     if (isOverlayVisible && event.giftId.startsWith("entry_lv_")) {
       Surface(
         color = Color(0xCC1C0D38),
@@ -958,7 +1007,7 @@ fun FullScreenGiftOverlay(
         modifier = Modifier
           .align(Alignment.TopCenter)
           .statusBarsPadding()
-          .padding(top = 18.dp, start = 16.dp, end = 64.dp)
+          .padding(top = 18.dp, start = 72.dp, end = 72.dp)
           .border(1.5.dp, SwarGold, RoundedCornerShape(20.dp)),
       ) {
         Row(

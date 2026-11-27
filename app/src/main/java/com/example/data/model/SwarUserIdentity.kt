@@ -599,6 +599,93 @@ object SwarUserIdentity {
   }
 
   /**
+   * Resolves active DP frame URL based on user choice:
+   * - equippedLevel == 0L  -> plain / no frame ("")
+   * - equippedLevel > 0L   -> chosen unlocked tier's frame (falls back to highest unlocked if locked/blank)
+   * - equippedLevel < 0L   -> auto highest unlocked frame
+   */
+  fun resolvedFrameUrl(
+    level: Int,
+    configs: Map<Int, LevelTierConfig>,
+    equippedLevel: Long = -1L,
+  ): String {
+    if (equippedLevel == 0L) return ""
+    val safeLevel = level.coerceIn(1, 120)
+    if (equippedLevel > 0L) {
+      val tier = levelTiers.firstOrNull { it.badgeLevel == equippedLevel.toInt() }
+      if (tier != null && safeLevel >= tier.minLevel) {
+        val url = configs[tier.badgeLevel]?.avatarFrameUrl?.trim().orEmpty()
+        if (url.isNotBlank()) return url
+      }
+    }
+    return highestUnlockedFrameUrl(safeLevel, configs)
+  }
+
+  fun resolvedFrameUrl(
+    profile: UserProfile?,
+    configs: Map<Int, LevelTierConfig>,
+  ): String {
+    val lvl = levelForProfile(profile).level
+    return resolvedFrameUrl(lvl, configs, profile?.equippedFrameLevel ?: -1L)
+  }
+
+  /**
+   * Resolves active chat typing banner URL based on user choice (0L = plain bubble, >0L = chosen unlocked tier, -1L = auto highest).
+   */
+  fun resolvedTypingBannerUrl(
+    level: Int,
+    configs: Map<Int, LevelTierConfig>,
+    equippedLevel: Long = -1L,
+  ): String {
+    if (equippedLevel == 0L) return ""
+    val safeLevel = level.coerceIn(1, 120)
+    if (equippedLevel > 0L) {
+      val tier = levelTiers.firstOrNull { it.badgeLevel == equippedLevel.toInt() }
+      if (tier != null && safeLevel >= tier.minLevel) {
+        val url = configs[tier.badgeLevel]?.typingBannerUrl?.trim().orEmpty()
+        if (url.isNotBlank()) return url
+      }
+    }
+    return highestUnlockedTypingBannerUrl(safeLevel, configs)
+  }
+
+  fun resolvedTypingBannerUrl(
+    profile: UserProfile?,
+    configs: Map<Int, LevelTierConfig>,
+  ): String {
+    val lvl = levelForProfile(profile).level
+    return resolvedTypingBannerUrl(lvl, configs, profile?.equippedTypingLevel ?: -1L)
+  }
+
+  /**
+   * Resolves active room entry video based on user choice (0L = none/plain, >0L = chosen unlocked tier, -1L = auto highest).
+   */
+  fun resolvedEntryVideo(
+    level: Int,
+    configs: Map<Int, LevelTierConfig>,
+    equippedLevel: Long = -1L,
+  ): Pair<LevelTierSpec, String>? {
+    if (equippedLevel == 0L) return null
+    val safeLevel = level.coerceIn(1, 120)
+    if (equippedLevel > 0L) {
+      val tier = levelTiers.firstOrNull { it.badgeLevel == equippedLevel.toInt() }
+      if (tier != null && safeLevel >= tier.minLevel) {
+        val url = configs[tier.badgeLevel]?.entryVideoUrl?.trim().orEmpty()
+        if (url.isNotBlank()) return tier to url
+      }
+    }
+    return highestUnlockedEntryVideo(safeLevel, configs)
+  }
+
+  fun resolvedEntryVideo(
+    profile: UserProfile?,
+    configs: Map<Int, LevelTierConfig>,
+  ): Pair<LevelTierSpec, String>? {
+    val lvl = levelForProfile(profile).level
+    return resolvedEntryVideo(lvl, configs, profile?.equippedEntryVideoLevel ?: -1L)
+  }
+
+  /**
    * Builds the canonical sorted pair ID matching firestore.rules (`cp_<uid0>_<uid1>`).
    */
   fun cpPairId(uidA: String, uidB: String): String {

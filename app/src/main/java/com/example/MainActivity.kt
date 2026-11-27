@@ -91,11 +91,15 @@ import coil.Coil
 import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.example.audio.VoiceAudioEngine
 import com.example.data.model.SwarUserIdentity
+import com.example.data.repository.LocalMediaCacheManager
 import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.SupabaseStorageRepository
 import com.example.data.repository.SwarRoomRepository
+import java.io.File
 import com.example.ui.auth.authStateFlow
 import com.example.ui.auth.signOut
 import com.example.ui.components.AccountBlockedScreen
@@ -160,9 +164,23 @@ class MainActivity : ComponentActivity() {
       bindService(cleanupIntent, seatServiceConnection, Context.BIND_AUTO_CREATE)
     }.getOrDefault(false)
 
+    SupabaseNetworkClient.initialize(applicationContext.cacheDir)
+
     Coil.setImageLoader {
       ImageLoader.Builder(applicationContext)
         .okHttpClient { SupabaseNetworkClient.sharedOkHttpClient }
+        .respectCacheHeaders(false)
+        .memoryCache {
+          MemoryCache.Builder(applicationContext)
+            .maxSizePercent(0.22)
+            .build()
+        }
+        .diskCache {
+          DiskCache.Builder()
+            .directory(File(applicationContext.cacheDir, LocalMediaCacheManager.IMAGE_CACHE_DIR_NAME))
+            .maxSizeBytes(200L * 1024L * 1024L)
+            .build()
+        }
         .components {
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             add(ImageDecoderDecoder.Factory())
@@ -414,6 +432,12 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
   val isPurgingExpiredLogs by viewModel.isPurgingExpiredLogs.collectAsStateWithLifecycle()
   val isGrantingAdminCoins by viewModel.isGrantingAdminCoins.collectAsStateWithLifecycle()
   val lastAdminCoinGrant by viewModel.lastAdminCoinGrant.collectAsStateWithLifecycle()
+  val isUpdatingAdminLevel by viewModel.isUpdatingAdminLevel.collectAsStateWithLifecycle()
+  val lastAdminLevelUpdate by viewModel.lastAdminLevelUpdate.collectAsStateWithLifecycle()
+  val isEntryVideoMuted by viewModel.isEntryVideoMuted.collectAsStateWithLifecycle()
+  val isServerSaverEnabled by viewModel.isServerSaverEnabled.collectAsStateWithLifecycle()
+  val localCacheStats by viewModel.localCacheStats.collectAsStateWithLifecycle()
+  val isClearingCache by viewModel.isClearingCache.collectAsStateWithLifecycle()
   val activeRoomKickLogs by viewModel.activeRoomKickLogs.collectAsStateWithLifecycle()
   val roomMusicState by viewModel.roomMusicState.collectAsStateWithLifecycle()
   val scannedMusicTracks by viewModel.scannedMusicTracks.collectAsStateWithLifecycle()
@@ -729,6 +753,14 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
         roomRocketState = activeRoomRocket,
         activeRocketLaunch = activeRocketLaunchEvent,
         onDismissRocketLaunch = { viewModel.dismissRocketLaunchOverlay() },
+        ownEquippedFrameLevel = userProfile?.equippedFrameLevel ?: -1L,
+        ownEquippedTypingLevel = userProfile?.equippedTypingLevel ?: -1L,
+        ownEquippedEntryVideoLevel = userProfile?.equippedEntryVideoLevel ?: -1L,
+        onEquipCosmetic = { frameLvl, typingLvl, entryLvl ->
+          viewModel.equipCosmetic(frameLvl, typingLvl, entryLvl)
+        },
+        isEntryVideoMuted = isEntryVideoMuted,
+        onToggleEntryVideoMuted = { viewModel.toggleEntryVideoMuted() },
       )
       SnackbarHost(
         hostState = snackbarHostState,
@@ -911,6 +943,24 @@ private fun AuthenticatedSwarRoomApp(user: FirebaseUser) {
           },
           onAcceptCpRequest = { req -> viewModel.acceptCpRequest(req) },
           onDeclineOrBreakCp = { req -> viewModel.declineOrBreakCp(req) },
+          isUpdatingAdminLevel = isUpdatingAdminLevel,
+          lastAdminLevelUpdate = lastAdminLevelUpdate,
+          onSetAdminUserLevelById = { numericId, targetLvl ->
+            viewModel.setUserLevelByNumericId(numericId, targetLvl)
+          },
+          onEquipCosmetic = { frameLvl, typingLvl, entryLvl ->
+            viewModel.equipCosmetic(frameLvl, typingLvl, entryLvl)
+          },
+          isEntryVideoMuted = isEntryVideoMuted,
+          onToggleEntryVideoMuted = { viewModel.toggleEntryVideoMuted() },
+          isServerSaverEnabled = isServerSaverEnabled,
+          onToggleServerSaverEnabled = { enabled ->
+            viewModel.toggleServerSaverEnabled(enabled)
+          },
+          localCacheStats = localCacheStats,
+          isClearingCache = isClearingCache,
+          onRefreshCacheStats = { viewModel.refreshLocalCacheStats() },
+          onClearLocalCache = { viewModel.clearLocalMediaCache() },
         )
       }
 

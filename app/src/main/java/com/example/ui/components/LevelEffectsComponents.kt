@@ -45,6 +45,7 @@ import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Link
@@ -53,6 +54,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.WorkspacePremium
+import com.example.data.repository.LocalMediaCacheManager
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -521,6 +523,7 @@ fun TypingBannerChatBubble(
             SpanStyle(
               color = Color.White,
               fontWeight = if (hasBanner) FontWeight.SemiBold else FontWeight.Normal,
+              fontSize = if (messageType == "emoji") 15.sp else MaterialTheme.typography.bodySmall.fontSize,
               shadow = textShadow,
             )
           ) {
@@ -561,6 +564,12 @@ fun LevelTierDetailConfiguratorDialog(
     typingBannerUri: Uri?,
     onDone: () -> Unit,
   ) -> Unit,
+  equippedFrameLevel: Long = -1L,
+  equippedTypingLevel: Long = -1L,
+  equippedEntryVideoLevel: Long = -1L,
+  onEquipCosmetic: (frameLevel: Long?, typingLevel: Long?, entryVideoLevel: Long?) -> Unit = { _, _, _ -> },
+  isEntryVideoMuted: Boolean = false,
+  onToggleEntryVideoMuted: () -> Unit = {},
 ) {
   val isUnlocked = userLevel >= tier.minLevel
   var entryVideoLink by remember(tier.badgeLevel, config.entryVideoUrl) { mutableStateOf(config.entryVideoUrl) }
@@ -824,7 +833,11 @@ fun LevelTierDetailConfiguratorDialog(
 
             // Live Entry Video Auto-Playing Preview Box
             if (previewVideoSource.isNotBlank()) {
-              LevelEntryVideoPreviewBox(videoSource = previewVideoSource)
+              LevelEntryVideoPreviewBox(
+                videoSource = previewVideoSource,
+                isMuted = isEntryVideoMuted,
+                onToggleMute = onToggleEntryVideoMuted,
+              )
             }
 
             // Live Typing Patti ("टाइपिंग पट्टी") Chat Bubble Preview
@@ -845,6 +858,136 @@ fun LevelTierDetailConfiguratorDialog(
                     .fillMaxWidth()
                     .testTag("typing_banner_live_preview"),
                 )
+              }
+            }
+
+            // Equip / Unequip / Plain Controls for unlocked tiers
+            if (isUnlocked && (previewFrameModel.isNotBlank() || previewTypingBannerModel.isNotBlank() || previewVideoSource.isNotBlank())) {
+              val tierBadgeLong = tier.badgeLevel.toLong()
+              val isThisFrameEquipped = equippedFrameLevel == tierBadgeLong
+              val isThisTypingEquipped = equippedTypingLevel == tierBadgeLong
+              val isThisEntryEquipped = equippedEntryVideoLevel == tierBadgeLong
+
+              Column(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(14.dp))
+                  .background(Color(0xFF140F2D))
+                  .border(1.dp, SwarCyan.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                  .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Text(
+                    text = "✨ इस टियर का स्टाइल पहनें / उतारें",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SwarGold,
+                    fontWeight = FontWeight.ExtraBold,
+                  )
+                  Surface(
+                    onClick = { onEquipCosmetic(0L, 0L, 0L) },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF2B2150),
+                    modifier = Modifier.testTag("clear_all_cosmetics_from_detail"),
+                  ) {
+                    Text(
+                      text = "सब सादा करें",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = Color(0xFFDAD4F6),
+                      fontWeight = FontWeight.Bold,
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                  }
+                }
+
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                  if (previewFrameModel.isNotBlank()) {
+                    OutlinedButton(
+                      onClick = {
+                        onEquipCosmetic(if (isThisFrameEquipped) 0L else tierBadgeLong, null, null)
+                      },
+                      shape = RoundedCornerShape(10.dp),
+                      colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isThisFrameEquipped) SwarMint.copy(alpha = 0.18f) else Color.Transparent,
+                      ),
+                      modifier = Modifier
+                        .height(42.dp)
+                        .testTag("equip_frame_tier_${tier.badgeLevel}"),
+                    ) {
+                      if (isThisFrameEquipped) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = SwarMint, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                      }
+                      Text(
+                        text = if (isThisFrameEquipped) "फ्रेम पहना ✓ (उतारें)" else "फ्रेम पहनें",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isThisFrameEquipped) SwarMint else Color.White,
+                        fontWeight = FontWeight.Bold,
+                      )
+                    }
+                  }
+
+                  if (previewTypingBannerModel.isNotBlank()) {
+                    OutlinedButton(
+                      onClick = {
+                        onEquipCosmetic(null, if (isThisTypingEquipped) 0L else tierBadgeLong, null)
+                      },
+                      shape = RoundedCornerShape(10.dp),
+                      colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isThisTypingEquipped) SwarCyan.copy(alpha = 0.18f) else Color.Transparent,
+                      ),
+                      modifier = Modifier
+                        .height(42.dp)
+                        .testTag("equip_typing_tier_${tier.badgeLevel}"),
+                    ) {
+                      if (isThisTypingEquipped) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = SwarCyan, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                      }
+                      Text(
+                        text = if (isThisTypingEquipped) "पट्टी पहनी ✓ (उतारें)" else "टाइपिंग पट्टी पहनें",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isThisTypingEquipped) SwarCyan else Color.White,
+                        fontWeight = FontWeight.Bold,
+                      )
+                    }
+                  }
+
+                  if (previewVideoSource.isNotBlank()) {
+                    OutlinedButton(
+                      onClick = {
+                        onEquipCosmetic(null, null, if (isThisEntryEquipped) 0L else tierBadgeLong)
+                      },
+                      shape = RoundedCornerShape(10.dp),
+                      colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isThisEntryEquipped) SwarGold.copy(alpha = 0.18f) else Color.Transparent,
+                      ),
+                      modifier = Modifier
+                        .height(42.dp)
+                        .testTag("equip_entry_tier_${tier.badgeLevel}"),
+                    ) {
+                      if (isThisEntryEquipped) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = SwarGold, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                      }
+                      Text(
+                        text = if (isThisEntryEquipped) "एंट्री सक्रिय ✓ (बंद करें)" else "एंट्री वीडियो चुनें",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isThisEntryEquipped) SwarGold else Color.White,
+                        fontWeight = FontWeight.Bold,
+                      )
+                    }
+                  }
+                }
               }
             }
           }
@@ -1112,13 +1255,18 @@ private fun adminFieldColors() = OutlinedTextFieldDefaults.colors(
 
 @SuppressLint("UseKtx")
 @Composable
-private fun LevelEntryVideoPreviewBox(videoSource: String) {
+private fun LevelEntryVideoPreviewBox(
+  videoSource: String,
+  isMuted: Boolean = true,
+  onToggleMute: (() -> Unit)? = null,
+) {
   val context = LocalContext.current
   var playbackUri by remember(videoSource) {
     mutableStateOf<Uri?>(if (videoSource.startsWith("http", ignoreCase = true)) null else Uri.parse(videoSource))
   }
   var fallbackThumb by remember(videoSource) { mutableStateOf("") }
-  var isMuted by remember(videoSource) { mutableStateOf(true) }
+  var localMuted by remember(videoSource, isMuted) { mutableStateOf(isMuted) }
+  val effectiveMuted = if (onToggleMute != null) isMuted else localMuted
   var mediaPlayerRef by remember(videoSource) { mutableStateOf<MediaPlayer?>(null) }
   var surfaceRef by remember(videoSource) { mutableStateOf<Surface?>(null) }
   var isPrepared by remember(videoSource) { mutableStateOf(false) }
@@ -1134,7 +1282,8 @@ private fun LevelEntryVideoPreviewBox(videoSource: String) {
           fallbackThumb = res.thumbnailUrl
           val cached = withTimeoutOrNull(6_000L) {
             withContext(Dispatchers.IO) {
-              SupabaseNetworkClient.cacheRemoteMediaFile(context.cacheDir, res.playableUrl)
+              val mediaDir = LocalMediaCacheManager.preferredMediaBaseDir(context)
+              SupabaseNetworkClient.cacheRemoteMediaFile(mediaDir, res.playableUrl)
             }
           }
           playbackUri = cached?.let { Uri.fromFile(it) } ?: Uri.parse(res.playableUrl)
@@ -1147,8 +1296,8 @@ private fun LevelEntryVideoPreviewBox(videoSource: String) {
     }
   }
 
-  LaunchedEffect(isMuted, mediaPlayerRef) {
-    val vol = if (isMuted) 0f else 1f
+  LaunchedEffect(effectiveMuted, mediaPlayerRef) {
+    val vol = if (effectiveMuted) 0f else 1f
     runCatching { mediaPlayerRef?.setVolume(vol, vol) }
   }
 
@@ -1191,7 +1340,7 @@ private fun LevelEntryVideoPreviewBox(videoSource: String) {
                   isLooping = true
                   setOnPreparedListener { mp ->
                     isPrepared = true
-                    val v = if (isMuted) 0f else 1f
+                    val v = if (effectiveMuted) 0f else 1f
                     mp.setVolume(v, v)
                     mp.start()
                   }
@@ -1222,20 +1371,39 @@ private fun LevelEntryVideoPreviewBox(videoSource: String) {
       if (!isPrepared) {
         CircularProgressIndicator(color = SwarCyan, modifier = Modifier.size(26.dp))
       }
-      IconButton(
-        onClick = { isMuted = !isMuted },
+      Surface(
+        onClick = {
+          if (onToggleMute != null) {
+            onToggleMute()
+          } else {
+            localMuted = !localMuted
+          }
+        },
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xAA000000),
         modifier = Modifier
           .align(Alignment.BottomEnd)
-          .padding(6.dp)
-          .clip(CircleShape)
-          .background(Color(0x88000000)),
+          .padding(8.dp)
+          .testTag("tier_preview_entry_mute_toggle"),
       ) {
-        Icon(
-          imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-          contentDescription = "ध्वनि बदलें",
-          tint = Color.White,
-          modifier = Modifier.size(18.dp),
-        )
+        Row(
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          Icon(
+            imageVector = if (effectiveMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = if (effectiveMuted) "आवाज़ म्यूट है, चालू करें" else "आवाज़ चालू है, म्यूट करें",
+            tint = if (effectiveMuted) SwarCoral else SwarCyan,
+            modifier = Modifier.size(16.dp),
+          )
+          Text(
+            text = if (effectiveMuted) "म्यूट" else "आवाज़ चालू",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+          )
+        }
       }
     } else if (fallbackThumb.isNotBlank()) {
       AsyncImage(

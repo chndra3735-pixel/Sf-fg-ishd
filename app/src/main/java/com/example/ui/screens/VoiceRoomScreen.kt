@@ -33,9 +33,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -294,6 +296,12 @@ fun VoiceRoomScreen(
   roomRocketState: RoomRocketState? = null,
   activeRocketLaunch: RocketLaunchEvent? = null,
   onDismissRocketLaunch: () -> Unit = {},
+  ownEquippedFrameLevel: Long = -1L,
+  ownEquippedTypingLevel: Long = -1L,
+  ownEquippedEntryVideoLevel: Long = -1L,
+  onEquipCosmetic: (frameLevel: Long?, typingLevel: Long?, entryVideoLevel: Long?) -> Unit = { _, _, _ -> },
+  isEntryVideoMuted: Boolean = false,
+  onToggleEntryVideoMuted: () -> Unit = {},
 ) {
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val coroutineScope = rememberCoroutineScope()
@@ -792,9 +800,15 @@ fun VoiceRoomScreen(
               } else {
                 SwarUserIdentity.effectiveHpForProfile(userProfiles[occUid])
               }
-              SwarUserIdentity.highestUnlockedFrameUrl(
+              val occEquippedFrame = if (occUid == currentUserId) {
+                ownEquippedFrameLevel
+              } else {
+                userProfiles[occUid]?.equippedFrameLevel ?: -1L
+              }
+              SwarUserIdentity.resolvedFrameUrl(
                 SwarUserIdentity.levelForCoins(occHp).level,
                 levelConfigs,
+                occEquippedFrame,
               )
             } else ""
             val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
@@ -875,9 +889,15 @@ fun VoiceRoomScreen(
                     } else {
                       SwarUserIdentity.effectiveHpForProfile(userProfiles[occUid])
                     }
-                    SwarUserIdentity.highestUnlockedFrameUrl(
+                    val occEquippedFrame = if (occUid == currentUserId) {
+                      ownEquippedFrameLevel
+                    } else {
+                      userProfiles[occUid]?.equippedFrameLevel ?: -1L
+                    }
+                    SwarUserIdentity.resolvedFrameUrl(
                       SwarUserIdentity.levelForCoins(occHp).level,
                       levelConfigs,
+                      occEquippedFrame,
                     )
                   } else ""
                   val isCpPartnerSeated = SwarUserIdentity.findAcceptedCpForUser(occUid, acceptedCpLinks) != null
@@ -956,8 +976,13 @@ fun VoiceRoomScreen(
               SwarUserIdentity.effectiveHpForProfile(userProfiles[msg.senderUid])
             }
             val senderLevel = SwarUserIdentity.levelForCoins(senderHp).level
+            val senderEquippedTyping = if (msg.senderUid == currentUserId) {
+              ownEquippedTypingLevel
+            } else {
+              userProfiles[msg.senderUid]?.equippedTypingLevel ?: -1L
+            }
             val senderTypingBannerUrl = if (msg.messageType == "text") {
-              SwarUserIdentity.highestUnlockedTypingBannerUrl(senderLevel, levelConfigs)
+              SwarUserIdentity.resolvedTypingBannerUrl(senderLevel, levelConfigs, senderEquippedTyping)
             } else {
               ""
             }
@@ -1131,10 +1156,13 @@ fun VoiceRoomScreen(
 
     // Full-Screen Gift Playback Overlay (strictly scoped to the active room only)
     if (activeFullScreenGift != null && activeFullScreenGift.roomId == room.id) {
+      val isEntryClip = activeFullScreenGift.giftId.startsWith("entry_lv_")
       FullScreenGiftOverlay(
         event = activeFullScreenGift,
         onDismiss = onDismissFullScreenGift,
         onPlaybackMessage = onShowToast,
+        isAudioMuted = if (isEntryClip) isEntryVideoMuted else false,
+        onToggleAudioMute = if (isEntryClip) onToggleEntryVideoMuted else null,
       )
     }
 
@@ -1203,8 +1231,9 @@ fun VoiceRoomScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
-        val activeFrameUrl = remember(levelInfo.level, levelConfigs) {
-          SwarUserIdentity.highestUnlockedFrameUrl(levelInfo.level, levelConfigs)
+        val sheetEquippedFrame = if (isSelf) ownEquippedFrameLevel else (remoteProfile?.equippedFrameLevel ?: -1L)
+        val activeFrameUrl = remember(levelInfo.level, levelConfigs, sheetEquippedFrame) {
+          SwarUserIdentity.resolvedFrameUrl(levelInfo.level, levelConfigs, sheetEquippedFrame)
         }
         // 1. Top Circular DP with Animated Level Frame
         FramedUserAvatar(
@@ -1443,6 +1472,12 @@ fun VoiceRoomScreen(
             sampleDisplayName = resolvedName,
             onSaveTierConfig = onSaveLevelTierConfig,
             onClaimTierReward = onClaimLevelTierReward,
+            equippedFrameLevel = if (isSelf) ownEquippedFrameLevel else (remoteProfile?.equippedFrameLevel ?: -1L),
+            equippedTypingLevel = if (isSelf) ownEquippedTypingLevel else (remoteProfile?.equippedTypingLevel ?: -1L),
+            equippedEntryVideoLevel = if (isSelf) ownEquippedEntryVideoLevel else (remoteProfile?.equippedEntryVideoLevel ?: -1L),
+            onEquipCosmetic = if (isSelf) onEquipCosmetic else { _, _, _ -> },
+            isEntryVideoMuted = isEntryVideoMuted,
+            onToggleEntryVideoMuted = onToggleEntryVideoMuted,
           )
         }
 
@@ -2579,40 +2614,46 @@ private fun SeatEmojiReactionOverlay(
   reaction: ActiveSeatEmoji,
   dpSize: Dp,
 ) {
-  val scaleAnim = remember(reaction.messageId) { Animatable(0.72f) }
+  val expandedSize = if (dpSize >= 48.dp) 78.dp else 70.dp
+  val scaleAnim = remember(reaction.messageId) { Animatable(0.68f) }
   LaunchedEffect(reaction.messageId) {
     scaleAnim.animateTo(
-      targetValue = 1.08f,
+      targetValue = 1.18f,
       animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
     )
     scaleAnim.animateTo(
-      targetValue = 1.0f,
+      targetValue = 1.05f,
       animationSpec = tween(180),
     )
   }
   Box(
     modifier = Modifier
       .size(dpSize)
-      .scale(scaleAnim.value)
-      .clip(CircleShape)
-      .background(if (reaction.imageUrl.isNotBlank()) Color.Transparent else Color(0x99120824))
-      .testTag("seat_emoji_overlay"),
+      .zIndex(6f),
     contentAlignment = Alignment.Center,
   ) {
-    if (reaction.imageUrl.isNotBlank()) {
-      AsyncImage(
-        model = reaction.imageUrl,
-        contentDescription = "इमोजी रिएक्शन",
-        modifier = Modifier
-          .fillMaxSize()
-          .clip(CircleShape),
-        contentScale = ContentScale.Crop,
-      )
-    } else {
-      Text(
-        text = reaction.symbol,
-        fontSize = if (dpSize >= 56.dp) 46.sp else 36.sp,
-      )
+    Box(
+      modifier = Modifier
+        .requiredSize(expandedSize)
+        .scale(scaleAnim.value)
+        .clip(if (reaction.imageUrl.isNotBlank()) RoundedCornerShape(18.dp) else CircleShape)
+        .background(if (reaction.imageUrl.isNotBlank()) Color.Transparent else Color(0x88120824))
+        .testTag("seat_emoji_overlay"),
+      contentAlignment = Alignment.Center,
+    ) {
+      if (reaction.imageUrl.isNotBlank()) {
+        AsyncImage(
+          model = reaction.imageUrl,
+          contentDescription = "इमोजी रिएक्शन",
+          modifier = Modifier.fillMaxSize(),
+          contentScale = ContentScale.Fit,
+        )
+      } else {
+        Text(
+          text = reaction.symbol,
+          fontSize = if (dpSize >= 48.dp) 52.sp else 46.sp,
+        )
+      }
     }
   }
 }

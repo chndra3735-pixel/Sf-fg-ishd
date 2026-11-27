@@ -14,6 +14,9 @@
         "clubTag": { "type": "string", "description": "Club badge tag such as UP55." },
         "coins": { "type": "integer", "description": "Virtual social coin balance." },
         "hp": { "type": "integer", "description": "Accumulated level progression HP / Exp." },
+        "equippedFrameLevel": { "type": "integer", "description": "Chosen unlocked frame tier (-1=auto highest, 0=plain/none, or tier badgeLevel)." },
+        "equippedTypingLevel": { "type": "integer", "description": "Chosen unlocked typing banner tier (-1=auto highest, 0=plain/none, or tier badgeLevel)." },
+        "equippedEntryVideoLevel": { "type": "integer", "description": "Chosen unlocked entry video tier (-1=auto highest, 0=none, or tier badgeLevel)." },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
       },

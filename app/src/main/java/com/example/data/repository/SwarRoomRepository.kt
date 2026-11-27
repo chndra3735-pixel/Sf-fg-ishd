@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import com.example.R
 import com.example.data.model.AdminCoinGrantSummary
+import com.example.data.model.AdminLevelUpdateSummary
 import com.example.data.model.Conversation
 import com.example.data.model.CpRelationship
 import com.example.data.model.DirectMessage
@@ -142,6 +143,36 @@ class SwarRoomRepository(
     if (avatarUrl != null) {
       updates["avatarUrl"] = avatarUrl.take(600)
     }
+    try {
+      docRef.update(updates).await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      throw e
+    }
+  }
+
+  suspend fun updateEquippedCosmetics(
+    frameLevel: Long? = null,
+    typingLevel: Long? = null,
+    entryVideoLevel: Long? = null,
+  ): Result<Unit> = runCatching {
+    val uid = requireUserId()
+    val docRef = db.collection("users").document(uid)
+    val updates = mutableMapOf<String, Any>(
+      "updatedAt" to FieldValue.serverTimestamp(),
+    )
+    if (frameLevel != null) {
+      updates["equippedFrameLevel"] = frameLevel.coerceIn(-1L, 120L)
+    }
+    if (typingLevel != null) {
+      updates["equippedTypingLevel"] = typingLevel.coerceIn(-1L, 120L)
+    }
+    if (entryVideoLevel != null) {
+      updates["equippedEntryVideoLevel"] = entryVideoLevel.coerceIn(-1L, 120L)
+    }
+    if (updates.size <= 1) return@runCatching
     try {
       docRef.update(updates).await()
     } catch (e: CancellationException) {
@@ -2278,6 +2309,8 @@ class SwarRoomRepository(
       throw IllegalStateException("इस यूज़र की वॉलेट प्रोफ़ाइल अभी सक्रिय नहीं है।")
     }
     val currentCoins = snap.getLong("coins") ?: 0L
+    val currentHp = (snap.getLong("hp") ?: 0L).coerceAtLeast(0L)
+    val currentLevel = SwarUserIdentity.levelForCoins(currentHp).level
     AdminCoinGrantSummary(
       targetUid = target.userId,
       numericId = cleanId,
@@ -2286,6 +2319,8 @@ class SwarRoomRepository(
       previousCoins = currentCoins,
       addedCoins = 0L,
       newBalance = currentCoins,
+      currentHp = currentHp,
+      currentLevel = currentLevel,
     )
   }
 
@@ -2308,6 +2343,8 @@ class SwarRoomRepository(
           throw IllegalStateException("इस यूज़र की वॉलेट प्रोफ़ाइल अभी सक्रिय नहीं है।")
         }
         val prevCoins = (userSnap.getLong("coins") ?: 0L).coerceAtLeast(0L)
+        val currentHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
+        val currentLevel = SwarUserIdentity.levelForCoins(currentHp).level
         val nextCoins = (prevCoins + amountToAdd).coerceIn(prevCoins, 999_999_999_999L)
         val actualAdded = (nextCoins - prevCoins).coerceAtLeast(0L)
         if (actualAdded <= 0L) {
@@ -2328,6 +2365,55 @@ class SwarRoomRepository(
           previousCoins = prevCoins,
           addedCoins = actualAdded,
           newBalance = nextCoins,
+          currentHp = currentHp,
+          currentLevel = currentLevel,
+        )
+      }.await()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, userRef.path)
+      throw e
+    }
+  }
+
+  suspend fun setUserLevelByNumericId(
+    numericId: String,
+    targetLevel: Int,
+  ): Result<AdminLevelUpdateSummary> = runCatching {
+    requireUserId()
+    val cleanId = numericId.filter { it.isDigit() }
+    require(cleanId.length == 10) { "कृपया सही 10 अंकों की ID दर्ज करें।" }
+    val clampedLevel = targetLevel.coerceIn(1, 120)
+    val targetHp = SwarUserIdentity.requiredHpForLevel(clampedLevel)
+
+    val target = resolveUserForAdminCoinAction(cleanId)
+    val userRef = db.collection("users").document(target.userId)
+
+    try {
+      db.runTransaction { tx ->
+        val userSnap = tx.get(userRef)
+        if (!userSnap.exists()) {
+          throw IllegalStateException("इस यूज़र की प्रोफ़ाइल अभी सक्रिय नहीं है।")
+        }
+        val prevHp = (userSnap.getLong("hp") ?: 0L).coerceAtLeast(0L)
+        val prevLevel = SwarUserIdentity.levelForCoins(prevHp).level
+        tx.update(
+          userRef,
+          mapOf(
+            "hp" to targetHp,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        AdminLevelUpdateSummary(
+          targetUid = target.userId,
+          numericId = cleanId,
+          displayName = userSnap.getString("displayName")?.ifBlank { target.displayName } ?: target.displayName.ifBlank { "Swar User" },
+          avatarUrl = userSnap.getString("avatarUrl")?.ifBlank { target.avatarUrl } ?: target.avatarUrl,
+          previousHp = prevHp,
+          previousLevel = prevLevel,
+          newHp = targetHp,
+          newLevel = clampedLevel,
         )
       }.await()
     } catch (e: CancellationException) {

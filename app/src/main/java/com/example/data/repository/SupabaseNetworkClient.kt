@@ -1,13 +1,17 @@
 package com.example.data.repository
 
 import android.util.Log
+import okhttp3.Cache
 import okhttp3.Dns
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.File
 import java.net.InetAddress
 import java.net.URLEncoder
 import java.net.UnknownHostException
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -58,7 +62,35 @@ object SupabaseNetworkClient {
     }
   }
 
-  val sharedOkHttpClient: OkHttpClient by lazy {
+  private const val HTTP_DISK_CACHE_BYTES = 120L * 1024L * 1024L
+
+  @Volatile
+  private var cachedHttpClient: OkHttpClient? = null
+
+  private val mediaCacheControlInterceptor = Interceptor { chain ->
+    val request = chain.request()
+    val response = chain.proceed(request)
+    val url = request.url.toString()
+    val isCacheableGet = request.method.equals("GET", ignoreCase = true) &&
+      response.isSuccessful &&
+      (url.contains("/storage/v1/object/public/", ignoreCase = true) ||
+        url.endsWith(".gif", ignoreCase = true) ||
+        url.endsWith(".png", ignoreCase = true) ||
+        url.endsWith(".jpg", ignoreCase = true) ||
+        url.endsWith(".jpeg", ignoreCase = true) ||
+        url.endsWith(".webp", ignoreCase = true) ||
+        url.endsWith(".mp4", ignoreCase = true))
+    if (isCacheableGet && response.header("Cache-Control").isNullOrBlank()) {
+      response.newBuilder()
+        .removeHeader("Pragma")
+        .header("Cache-Control", "public, max-age=604800")
+        .build()
+    } else {
+      response
+    }
+  }
+
+  private val fallbackClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
       .dns(dohFallbackDns)
       .connectTimeout(20, TimeUnit.SECONDS)
@@ -66,6 +98,25 @@ object SupabaseNetworkClient {
       .readTimeout(30, TimeUnit.SECONDS)
       .build()
   }
+
+  fun initialize(cacheDir: File) {
+    if (cachedHttpClient != null) return
+    synchronized(this) {
+      if (cachedHttpClient != null) return
+      val httpCacheDir = File(cacheDir, LocalMediaCacheManager.HTTP_CACHE_DIR_NAME).apply { mkdirs() }
+      cachedHttpClient = OkHttpClient.Builder()
+        .cache(Cache(httpCacheDir, HTTP_DISK_CACHE_BYTES))
+        .dns(dohFallbackDns)
+        .addNetworkInterceptor(mediaCacheControlInterceptor)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+    }
+  }
+
+  val sharedOkHttpClient: OkHttpClient
+    get() = cachedHttpClient ?: fallbackClient
 
   fun wasHostNxDomain(hostname: String): Boolean = nxDomainHosts[hostname] == true
 
@@ -130,23 +181,68 @@ object SupabaseNetworkClient {
     return emptyList()
   }
 
-  fun cacheRemoteMediaFile(cacheDir: java.io.File, remoteUrl: String): java.io.File? {
+  private fun sha256ShortKey(url: String): String {
     return runCatching {
-      val dir = java.io.File(cacheDir, "swar_media_cache").apply { mkdirs() }
-      val rawExt = remoteUrl.substringBefore('?').substringBefore('#')
-        .substringAfterLast('/', "")
-        .substringAfterLast('.', "")
-        .lowercase()
-        .filter { it.isLetterOrDigit() }
-        .take(5)
-      val ext = if (rawExt in setOf("mp4", "m4v", "mov", "webm", "3gp", "mkv", "gif", "jpg", "jpeg", "png", "webp")) {
-        rawExt
-      } else {
-        "mp4"
+      val digest = MessageDigest.getInstance("SHA-256").digest(url.toByteArray(Charsets.UTF_8))
+      digest.take(12).joinToString("") { "%02x".format(it) }
+    }.getOrElse {
+      url.hashCode().toUInt().toString(16)
+    }
+  }
+
+  private fun resolveMediaStorageDir(baseDir: File): File {
+    return if (baseDir.name == "files") {
+      File(baseDir, LocalMediaCacheManager.PERSISTENT_MEDIA_DIR_NAME).apply { mkdirs() }
+    } else {
+      File(baseDir, LocalMediaCacheManager.TEMP_MEDIA_DIR_NAME).apply { mkdirs() }
+    }
+  }
+
+  private fun extractSafeExtension(remoteUrl: String): String {
+    val rawExt = remoteUrl.substringBefore('?').substringBefore('#')
+      .substringAfterLast('/', "")
+      .substringAfterLast('.', "")
+      .lowercase()
+      .filter { it.isLetterOrDigit() }
+      .take(5)
+    return if (rawExt in setOf("mp4", "m4v", "mov", "webm", "3gp", "mkv", "gif", "jpg", "jpeg", "png", "webp")) {
+      rawExt
+    } else {
+      "mp4"
+    }
+  }
+
+  fun findCachedMediaFile(baseDir: File?, remoteUrl: String): File? {
+    if (baseDir == null || remoteUrl.isBlank()) return null
+    val ext = extractSafeExtension(remoteUrl)
+    val shaKey = sha256ShortKey(remoteUrl)
+    val legacyKey = remoteUrl.hashCode().toUInt().toString(16)
+    val candidates = listOf(
+      File(baseDir, "${LocalMediaCacheManager.PERSISTENT_MEDIA_DIR_NAME}/media_$shaKey.$ext"),
+      File(baseDir, "${LocalMediaCacheManager.TEMP_MEDIA_DIR_NAME}/media_$shaKey.$ext"),
+      File(baseDir, "${LocalMediaCacheManager.PERSISTENT_MEDIA_DIR_NAME}/media_$legacyKey.$ext"),
+      File(baseDir, "${LocalMediaCacheManager.TEMP_MEDIA_DIR_NAME}/media_$legacyKey.$ext"),
+    )
+    return candidates.firstOrNull { it.exists() && it.length() > 0L }?.also {
+      runCatching { it.setLastModified(System.currentTimeMillis()) }
+    }
+  }
+
+  fun cacheRemoteMediaFile(
+    cacheDir: File,
+    remoteUrl: String,
+    maxCacheBytes: Long = LocalMediaCacheManager.DEFAULT_MAX_MEDIA_CACHE_BYTES,
+  ): File? {
+    return runCatching {
+      findCachedMediaFile(cacheDir, remoteUrl)?.let { existing ->
+        return@runCatching existing
       }
-      val key = remoteUrl.hashCode().toUInt().toString(16)
-      val target = java.io.File(dir, "media_$key.$ext")
+      val dir = resolveMediaStorageDir(cacheDir)
+      val ext = extractSafeExtension(remoteUrl)
+      val key = sha256ShortKey(remoteUrl)
+      val target = File(dir, "media_$key.$ext")
       if (target.exists() && target.length() > 0L) {
+        runCatching { target.setLastModified(System.currentTimeMillis()) }
         return@runCatching target
       }
       val requestBuilder = Request.Builder()
@@ -171,7 +267,7 @@ object SupabaseNetworkClient {
           return@runCatching null
         }
         val body = response.body ?: return@runCatching null
-        val tmp = java.io.File(dir, "media_$key.tmp")
+        val tmp = File(dir, "media_$key.tmp")
         var moved = false
         try {
           body.byteStream().use { input ->
@@ -181,6 +277,7 @@ object SupabaseNetworkClient {
           }
           if (tmp.length() > 0L && tmp.renameTo(target)) {
             moved = true
+            LocalMediaCacheManager.enforceLruLimit(dir, maxCacheBytes)
             target
           } else {
             null
@@ -194,15 +291,25 @@ object SupabaseNetworkClient {
     }.getOrNull()
   }
 
-  fun evictCachedMedia(cacheDir: java.io.File?, remoteUrl: String) {
+  fun evictCachedMedia(cacheDir: File?, remoteUrl: String) {
     if (cacheDir == null || remoteUrl.isBlank()) return
     runCatching {
-      val dir = java.io.File(cacheDir, "swar_media_cache")
-      if (!dir.exists()) return@runCatching
-      val key = remoteUrl.hashCode().toUInt().toString(16)
-      dir.listFiles()?.forEach { file ->
-        if (file.name.startsWith("media_$key.") || file.name == "media_$key.tmp") {
-          file.delete()
+      val shaKey = sha256ShortKey(remoteUrl)
+      val legacyKey = remoteUrl.hashCode().toUInt().toString(16)
+      listOf(
+        File(cacheDir, LocalMediaCacheManager.PERSISTENT_MEDIA_DIR_NAME),
+        File(cacheDir, LocalMediaCacheManager.TEMP_MEDIA_DIR_NAME),
+      ).forEach { dir ->
+        if (dir.exists()) {
+          dir.listFiles()?.forEach { file ->
+            if (file.name.startsWith("media_$shaKey.") ||
+              file.name == "media_$shaKey.tmp" ||
+              file.name.startsWith("media_$legacyKey.") ||
+              file.name == "media_$legacyKey.tmp"
+            ) {
+              file.delete()
+            }
+          }
         }
       }
     }

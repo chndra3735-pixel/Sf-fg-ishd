@@ -283,7 +283,7 @@ fun EmojiPanelSheet(
         columns = GridCells.Fixed(4),
         modifier = Modifier
           .fillMaxWidth()
-          .height(260.dp),
+          .height(296.dp),
         contentPadding = PaddingValues(12.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -362,7 +362,7 @@ fun EmojiPanelSheet(
               Column(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(vertical = 10.dp, horizontal = 4.dp),
+                  .padding(vertical = 8.dp, horizontal = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
               ) {
@@ -371,14 +371,14 @@ fun EmojiPanelSheet(
                     model = item.imageUrl,
                     contentDescription = item.label,
                     modifier = Modifier
-                      .size(44.dp)
-                      .clip(CircleShape),
-                    contentScale = ContentScale.Crop,
+                      .size(56.dp)
+                      .clip(RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Fit,
                   )
                 } else {
                   Text(
                     text = item.symbol.ifBlank { "😊" },
-                    fontSize = 32.sp,
+                    fontSize = 42.sp,
                   )
                 }
                 Spacer(modifier = Modifier.height(4.dp))

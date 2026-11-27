@@ -20,6 +20,7 @@ import com.example.audio.RoomMusicPlayer
 import com.example.audio.RoomMusicState
 import com.example.audio.VoiceAudioEngine
 import com.example.data.model.AdminCoinGrantSummary
+import com.example.data.model.AdminLevelUpdateSummary
 import com.example.data.model.Conversation
 import com.example.data.model.CpRelationship
 import com.example.data.model.DirectMessage
@@ -44,6 +45,8 @@ import com.example.data.repository.AppUpdateInfo
 import com.example.data.repository.AuditDateLocationHelper
 import com.example.data.repository.CapturedLocationResult
 import com.example.data.repository.GitHubUpdateChecker
+import com.example.data.repository.LocalCacheStats
+import com.example.data.repository.LocalMediaCacheManager
 import com.example.data.repository.MediaCompressor
 import com.example.data.repository.SupabaseNetworkClient
 import com.example.data.repository.SupabaseStorageRepository
@@ -73,6 +76,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface UiState<out T> {
   data object Loading : UiState<Nothing>
@@ -156,6 +160,28 @@ class SwarRoomViewModel(
 
   private val _lastAdminCoinGrant = MutableStateFlow<AdminCoinGrantSummary?>(null)
   val lastAdminCoinGrant: StateFlow<AdminCoinGrantSummary?> = _lastAdminCoinGrant.asStateFlow()
+
+  private val _isUpdatingAdminLevel = MutableStateFlow(false)
+  val isUpdatingAdminLevel: StateFlow<Boolean> = _isUpdatingAdminLevel.asStateFlow()
+
+  private val _lastAdminLevelUpdate = MutableStateFlow<AdminLevelUpdateSummary?>(null)
+  val lastAdminLevelUpdate: StateFlow<AdminLevelUpdateSummary?> = _lastAdminLevelUpdate.asStateFlow()
+
+  private val _isEntryVideoMuted = MutableStateFlow(
+    appContext?.let { LocalMediaCacheManager.isEntryVideoMuted(it) } ?: false
+  )
+  val isEntryVideoMuted: StateFlow<Boolean> = _isEntryVideoMuted.asStateFlow()
+
+  private val _isServerSaverEnabled = MutableStateFlow(
+    appContext?.let { LocalMediaCacheManager.isServerSaverEnabled(it) } ?: true
+  )
+  val isServerSaverEnabled: StateFlow<Boolean> = _isServerSaverEnabled.asStateFlow()
+
+  private val _localCacheStats = MutableStateFlow(LocalCacheStats())
+  val localCacheStats: StateFlow<LocalCacheStats> = _localCacheStats.asStateFlow()
+
+  private val _isClearingCache = MutableStateFlow(false)
+  val isClearingCache: StateFlow<Boolean> = _isClearingCache.asStateFlow()
 
   // --- CP / Best-Friend Partner Linking & Progression ---
   val myCpLinks: StateFlow<List<CpRelationship>> =
@@ -604,6 +630,21 @@ class SwarRoomViewModel(
           }
         }
       }
+    }
+
+    audioEngine.setServerSaverEnabled(_isServerSaverEnabled.value)
+    refreshLocalCacheStats()
+
+    // Quietly prefetch level cosmetic assets onto local phone storage when Server Saver is enabled
+    viewModelScope.launch {
+      combine(levelConfigs, _isServerSaverEnabled) { configs, saverOn -> configs to saverOn }
+        .collect { (configs, saverOn) ->
+          val ctx = appContext
+          if (saverOn && ctx != null && configs.isNotEmpty()) {
+            LocalMediaCacheManager.prefetchLevelConfigMedia(ctx, configs)
+            refreshLocalCacheStats()
+          }
+        }
     }
 
     // Observe global GitHub update repo configuration synced from Admin + BuildConfig.GITHUB_REPO
@@ -1238,11 +1279,11 @@ class SwarRoomViewModel(
           badgeTag = profile.clubTag,
         )
       }
-      // Play user's unlocked royal entry video inside THIS room only
+      // Play user's chosen (or highest unlocked) royal entry video inside THIS room only
       if (room != null && _activeRoomId.value == roomId) {
         val userLevel = SwarUserIdentity.levelForProfile(profile).level
         val configs = levelConfigs.value
-        val entryMatch = SwarUserIdentity.highestUnlockedEntryVideo(userLevel, configs)
+        val entryMatch = SwarUserIdentity.resolvedEntryVideo(userLevel, configs, profile.equippedEntryVideoLevel)
         if (entryMatch != null) {
           val (tier, entryUrl) = entryMatch
           repository.broadcastRoomEntryVideo(
@@ -2345,6 +2386,139 @@ class SwarRoomViewModel(
           }
       } finally {
         _isGrantingAdminCoins.value = false
+      }
+    }
+  }
+
+  fun setUserLevelByNumericId(
+    numericId: String,
+    targetLevel: Int,
+  ) {
+    if (!isAdminUser) {
+      _events.tryEmit("केवल एडमिन ही यूज़र लेवल बदल सकते हैं।")
+      return
+    }
+    val cleanId = numericId.filter { it.isDigit() }
+    if (cleanId.length != 10) {
+      _events.tryEmit("कृपया सही 10 अंकों की ID दर्ज करें।")
+      return
+    }
+    val clampedLevel = targetLevel.coerceIn(1, 120)
+    if (_isUpdatingAdminLevel.value) return
+    viewModelScope.launch {
+      _isUpdatingAdminLevel.value = true
+      try {
+        repository.setUserLevelByNumericId(cleanId, clampedLevel)
+          .onSuccess { summary ->
+            _lastAdminLevelUpdate.value = summary
+            _lastAdminCoinGrant.value?.takeIf { it.numericId == summary.numericId }?.let { prev ->
+              _lastAdminCoinGrant.value = prev.copy(
+                currentHp = summary.newHp,
+                currentLevel = summary.newLevel,
+              )
+            }
+            val safeName = summary.displayName.ifBlank { "यूज़र" }
+            _events.tryEmit(
+              "$safeName (ID: ${summary.numericId}) का लेवल LV.${summary.previousLevel} से LV.${summary.newLevel} (${SwarUserIdentity.formatIndianNumber(summary.newHp)} HP) सेट किया गया!"
+            )
+          }
+          .onFailure { err ->
+            _events.tryEmit(err.message ?: "यूज़र लेवल बदलने में त्रुटि हुई।")
+          }
+      } finally {
+        _isUpdatingAdminLevel.value = false
+      }
+    }
+  }
+
+  fun equipCosmetic(
+    frameLevel: Long? = null,
+    typingLevel: Long? = null,
+    entryVideoLevel: Long? = null,
+  ) {
+    val profile = currentProfileOrDefault()
+    val userLevel = SwarUserIdentity.levelForProfile(profile).level
+
+    fun validateTier(levelChoice: Long?): Long? {
+      if (levelChoice == null) return null
+      if (levelChoice <= 0L) return levelChoice.coerceIn(-1L, 0L)
+      val tier = SwarUserIdentity.levelTiers.firstOrNull { it.badgeLevel == levelChoice.toInt() }
+      if (tier == null || userLevel < tier.minLevel) {
+        _events.tryEmit("यह स्टाइल LV.${tier?.minLevel ?: levelChoice} पर अनलॉक होगा।")
+        return null
+      }
+      return tier.badgeLevel.toLong()
+    }
+
+    val safeFrame = validateTier(frameLevel)
+    val safeTyping = validateTier(typingLevel)
+    val safeEntry = validateTier(entryVideoLevel)
+    if (safeFrame == null && safeTyping == null && safeEntry == null) return
+
+    viewModelScope.launch {
+      repository.updateEquippedCosmetics(
+        frameLevel = safeFrame,
+        typingLevel = safeTyping,
+        entryVideoLevel = safeEntry,
+      ).onSuccess {
+        val msg = when {
+          safeFrame == 0L -> "DP फ्रेम हटाकर सादा किया गया ✓"
+          safeFrame == -1L -> "DP फ्रेम ऑटो (सर्वोच्च) पर सेट किया गया ✓"
+          safeFrame != null -> "LV.$safeFrame DP फ्रेम पहना गया ✓"
+          safeTyping == 0L -> "टाइपिंग बॉक्स सादा (डिफ़ॉल्ट) किया गया ✓"
+          safeTyping == -1L -> "टाइपिंग बॉक्स ऑटो (सर्वोच्च) पर सेट किया गया ✓"
+          safeTyping != null -> "LV.$safeTyping टाइपिंग बॉक्स पहना गया ✓"
+          safeEntry == 0L -> "एंट्री वीडियो बंद (सादा प्रवेश) किया गया ✓"
+          safeEntry == -1L -> "एंट्री वीडियो ऑटो (सर्वोच्च) पर सेट किया गया ✓"
+          safeEntry != null -> "LV.$safeEntry एंट्री वीडियो सेट किया गया ✓"
+          else -> "स्टाइल अपडेट हो गया ✓"
+        }
+        _events.tryEmit(msg)
+      }.onFailure { err ->
+        _events.tryEmit(err.message ?: "स्टाइल बदलने में त्रुटि")
+      }
+    }
+  }
+
+  fun toggleEntryVideoMuted() {
+    val next = !_isEntryVideoMuted.value
+    _isEntryVideoMuted.value = next
+    appContext?.let { LocalMediaCacheManager.setEntryVideoMuted(it, next) }
+    _events.tryEmit(if (next) "एंट्री वीडियो की आवाज़ म्यूट की गई 🔇" else "एंट्री वीडियो की आवाज़ चालू की गई 🔊")
+  }
+
+  fun toggleServerSaverEnabled(enabled: Boolean) {
+    _isServerSaverEnabled.value = enabled
+    appContext?.let { LocalMediaCacheManager.setServerSaverEnabled(it, enabled) }
+    audioEngine.setServerSaverEnabled(enabled)
+    _events.tryEmit(
+      if (enabled) "लोकल कैश व वॉइस सर्वर बचत मोड चालू ✓" else "सर्वर बचत मोड बंद किया गया"
+    )
+  }
+
+  fun refreshLocalCacheStats() {
+    val ctx = appContext ?: return
+    viewModelScope.launch(Dispatchers.IO) {
+      _localCacheStats.value = LocalMediaCacheManager.calculateCacheStats(ctx)
+    }
+  }
+
+  fun clearLocalMediaCache() {
+    val ctx = appContext ?: return
+    if (_isClearingCache.value) return
+    viewModelScope.launch {
+      _isClearingCache.value = true
+      try {
+        val freed = withContext(Dispatchers.IO) {
+          val bytes = LocalMediaCacheManager.clearAllLocalCaches(ctx)
+          _localCacheStats.value = LocalMediaCacheManager.calculateCacheStats(ctx)
+          bytes
+        }
+        _events.tryEmit(
+          "लोकल कैश साफ़ किया गया (${LocalCacheStats.formatBytesReadable(freed)} मुक्त)"
+        )
+      } finally {
+        _isClearingCache.value = false
       }
     }
   }

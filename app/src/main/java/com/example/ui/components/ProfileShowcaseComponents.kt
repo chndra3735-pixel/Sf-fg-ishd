@@ -677,6 +677,13 @@ fun LevelDetailsDialog(
     onDone: () -> Unit,
   ) -> Unit = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
   onClaimTierReward: (Int) -> Unit = {},
+  initialTab: Int = 0,
+  equippedFrameLevel: Long = -1L,
+  equippedTypingLevel: Long = -1L,
+  equippedEntryVideoLevel: Long = -1L,
+  onEquipCosmetic: (frameLevel: Long?, typingLevel: Long?, entryVideoLevel: Long?) -> Unit = { _, _, _ -> },
+  isEntryVideoMuted: Boolean = false,
+  onToggleEntryVideoMuted: () -> Unit = {},
 ) {
   LevelCardsShowcaseDialog(
     levelInfo = levelInfo,
@@ -690,6 +697,13 @@ fun LevelDetailsDialog(
     sampleDisplayName = sampleDisplayName,
     onSaveTierConfig = onSaveTierConfig,
     onClaimTierReward = onClaimTierReward,
+    initialTab = initialTab,
+    equippedFrameLevel = equippedFrameLevel,
+    equippedTypingLevel = equippedTypingLevel,
+    equippedEntryVideoLevel = equippedEntryVideoLevel,
+    onEquipCosmetic = onEquipCosmetic,
+    isEntryVideoMuted = isEntryVideoMuted,
+    onToggleEntryVideoMuted = onToggleEntryVideoMuted,
   )
 }
 

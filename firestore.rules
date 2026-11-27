@@ -48,6 +48,9 @@ service cloud.firestore {
              data.clubTag is string && data.clubTag.size() <= 16 &&
              data.coins is int && data.coins >= 0 && data.coins <= 999999999999 &&
              (!('hp' in data.keys()) || (data.hp is int && data.hp >= 0 && data.hp <= 999999999999)) &&
+             (!('equippedFrameLevel' in data.keys()) || (data.equippedFrameLevel is int && data.equippedFrameLevel >= -1 && data.equippedFrameLevel <= 120)) &&
+             (!('equippedTypingLevel' in data.keys()) || (data.equippedTypingLevel is int && data.equippedTypingLevel >= -1 && data.equippedTypingLevel <= 120)) &&
+             (!('equippedEntryVideoLevel' in data.keys()) || (data.equippedEntryVideoLevel is int && data.equippedEntryVideoLevel >= -1 && data.equippedEntryVideoLevel <= 120)) &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
     }
@@ -319,7 +322,7 @@ service cloud.firestore {
                        request.auth.uid == userId &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'hp', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'hp', 'equippedFrameLevel', 'equippedTypingLevel', 'equippedEntryVideoLevel', 'createdAt', 'updatedAt']) &&
                        isValidUserProfile(incoming());
 
       allow update: if isSignedIn() &&
@@ -328,10 +331,10 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt && (
                          (request.auth.uid == userId &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'hp', 'updatedAt'])) ||
+                          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'avatarUrl', 'bio', 'gender', 'clubTag', 'coins', 'hp', 'equippedFrameLevel', 'equippedTypingLevel', 'equippedEntryVideoLevel', 'updatedAt'])) ||
                          (isAdmin() &&
-                          incoming().coins >= existing().coins &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'updatedAt']))
+                          incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'hp', 'updatedAt']) &&
+                          (!('coins' in incoming().diff(existing()).affectedKeys()) || incoming().coins >= existing().coins))
                        );
 
       allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;

@@ -18,6 +18,9 @@ data class UserProfile(
   val clubTag: String = "SWAR",
   val coins: Long = 1000L,
   val hp: Long = 0L,
+  val equippedFrameLevel: Long = -1L,
+  val equippedTypingLevel: Long = -1L,
+  val equippedEntryVideoLevel: Long = -1L,
   @ServerTimestamp val createdAt: Timestamp? = null,
   @ServerTimestamp val updatedAt: Timestamp? = null,
 )
@@ -305,6 +308,20 @@ data class AdminCoinGrantSummary(
   val previousCoins: Long = 0L,
   val addedCoins: Long = 0L,
   val newBalance: Long = 0L,
+  val currentHp: Long = 0L,
+  val currentLevel: Int = 1,
+)
+
+@androidx.annotation.Keep
+data class AdminLevelUpdateSummary(
+  val targetUid: String = "",
+  val numericId: String = "",
+  val displayName: String = "",
+  val avatarUrl: String = "",
+  val previousHp: Long = 0L,
+  val previousLevel: Int = 1,
+  val newHp: Long = 0L,
+  val newLevel: Int = 1,
 )
 
 @androidx.annotation.Keep

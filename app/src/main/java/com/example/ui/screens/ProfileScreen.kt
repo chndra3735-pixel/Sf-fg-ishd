@@ -29,10 +29,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Backpack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
@@ -41,7 +44,9 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MilitaryTech
 import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.WorkspacePremium
@@ -55,13 +60,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -78,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
 import com.example.data.model.AdminCoinGrantSummary
+import com.example.data.model.AdminLevelUpdateSummary
 import com.example.data.model.CpRelationship
 import com.example.data.model.GiftCatalogItem
 import com.example.data.model.LevelTierConfig
@@ -87,6 +98,7 @@ import com.example.data.model.UserActivityLog
 import com.example.data.model.UserAuditProfile
 import com.example.data.model.UserProfile
 import com.example.data.repository.AppUpdateInfo
+import com.example.data.repository.LocalCacheStats
 import com.example.ui.components.AdminUserAuditDialog
 import com.example.ui.components.AppUpdateCenterDialog
 import com.example.ui.components.CpPartnerDialog
@@ -169,11 +181,24 @@ fun ProfileScreen(
   onSendCpRequestById: (recipientNumericId: String, bondTitle: String) -> Unit = { _, _ -> },
   onAcceptCpRequest: (CpRelationship) -> Unit = {},
   onDeclineOrBreakCp: (CpRelationship) -> Unit = {},
+  isUpdatingAdminLevel: Boolean = false,
+  lastAdminLevelUpdate: AdminLevelUpdateSummary? = null,
+  onSetAdminUserLevelById: (numericId: String, targetLevel: Int) -> Unit = { _, _ -> },
+  onEquipCosmetic: (frameLevel: Long?, typingLevel: Long?, entryVideoLevel: Long?) -> Unit = { _, _, _ -> },
+  isEntryVideoMuted: Boolean = false,
+  onToggleEntryVideoMuted: () -> Unit = {},
+  isServerSaverEnabled: Boolean = true,
+  onToggleServerSaverEnabled: (Boolean) -> Unit = {},
+  localCacheStats: LocalCacheStats = LocalCacheStats(),
+  isClearingCache: Boolean = false,
+  onRefreshCacheStats: () -> Unit = {},
+  onClearLocalCache: () -> Unit = {},
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
   var showWalletDialog by remember { mutableStateOf(false) }
   var showStoreDialog by remember { mutableStateOf(false) }
   var showLevelDialog by remember { mutableStateOf(false) }
+  var levelDialogInitialTab by remember { mutableIntStateOf(0) }
   var showCpPartnerDialog by remember { mutableStateOf(false) }
   var showLanguageDialog by remember { mutableStateOf(false) }
   var showUpdateCenterDialog by remember { mutableStateOf(false) }
@@ -182,6 +207,9 @@ fun ProfileScreen(
   var activeFeatureInfo by remember { mutableStateOf<ProfileInfoPayload?>(null) }
 
   val context = LocalContext.current
+  LaunchedEffect(Unit) {
+    onRefreshCacheStats()
+  }
 
   val dpPicker = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia(),
@@ -199,8 +227,12 @@ fun ProfileScreen(
   val levelInfo = remember(profile?.hp) {
     SwarUserIdentity.levelForProfile(profile)
   }
-  val activeFrameUrl = remember(levelInfo.level, levelConfigs) {
-    SwarUserIdentity.highestUnlockedFrameUrl(levelInfo.level, levelConfigs)
+  val activeFrameUrl = remember(levelInfo.level, levelConfigs, profile?.equippedFrameLevel) {
+    SwarUserIdentity.resolvedFrameUrl(
+      level = levelInfo.level,
+      configs = levelConfigs,
+      equippedLevel = profile?.equippedFrameLevel ?: -1L,
+    )
   }
   val coins = profile?.coins ?: 1500L
   val clubTag = profile?.clubTag.orEmpty().ifBlank { "SWAR" }
@@ -445,12 +477,18 @@ fun ProfileScreen(
     UnlockedProfileBadgesLine(
       userLevel = levelInfo.level,
       levelConfigs = levelConfigs,
-      onOpenLevelCards = { showLevelDialog = true },
+      onOpenLevelCards = {
+        levelDialogInitialTab = 0
+        showLevelDialog = true
+      },
     )
 
     // Live Level & HP Progress Card (वर्तमान HP + अगले लेवल के लिए कितने HP और चाहिए)
     Surface(
-      onClick = { showLevelDialog = true },
+      onClick = {
+        levelDialogInitialTab = 0
+        showLevelDialog = true
+      },
       shape = RoundedCornerShape(18.dp),
       color = Color.White,
       shadowElevation = 2.dp,
@@ -544,6 +582,40 @@ fun ProfileScreen(
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
             )
+          }
+        }
+
+        Surface(
+          onClick = {
+            levelDialogInitialTab = 2
+            showLevelDialog = true
+          },
+          shape = RoundedCornerShape(12.dp),
+          color = Color(0xFFF3EEFF),
+          modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFFD5C5FF), RoundedCornerShape(12.dp))
+            .testTag("profile_cosmetic_customizer_button"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Icon(Icons.Filled.Style, contentDescription = null, tint = Color(0xFF5E35B1), modifier = Modifier.size(18.dp))
+              Text(
+                text = "🎨 स्टाइल चुनें / उतारें (फ्रेम, टाइपिंग बॉक्स, एंट्री वीडियो)",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF3E1E8C),
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
           }
         }
       }
@@ -674,8 +746,25 @@ fun ProfileScreen(
           trailingContent = {
             GoldenWingedLevelBadge(level = levelInfo.level)
           },
-          onClick = { showLevelDialog = true },
+          onClick = {
+            levelDialogInitialTab = 0
+            showLevelDialog = true
+          },
           modifier = Modifier.testTag("profile_level_row"),
+        )
+        MenuHairlineDivider()
+
+        ProfileMenuRow(
+          title = "मेरा स्टाइल (फ्रेम / पट्टी / एंट्री)",
+          icon = Icons.Filled.Style,
+          iconTint = Color.White,
+          iconBgColor = Color(0xFF5E35B1),
+          trailingText = "चुनें / सादा",
+          onClick = {
+            levelDialogInitialTab = 2
+            showLevelDialog = true
+          },
+          modifier = Modifier.testTag("profile_style_customizer_row"),
         )
         MenuHairlineDivider()
 
@@ -769,6 +858,152 @@ fun ProfileScreen(
       }
     }
 
+    // Local Phone Storage Cache & Voice Server Cost Saver Card
+    Surface(
+      shape = RoundedCornerShape(18.dp),
+      color = Color.White,
+      shadowElevation = 1.dp,
+      modifier = Modifier
+        .fillMaxWidth()
+        .border(1.dp, Color(0xFFE0EBFA), RoundedCornerShape(18.dp))
+        .testTag("profile_local_storage_card"),
+    ) {
+      Column(
+        modifier = Modifier.padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Box(
+            modifier = Modifier
+              .size(34.dp)
+              .clip(CircleShape)
+              .background(Color(0xFFE1F3FF)),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(Icons.Filled.SdStorage, contentDescription = null, tint = Color(0xFF006CB5), modifier = Modifier.size(19.dp))
+          }
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "लोकल स्टोरेज और सर्वर बचत",
+              style = MaterialTheme.typography.titleSmall,
+              color = Color(0xFF171A23),
+              fontWeight = FontWeight.ExtraBold,
+            )
+            Text(
+              text = "वीडियो, फ्रेम व पट्टी फोन की मेमोरी में सेव रखकर सर्वर खर्च बचाएं",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFF6B7388),
+            )
+          }
+        }
+
+        // Entry Video Audio Mute / Unmute Switch
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Icon(
+            imageVector = if (isEntryVideoMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = null,
+            tint = if (isEntryVideoMuted) SwarCoral else Color(0xFF006CB5),
+            modifier = Modifier.size(20.dp),
+          )
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "एंट्री वीडियो आवाज़ म्यूट",
+              style = MaterialTheme.typography.labelLarge,
+              color = Color(0xFF171A23),
+              fontWeight = FontWeight.Bold,
+            )
+            Text(
+              text = if (isEntryVideoMuted) "म्यूट सक्रिय — प्रवेश वीडियो बिना आवाज़ चलेगा" else "चालू — प्रवेश वीडियो की आवाज़ सुनाई देगी",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFF6B7388),
+            )
+          }
+          Switch(
+            checked = isEntryVideoMuted,
+            onCheckedChange = { onToggleEntryVideoMuted() },
+            colors = SwitchDefaults.colors(
+              checkedThumbColor = Color.White,
+              checkedTrackColor = SwarCoral,
+            ),
+            modifier = Modifier.testTag("profile_entry_mute_toggle"),
+          )
+        }
+
+        HorizontalDivider(color = Color(0xFFF0F2F7))
+
+        // Server Cost Saver (Local Phone Media Cache + Low-Bandwidth Voice DTX)
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "लोकल फोन कैश व वॉइस डेटा सेवर",
+              style = MaterialTheme.typography.labelLarge,
+              color = Color(0xFF171A23),
+              fontWeight = FontWeight.Bold,
+            )
+            Text(
+              text = if (isServerSaverEnabled) {
+                "सक्रिय ✓ • मीडिया फोन में सेव और वॉइस बैंडविड्थ ऑप्टिमाइज्ड"
+              } else {
+                "बंद • उच्च बिटरेट स्ट्रीमिंग सक्रिय"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = if (isServerSaverEnabled) Color(0xFF1B873F) else Color(0xFF6B7388),
+            )
+          }
+          Switch(
+            checked = isServerSaverEnabled,
+            onCheckedChange = onToggleServerSaverEnabled,
+            colors = SwitchDefaults.colors(
+              checkedThumbColor = Color.White,
+              checkedTrackColor = Color(0xFF1B873F),
+            ),
+            modifier = Modifier.testTag("server_saver_toggle"),
+          )
+        }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = "फोन कैश: ${localCacheStats.formattedSize} (${localCacheStats.cachedMediaFiles} फ़ाइलें)",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF3A4362),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+              .weight(1f)
+              .testTag("local_cache_size_text"),
+          )
+          OutlinedButton(
+            onClick = onClearLocalCache,
+            enabled = !isClearingCache,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.testTag("clear_local_cache_button"),
+          ) {
+            if (isClearingCache) {
+              CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            } else {
+              Icon(Icons.Filled.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("कैश साफ़ करें", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
+          }
+        }
+      }
+    }
+
     if (!isSupabaseConfigured) {
       SupabaseConfigNoticeCard(isConfigured = false)
     }
@@ -849,6 +1084,13 @@ fun ProfileScreen(
       sampleDisplayName = displayName,
       onSaveTierConfig = onSaveLevelTierConfig,
       onClaimTierReward = onClaimLevelTierReward,
+      initialTab = levelDialogInitialTab,
+      equippedFrameLevel = profile?.equippedFrameLevel ?: -1L,
+      equippedTypingLevel = profile?.equippedTypingLevel ?: -1L,
+      equippedEntryVideoLevel = profile?.equippedEntryVideoLevel ?: -1L,
+      onEquipCosmetic = onEquipCosmetic,
+      isEntryVideoMuted = isEntryVideoMuted,
+      onToggleEntryVideoMuted = onToggleEntryVideoMuted,
     )
   }
 
@@ -900,6 +1142,9 @@ fun ProfileScreen(
       lastCoinGrantSummary = lastAdminCoinGrant,
       onLookupCoinTargetById = onLookupAdminCoinTarget,
       onGrantCoinsById = onGrantAdminCoinsById,
+      isUpdatingLevel = isUpdatingAdminLevel,
+      lastLevelUpdateSummary = lastAdminLevelUpdate,
+      onSetLevelById = onSetAdminUserLevelById,
     )
   }
 

@@ -30,9 +30,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -40,12 +44,16 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -549,12 +557,19 @@ fun LevelCardsShowcaseDialog(
     onDone: () -> Unit,
   ) -> Unit = { _, _, _, _, _, _, _, _, _, _, onDone -> onDone() },
   onClaimTierReward: (Int) -> Unit = {},
+  initialTab: Int = 0,
+  equippedFrameLevel: Long = -1L,
+  equippedTypingLevel: Long = -1L,
+  equippedEntryVideoLevel: Long = -1L,
+  onEquipCosmetic: (frameLevel: Long?, typingLevel: Long?, entryVideoLevel: Long?) -> Unit = { _, _, _ -> },
+  isEntryVideoMuted: Boolean = false,
+  onToggleEntryVideoMuted: () -> Unit = {},
 ) {
   val tiers = SwarUserIdentity.levelTiers
   val currentTier = remember(levelInfo.level) { SwarUserIdentity.tierForLevel(levelInfo.level) }
   var selectedTier by remember(levelInfo.level) { mutableStateOf(currentTier) }
   var detailTier by remember { mutableStateOf<LevelTierSpec?>(null) }
-  var selectedShowcaseTab by remember { mutableStateOf(0) }
+  var selectedShowcaseTab by remember(initialTab) { mutableStateOf(initialTab.coerceIn(0, 2)) }
 
   val cardShimmer = rememberInfiniteTransition(label = "levelGridShimmer")
   val shimmerFraction by cardShimmer.animateFloat(
@@ -714,10 +729,10 @@ fun LevelCardsShowcaseDialog(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Compact 2-Tab Pill Switcher: Level Cards (13) vs Progression Roadmap (LV.1-120)
+        // Compact 3-Tab Pill Switcher: Level Cards (13), HP Roadmap (LV.1-120), My Style Customizer
         Row(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           Surface(
             onClick = { selectedShowcaseTab = 0 },
@@ -733,11 +748,11 @@ fun LevelCardsShowcaseDialog(
               .testTag("level_cards_tab"),
           ) {
             Box(
-              modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+              modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
               contentAlignment = Alignment.Center,
             ) {
               Text(
-                text = "🏅 लेवल कार्ड्स (${tiers.size})",
+                text = "🏅 कार्ड्स (${tiers.size})",
                 style = MaterialTheme.typography.labelMedium,
                 color = if (selectedShowcaseTab == 0) Color(0xFF2B1800) else Color(0xFFD5D0EE),
                 fontWeight = FontWeight.ExtraBold,
@@ -760,13 +775,40 @@ fun LevelCardsShowcaseDialog(
               .testTag("level_roadmap_tab"),
           ) {
             Box(
-              modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+              modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
               contentAlignment = Alignment.Center,
             ) {
               Text(
-                text = "📊 HP रोडमैप (LV.1–120)",
+                text = "📊 रोडमैप",
                 style = MaterialTheme.typography.labelMedium,
                 color = if (selectedShowcaseTab == 1) Color(0xFF002030) else Color(0xFFD5D0EE),
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+          Surface(
+            onClick = { selectedShowcaseTab = 2 },
+            shape = RoundedCornerShape(12.dp),
+            color = if (selectedShowcaseTab == 2) SwarMint else Color(0xFF211B40),
+            modifier = Modifier
+              .weight(1f)
+              .border(
+                1.dp,
+                if (selectedShowcaseTab == 2) SwarMint else Color(0xFF3A3068),
+                RoundedCornerShape(12.dp),
+              )
+              .testTag("level_style_customizer_tab"),
+          ) {
+            Box(
+              modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              Text(
+                text = "✨ मेरा स्टाइल",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selectedShowcaseTab == 2) Color(0xFF052414) else Color(0xFFD5D0EE),
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -777,47 +819,67 @@ fun LevelCardsShowcaseDialog(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        if (selectedShowcaseTab == 0) {
-          // Large Adaptive Cards Grid for all 13 Level Tiers with live rewards preview
-          LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 152.dp),
-            modifier = Modifier
-              .weight(1f)
-              .fillMaxWidth()
-              .testTag("level_cards_grid"),
-            contentPadding = PaddingValues(bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-          ) {
-            items(tiers, key = { it.badgeLevel }) { tier ->
-              val isCurrent = levelInfo.level in tier.minLevel..tier.maxLevel
-              val isUnlocked = levelInfo.level >= tier.minLevel
-              val tierConfig = levelConfigs[tier.badgeLevel] ?: LevelTierConfig(badgeLevel = tier.badgeLevel.toLong())
-              LevelTierLargeCard(
-                tier = tier,
-                config = tierConfig,
-                isCurrentTier = isCurrent,
-                isUnlocked = isUnlocked,
-                isSelected = selectedTier.badgeLevel == tier.badgeLevel,
-                isAdminUser = isAdminUser,
-                sampleAvatarUrl = sampleAvatarUrl,
-                sampleDisplayName = sampleDisplayName,
-                shimmerFraction = shimmerFraction,
-                onClick = {
-                  selectedTier = tier
-                  detailTier = tier
-                },
-              )
+        when (selectedShowcaseTab) {
+          0 -> {
+            // Large Adaptive Cards Grid for all 13 Level Tiers with live rewards preview
+            LazyVerticalGrid(
+              columns = GridCells.Adaptive(minSize = 152.dp),
+              modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .testTag("level_cards_grid"),
+              contentPadding = PaddingValues(bottom = 8.dp),
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              items(tiers, key = { it.badgeLevel }) { tier ->
+                val isCurrent = levelInfo.level in tier.minLevel..tier.maxLevel
+                val isUnlocked = levelInfo.level >= tier.minLevel
+                val tierConfig = levelConfigs[tier.badgeLevel] ?: LevelTierConfig(badgeLevel = tier.badgeLevel.toLong())
+                LevelTierLargeCard(
+                  tier = tier,
+                  config = tierConfig,
+                  isCurrentTier = isCurrent,
+                  isUnlocked = isUnlocked,
+                  isSelected = selectedTier.badgeLevel == tier.badgeLevel,
+                  isAdminUser = isAdminUser,
+                  sampleAvatarUrl = sampleAvatarUrl,
+                  sampleDisplayName = sampleDisplayName,
+                  shimmerFraction = shimmerFraction,
+                  onClick = {
+                    selectedTier = tier
+                    detailTier = tier
+                  },
+                )
+              }
             }
           }
-        } else {
-          LevelHpRoadmapList(
-            coins = coins,
-            currentLevel = levelInfo.level,
-            modifier = Modifier
-              .weight(1f)
-              .fillMaxWidth(),
-          )
+          1 -> {
+            LevelHpRoadmapList(
+              coins = coins,
+              currentLevel = levelInfo.level,
+              modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            )
+          }
+          else -> {
+            MyStyleCosmeticsTab(
+              userLevel = levelInfo.level,
+              levelConfigs = levelConfigs,
+              sampleAvatarUrl = sampleAvatarUrl,
+              sampleDisplayName = sampleDisplayName,
+              equippedFrameLevel = equippedFrameLevel,
+              equippedTypingLevel = equippedTypingLevel,
+              equippedEntryVideoLevel = equippedEntryVideoLevel,
+              onEquipCosmetic = onEquipCosmetic,
+              isEntryVideoMuted = isEntryVideoMuted,
+              onToggleEntryVideoMuted = onToggleEntryVideoMuted,
+              modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            )
+          }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -896,7 +958,365 @@ fun LevelCardsShowcaseDialog(
       onDismiss = { detailTier = null },
       onClaimRewardCoins = onClaimTierReward,
       onSaveTierConfig = onSaveTierConfig,
+      equippedFrameLevel = equippedFrameLevel,
+      equippedTypingLevel = equippedTypingLevel,
+      equippedEntryVideoLevel = equippedEntryVideoLevel,
+      onEquipCosmetic = onEquipCosmetic,
+      isEntryVideoMuted = isEntryVideoMuted,
+      onToggleEntryVideoMuted = onToggleEntryVideoMuted,
     )
+  }
+}
+
+@Composable
+private fun MyStyleCosmeticsTab(
+  userLevel: Int,
+  levelConfigs: Map<Int, LevelTierConfig>,
+  sampleAvatarUrl: String,
+  sampleDisplayName: String,
+  equippedFrameLevel: Long,
+  equippedTypingLevel: Long,
+  equippedEntryVideoLevel: Long,
+  onEquipCosmetic: (frameLevel: Long?, typingLevel: Long?, entryVideoLevel: Long?) -> Unit,
+  isEntryVideoMuted: Boolean,
+  onToggleEntryVideoMuted: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val unlockedTiers = remember(userLevel) { SwarUserIdentity.unlockedTiersForLevel(userLevel) }
+  val activeFrameUrl = remember(userLevel, levelConfigs, equippedFrameLevel) {
+    SwarUserIdentity.resolvedFrameUrl(userLevel, levelConfigs, equippedFrameLevel)
+  }
+  val activeTypingUrl = remember(userLevel, levelConfigs, equippedTypingLevel) {
+    SwarUserIdentity.resolvedTypingBannerUrl(userLevel, levelConfigs, equippedTypingLevel)
+  }
+  val activeEntryVideo = remember(userLevel, levelConfigs, equippedEntryVideoLevel) {
+    SwarUserIdentity.resolvedEntryVideo(userLevel, levelConfigs, equippedEntryVideoLevel)
+  }
+
+  Column(
+    modifier = modifier
+      .verticalScroll(rememberScrollState())
+      .padding(bottom = 10.dp)
+      .testTag("style_customizer_panel"),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
+  ) {
+    // 1. Live Style Preview Card
+    Surface(
+      shape = RoundedCornerShape(16.dp),
+      color = Color(0xFF1F183D),
+      modifier = Modifier
+        .fillMaxWidth()
+        .border(1.dp, SwarGold.copy(alpha = 0.45f), RoundedCornerShape(16.dp)),
+    ) {
+      Column(
+        modifier = Modifier.padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = "सक्रिय स्टाइल प्रीव्यू (LV.$userLevel)",
+            style = MaterialTheme.typography.labelLarge,
+            color = SwarGold,
+            fontWeight = FontWeight.ExtraBold,
+          )
+          OutlinedButton(
+            onClick = { onEquipCosmetic(0L, 0L, 0L) },
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+            modifier = Modifier
+              .height(36.dp)
+              .testTag("style_clear_all_button"),
+          ) {
+            Text(
+              text = "सब सादा करें",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color.White,
+              fontWeight = FontWeight.Bold,
+            )
+          }
+        }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+          FramedUserAvatar(
+            url = sampleAvatarUrl,
+            name = sampleDisplayName,
+            avatarSize = 60.dp,
+            frameUrl = activeFrameUrl,
+            borderColor = if (activeFrameUrl.isNotBlank()) SwarGold else SwarCyan,
+            borderWidth = 2.dp,
+          )
+          Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
+            Text(
+              text = when {
+                equippedFrameLevel == 0L -> "DP फ्रेम: सादा (उतारा हुआ)"
+                equippedFrameLevel > 0L -> "DP फ्रेम: LV.$equippedFrameLevel सक्रिय"
+                activeFrameUrl.isNotBlank() -> "DP फ्रेम: ऑटो (उच्चतम सक्रिय)"
+                else -> "DP फ्रेम: कोई नहीं"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFFE3DDF8),
+            )
+            Text(
+              text = when {
+                equippedTypingLevel == 0L -> "टाइपिंग पट्टी: सादा बबल"
+                equippedTypingLevel > 0L -> "टाइपिंग पट्टी: LV.$equippedTypingLevel सक्रिय"
+                activeTypingUrl.isNotBlank() -> "टाइपिंग पट्टी: ऑटो (उच्चतम सक्रिय)"
+                else -> "टाइपिंग पट्टी: कोई नहीं"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFFE3DDF8),
+            )
+            Text(
+              text = when {
+                equippedEntryVideoLevel == 0L -> "एंट्री वीडियो: बंद (सादा प्रवेश)"
+                equippedEntryVideoLevel > 0L -> "एंट्री वीडियो: LV.$equippedEntryVideoLevel सक्रिय"
+                activeEntryVideo != null -> "एंट्री वीडियो: ऑटो (${activeEntryVideo.first.badgeLabel})"
+                else -> "एंट्री वीडियो: उपलब्ध नहीं"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = SwarCyan,
+            )
+          }
+        }
+
+        TypingBannerChatBubble(
+          senderName = sampleDisplayName.ifBlank { "Swar" },
+          messageText = "मेरा चुना हुआ स्टाइल कैसा लग रहा है? ✨",
+          badgeTag = "LV.$userLevel",
+          bannerUrl = activeTypingUrl,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
+    }
+
+    // 2. Entry Video Mute / Unmute Toggle Card
+    Surface(
+      shape = RoundedCornerShape(14.dp),
+      color = Color(0xFF1D1739),
+      modifier = Modifier
+        .fillMaxWidth()
+        .border(1.dp, SwarCyan.copy(alpha = 0.35f), RoundedCornerShape(14.dp)),
+    ) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Icon(
+          imageVector = if (isEntryVideoMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+          contentDescription = null,
+          tint = if (isEntryVideoMuted) SwarCoral else SwarCyan,
+          modifier = Modifier.size(22.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "एंट्री वीडियो आवाज़ म्यूट रखें",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+          )
+          Text(
+            text = if (isEntryVideoMuted) "म्यूट है — एंट्री वीडियो बिना आवाज़ चलेगा" else "आवाज़ चालू — रूम प्रवेश पर वीडियो आवाज़ सुनाई देगी",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFB5ACDA),
+          )
+        }
+        Switch(
+          checked = isEntryVideoMuted,
+          onCheckedChange = { onToggleEntryVideoMuted() },
+          colors = SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = SwarCoral,
+            uncheckedThumbColor = SwarCyan,
+            uncheckedTrackColor = Color(0xFF2D2456),
+          ),
+          modifier = Modifier.testTag("style_entry_mute_switch"),
+        )
+      }
+    }
+
+    // 3. DP Frame Picker
+    CosmeticTierPickerSection(
+      title = "👑 DP फ्रेम (अनलॉक स्तरों में से चुनें या उतारें)",
+      unlockedTiers = unlockedTiers,
+      equippedLevel = equippedFrameLevel,
+      hasAsset = { badge -> levelConfigs[badge]?.avatarFrameUrl?.isNotBlank() == true },
+      tagPrefix = "style_frame_option",
+      plainLabel = "सादा (बिना फ्रेम)",
+      autoLabel = "ऑटो (उच्चतम)",
+      onSelectLevel = { choice -> onEquipCosmetic(choice, null, null) },
+    )
+
+    // 4. Typing Banner / Box Picker
+    CosmeticTierPickerSection(
+      title = "💬 टाइपिंग बॉक्स / पट्टी (चुनें या सादा रखें)",
+      unlockedTiers = unlockedTiers,
+      equippedLevel = equippedTypingLevel,
+      hasAsset = { badge -> levelConfigs[badge]?.typingBannerUrl?.isNotBlank() == true },
+      tagPrefix = "style_typing_option",
+      plainLabel = "सादा चैट बबल",
+      autoLabel = "ऑटो (उच्चतम)",
+      onSelectLevel = { choice -> onEquipCosmetic(null, choice, null) },
+    )
+
+    // 5. Entry Video Picker
+    CosmeticTierPickerSection(
+      title = "🎬 एंट्री वीडियो (पसंदीदा चुनें या बंद करें)",
+      unlockedTiers = unlockedTiers,
+      equippedLevel = equippedEntryVideoLevel,
+      hasAsset = { badge -> levelConfigs[badge]?.entryVideoUrl?.isNotBlank() == true },
+      tagPrefix = "style_entry_option",
+      plainLabel = "सादा प्रवेश (वीडियो बंद)",
+      autoLabel = "ऑटो (उच्चतम)",
+      onSelectLevel = { choice -> onEquipCosmetic(null, null, choice) },
+    )
+  }
+}
+
+@Composable
+private fun CosmeticTierPickerSection(
+  title: String,
+  unlockedTiers: List<LevelTierSpec>,
+  equippedLevel: Long,
+  hasAsset: (Int) -> Boolean,
+  tagPrefix: String,
+  plainLabel: String,
+  autoLabel: String,
+  onSelectLevel: (Long) -> Unit,
+) {
+  Surface(
+    shape = RoundedCornerShape(14.dp),
+    color = Color(0xFF1B1536),
+    modifier = Modifier
+      .fillMaxWidth()
+      .border(1.dp, Color(0xFF332B5C), RoundedCornerShape(14.dp)),
+  ) {
+    Column(
+      modifier = Modifier.padding(12.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Icon(Icons.Filled.Style, contentDescription = null, tint = SwarGold, modifier = Modifier.size(16.dp))
+        Text(
+          text = title,
+          style = MaterialTheme.typography.labelLarge,
+          color = Color.White,
+          fontWeight = FontWeight.Bold,
+        )
+      }
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        CosmeticChoiceChip(
+          label = plainLabel,
+          selected = equippedLevel == 0L,
+          accentColor = SwarCoral,
+          onClick = { onSelectLevel(0L) },
+          modifier = Modifier
+            .weight(1f)
+            .testTag("${tagPrefix}_0"),
+        )
+        CosmeticChoiceChip(
+          label = autoLabel,
+          selected = equippedLevel < 0L,
+          accentColor = SwarCyan,
+          onClick = { onSelectLevel(-1L) },
+          modifier = Modifier
+            .weight(1f)
+            .testTag("${tagPrefix}_auto"),
+        )
+      }
+
+      val availableTiers = unlockedTiers.filter { hasAsset(it.badgeLevel) }
+      if (availableTiers.isEmpty()) {
+        Text(
+          text = "अनलॉक स्तरों में अभी कस्टम मीडिया नहीं जुड़ा है — फिर भी आप 'सादा' या 'ऑटो' चुन सकते हैं।",
+          style = MaterialTheme.typography.labelSmall,
+          color = Color(0xFF9F98C4),
+        )
+      } else {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          availableTiers.chunked(3).forEach { rowTiers ->
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              rowTiers.forEach { t ->
+                val isSel = equippedLevel == t.badgeLevel.toLong()
+                CosmeticChoiceChip(
+                  label = "${t.badgeLabel} ✓",
+                  selected = isSel,
+                  accentColor = SwarMint,
+                  onClick = { onSelectLevel(t.badgeLevel.toLong()) },
+                  modifier = Modifier
+                    .weight(1f)
+                    .testTag("${tagPrefix}_${t.badgeLevel}"),
+                )
+              }
+              repeat(3 - rowTiers.size) {
+                Spacer(modifier = Modifier.weight(1f))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun CosmeticChoiceChip(
+  label: String,
+  selected: Boolean,
+  accentColor: Color,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(10.dp),
+    color = if (selected) accentColor.copy(alpha = 0.22f) else Color(0xFF251E47),
+    modifier = modifier
+      .height(42.dp)
+      .border(
+        width = if (selected) 1.5.dp else 1.dp,
+        color = if (selected) accentColor else Color(0xFF3E356B),
+        shape = RoundedCornerShape(10.dp),
+      ),
+  ) {
+    Box(
+      modifier = Modifier
+        .fillMaxSize()
+        .padding(horizontal = 8.dp),
+      contentAlignment = Alignment.Center,
+    ) {
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (selected) accentColor else Color(0xFFE1DCF8),
+        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
   }
 }
 

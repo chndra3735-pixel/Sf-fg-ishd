@@ -78,6 +78,9 @@ class VoiceAudioEngine(private val appContext: Context) {
   @Volatile
   private var currentMusicVolumePercent: Int = 75
 
+  @Volatile
+  private var serverSaverEnabled: Boolean = true
+
   private val _audioLevel = MutableStateFlow(0f)
   val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
 
@@ -201,6 +204,7 @@ class VoiceAudioEngine(private val appContext: Context) {
       RtcEngine.create(config)?.apply {
         setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
         enableAudio()
+        applyAudioBandwidthProfile(this)
         enableAudioVolumeIndication(200, 3, true)
         setDefaultAudioRoutetoSpeakerphone(true)
         setEnableSpeakerphone(true)
@@ -397,11 +401,13 @@ class VoiceAudioEngine(private val appContext: Context) {
       )
       val rc = engine.startAudioMixing(filePath, false, 1, 0)
       if (rc == 0) {
+        applyAudioBandwidthProfile(engine)
         engine.adjustAudioMixingPublishVolume(safeVol)
         engine.adjustAudioMixingPlayoutVolume(if (currentSpeakerEnabled) safeVol else 0)
         true
       } else {
         isMusicMixingActive = false
+        applyAudioBandwidthProfile(engine)
         applyRoleAndMediaOptions(
           engine = engine,
           isSeated = currentIsBroadcaster,
@@ -449,12 +455,34 @@ class VoiceAudioEngine(private val appContext: Context) {
     runCatching {
       val engine = rtcEngine ?: return
       engine.stopAudioMixing()
+      applyAudioBandwidthProfile(engine)
       applyRoleAndMediaOptions(
         engine = engine,
         isSeated = currentIsBroadcaster,
         isMuted = currentBroadcasterMuted,
       )
     }
+  }
+
+  fun setServerSaverEnabled(enabled: Boolean) {
+    serverSaverEnabled = enabled
+    applyAudioBandwidthProfile(rtcEngine)
+  }
+
+  private fun applyAudioBandwidthProfile(engine: RtcEngine? = rtcEngine) {
+    val activeEngine = engine ?: return
+    runCatching {
+      if (isMusicMixingActive) {
+        activeEngine.setAudioProfile(Constants.AUDIO_PROFILE_MUSIC_STANDARD, Constants.AUDIO_SCENARIO_CHATROOM)
+        activeEngine.setParameters("{\"che.audio.opus.dtx\":false}")
+      } else if (serverSaverEnabled) {
+        activeEngine.setAudioProfile(Constants.AUDIO_PROFILE_SPEECH_STANDARD, Constants.AUDIO_SCENARIO_CHATROOM)
+        activeEngine.setParameters("{\"che.audio.opus.dtx\":true}")
+      } else {
+        activeEngine.setAudioProfile(Constants.AUDIO_PROFILE_DEFAULT, Constants.AUDIO_SCENARIO_CHATROOM)
+        activeEngine.setParameters("{\"che.audio.opus.dtx\":false}")
+      }
+    }.onFailure { Log.w(TAG, "Audio bandwidth profile update warning: ${it.message}") }
   }
 
   fun setMusicMixingVolume(volumePercent: Int) {

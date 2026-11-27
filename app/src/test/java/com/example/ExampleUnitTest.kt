@@ -695,5 +695,86 @@ class ExampleUnitTest {
     )
     assertTrue(SwarUserIdentity.levelForProfile(rocketLv1EarnedHp).level < 10)
   }
+
+  @Test
+  fun resolvedCosmetics_supportSpecificUnlockedTierPlainAndFallbackOnLevelDecrease() {
+    val configs = mapOf(
+      1 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 1,
+        avatarFrameUrl = "https://cdn.example.com/frame_lv1.png",
+        typingBannerUrl = "https://cdn.example.com/typing_lv1.png",
+        entryVideoUrl = "https://cdn.example.com/entry_lv1.mp4",
+      ),
+      10 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 10,
+        avatarFrameUrl = "https://cdn.example.com/frame_lv10.png",
+        typingBannerUrl = "https://cdn.example.com/typing_lv10.png",
+        entryVideoUrl = "https://cdn.example.com/entry_lv10.mp4",
+      ),
+      120 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 120,
+        avatarFrameUrl = "https://cdn.example.com/frame_lv120.png",
+        typingBannerUrl = "https://cdn.example.com/typing_lv120.png",
+        entryVideoUrl = "https://cdn.example.com/entry_lv120.mp4",
+      ),
+    )
+
+    // Auto (-1L) picks highest unlocked (LV.120)
+    assertEquals("https://cdn.example.com/frame_lv120.png", SwarUserIdentity.resolvedFrameUrl(120, configs, -1L))
+    assertEquals("https://cdn.example.com/typing_lv120.png", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, -1L))
+    assertEquals(120, SwarUserIdentity.resolvedEntryVideo(120, configs, -1L)?.first?.badgeLevel)
+
+    // Explicit lower unlocked tier (LV.10) works when user is LV.120
+    assertEquals("https://cdn.example.com/frame_lv10.png", SwarUserIdentity.resolvedFrameUrl(120, configs, 10L))
+    assertEquals("https://cdn.example.com/typing_lv10.png", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 10L))
+    assertEquals("https://cdn.example.com/entry_lv10.mp4", SwarUserIdentity.resolvedEntryVideo(120, configs, 10L)?.second)
+
+    // Plain / unequipped (0L) returns blank/null
+    assertEquals("", SwarUserIdentity.resolvedFrameUrl(120, configs, 0L))
+    assertEquals("", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 0L))
+    assertNull(SwarUserIdentity.resolvedEntryVideo(120, configs, 0L))
+
+    // If admin lowers user's level from 120 down to 10 while LV.120 was equipped, it falls back safely to LV.10
+    val downgradedProfile = com.example.data.model.UserProfile(
+      userId = "u_cos",
+      hp = SwarUserIdentity.requiredHpForLevel(10),
+      equippedFrameLevel = 120L,
+      equippedTypingLevel = 120L,
+      equippedEntryVideoLevel = 120L,
+    )
+    assertEquals("https://cdn.example.com/frame_lv10.png", SwarUserIdentity.resolvedFrameUrl(downgradedProfile, configs))
+    assertEquals("https://cdn.example.com/typing_lv10.png", SwarUserIdentity.resolvedTypingBannerUrl(downgradedProfile, configs))
+    assertEquals(10, SwarUserIdentity.resolvedEntryVideo(downgradedProfile, configs)?.first?.badgeLevel)
+  }
+
+  @Test
+  fun localCacheStatsAndLruEviction_boundsDirectoryBytesSafely() {
+    assertEquals("512 B", com.example.data.repository.LocalCacheStats.formatBytesReadable(512L))
+    assertEquals("2.0 KB", com.example.data.repository.LocalCacheStats.formatBytesReadable(2048L))
+    assertEquals("1.5 MB", com.example.data.repository.LocalCacheStats.formatBytesReadable(1_572_864L))
+
+    val tmpDir = kotlin.io.path.createTempDirectory("swar_lru_test").toFile()
+    try {
+      val f1 = java.io.File(tmpDir, "old.mp4").apply {
+        writeBytes(ByteArray(120))
+        setLastModified(1_000L)
+      }
+      val f2 = java.io.File(tmpDir, "mid.mp4").apply {
+        writeBytes(ByteArray(120))
+        setLastModified(2_000L)
+      }
+      val f3 = java.io.File(tmpDir, "new.mp4").apply {
+        writeBytes(ByteArray(120))
+        setLastModified(3_000L)
+      }
+      com.example.data.repository.LocalMediaCacheManager.enforceLruLimit(tmpDir, maxBytes = 250L)
+      assertFalse(f1.exists())
+      assertTrue(f2.exists())
+      assertTrue(f3.exists())
+    } finally {
+      tmpDir.deleteRecursively()
+    }
+  }
 }
+
 

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -83,6 +84,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.data.model.AdminCoinGrantSummary
+import com.example.data.model.AdminLevelUpdateSummary
 import com.example.data.model.SwarUserIdentity
 import com.example.data.model.UserActivityLog
 import com.example.data.model.UserAuditProfile
@@ -136,6 +138,9 @@ fun AdminUserAuditDialog(
   lastCoinGrantSummary: AdminCoinGrantSummary? = null,
   onLookupCoinTargetById: (String) -> Unit = {},
   onGrantCoinsById: (numericId: String, amountText: String) -> Unit = { _, _ -> },
+  isUpdatingLevel: Boolean = false,
+  lastLevelUpdateSummary: AdminLevelUpdateSummary? = null,
+  onSetLevelById: (numericId: String, targetLevel: Int) -> Unit = { _, _ -> },
 ) {
   var searchQuery by remember { mutableStateOf("") }
   var selectedDateKey by remember { mutableStateOf<String?>(null) }
@@ -400,7 +405,7 @@ fun AdminUserAuditDialog(
             modifier = Modifier.fillMaxSize(),
           ) {
             if (searchQuery.isBlank() || displayedUsers.isEmpty()) {
-              item(key = "admin_coin_topup_card") {
+              item(key = "admin_coin_topup_card_top") {
                 AdminCoinTopUpCard(
                   coinIdInput = coinIdInput,
                   onCoinIdChange = { raw -> coinIdInput = raw.filter { it.isDigit() }.take(10) },
@@ -411,6 +416,9 @@ fun AdminUserAuditDialog(
                   lastCoinGrantSummary = lastCoinGrantSummary,
                   onLookupById = { onLookupCoinTargetById(coinIdInput) },
                   onGrantCoins = { onGrantCoinsById(coinIdInput, coinAmountInput) },
+                  isUpdatingLevel = isUpdatingLevel,
+                  lastLevelUpdateSummary = lastLevelUpdateSummary,
+                  onSetLevel = { targetLvl -> onSetLevelById(coinIdInput, targetLvl) },
                 )
               }
             }
@@ -445,7 +453,7 @@ fun AdminUserAuditDialog(
                 )
               }
               if (searchQuery.isNotBlank()) {
-                item(key = "admin_coin_topup_card") {
+                item(key = "admin_coin_topup_card_bottom") {
                   AdminCoinTopUpCard(
                     coinIdInput = coinIdInput,
                     onCoinIdChange = { raw -> coinIdInput = raw.filter { it.isDigit() }.take(10) },
@@ -456,6 +464,9 @@ fun AdminUserAuditDialog(
                     lastCoinGrantSummary = lastCoinGrantSummary,
                     onLookupById = { onLookupCoinTargetById(coinIdInput) },
                     onGrantCoins = { onGrantCoinsById(coinIdInput, coinAmountInput) },
+                    isUpdatingLevel = isUpdatingLevel,
+                    lastLevelUpdateSummary = lastLevelUpdateSummary,
+                    onSetLevel = { targetLvl -> onSetLevelById(coinIdInput, targetLvl) },
                   )
                 }
               }
@@ -478,6 +489,9 @@ fun AdminUserAuditDialog(
             lastCoinGrantSummary = lastCoinGrantSummary,
             onLookupCoinTargetById = onLookupCoinTargetById,
             onGrantCoinsById = onGrantCoinsById,
+            isUpdatingLevel = isUpdatingLevel,
+            lastLevelUpdateSummary = lastLevelUpdateSummary,
+            onSetLevelById = onSetLevelById,
           )
         }
       }
@@ -690,12 +704,28 @@ private fun AdminCoinTopUpCard(
   lastCoinGrantSummary: AdminCoinGrantSummary?,
   onLookupById: () -> Unit,
   onGrantCoins: () -> Unit,
+  isUpdatingLevel: Boolean = false,
+  lastLevelUpdateSummary: AdminLevelUpdateSummary? = null,
+  onSetLevel: (Int) -> Unit = {},
 ) {
   val cleanId = coinIdInput.filter { it.isDigit() }
   val isValidId = cleanId.length == 10
   val parsedAmount = coinAmountInput.filter { it.isDigit() }.toLongOrNull()
   val isValidAmount = parsedAmount != null && parsedAmount in 1L..999_999_999_999L
   val previewForCurrentId = lastCoinGrantSummary?.takeIf { it.numericId == cleanId && cleanId.length == 10 }
+  val levelUpdateForCurrentId = lastLevelUpdateSummary?.takeIf { it.numericId == cleanId && cleanId.length == 10 }
+  var levelInput by remember(cleanId) {
+    mutableStateOf(
+      (levelUpdateForCurrentId?.newLevel ?: previewForCurrentId?.currentLevel ?: 1).toString()
+    )
+  }
+  LaunchedEffect(previewForCurrentId?.currentLevel, levelUpdateForCurrentId?.newLevel) {
+    val synced = levelUpdateForCurrentId?.newLevel ?: previewForCurrentId?.currentLevel
+    if (synced != null) {
+      levelInput = synced.coerceIn(1, 120).toString()
+    }
+  }
+  val parsedTargetLevel = levelInput.filter { it.isDigit() }.toIntOrNull()?.coerceIn(1, 120)
 
   Card(
     shape = RoundedCornerShape(16.dp),
@@ -826,9 +856,9 @@ private fun AdminCoinTopUpCard(
 
       if (lastCoinGrantSummary != null) {
         val statusText = if (lastCoinGrantSummary.addedCoins > 0L) {
-          "✅ ${lastCoinGrantSummary.displayName} (ID: ${lastCoinGrantSummary.numericId}) में +${lastCoinGrantSummary.addedCoins} कोइंस जोड़े गए • नया बैलेंस: ${lastCoinGrantSummary.newBalance} कोइंस"
+          "✅ ${lastCoinGrantSummary.displayName} (ID: ${lastCoinGrantSummary.numericId}) में +${lastCoinGrantSummary.addedCoins} कोइंस जोड़े गए • नया बैलेंस: ${lastCoinGrantSummary.newBalance} कोइंस • LV.${lastCoinGrantSummary.currentLevel}"
         } else {
-          "👤 ${lastCoinGrantSummary.displayName} (ID: ${lastCoinGrantSummary.numericId}) • मौजूदा बैलेंस: ${lastCoinGrantSummary.newBalance} कोइंस"
+          "👤 ${lastCoinGrantSummary.displayName} (ID: ${lastCoinGrantSummary.numericId}) • कोइंस: ${lastCoinGrantSummary.newBalance} • स्तर: LV.${lastCoinGrantSummary.currentLevel} (${SwarUserIdentity.formatIndianNumber(lastCoinGrantSummary.currentHp)} HP)"
         }
         Surface(
           shape = RoundedCornerShape(10.dp),
@@ -869,6 +899,116 @@ private fun AdminCoinTopUpCard(
           Text("कोइंस जोड़ें", fontWeight = FontWeight.ExtraBold)
         }
       }
+
+      HorizontalDivider(color = Color(0xFFE8ECF4))
+
+      // Level Up / Down Section (10-digit ID)
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Icon(Icons.Filled.Star, contentDescription = null, tint = Color(0xFF6A3DE8), modifier = Modifier.size(18.dp))
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "10-अंक ID लेवल नियंत्रण (बढ़ाएं / घटाएं: LV.1–120)",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color(0xFF171A23),
+            fontWeight = FontWeight.ExtraBold,
+          )
+          Text(
+            text = if (parsedTargetLevel != null) {
+              "लक्ष्य LV.$parsedTargetLevel → ${SwarUserIdentity.formatIndianNumber(SwarUserIdentity.requiredHpForLevel(parsedTargetLevel))} HP"
+            } else {
+              "1 से 120 के बीच कोई भी लेवल नंबर चुनें"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF5D657A),
+          )
+        }
+      }
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        OutlinedTextField(
+          value = levelInput,
+          onValueChange = { raw -> levelInput = raw.filter { it.isDigit() }.take(3) },
+          label = { Text("लक्ष्य लेवल (1–120)") },
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier
+            .weight(1f)
+            .testTag("audit_level_input"),
+        )
+        Button(
+          onClick = { parsedTargetLevel?.let(onSetLevel) },
+          enabled = isValidId && parsedTargetLevel != null && !isUpdatingLevel,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF5E35B1),
+            contentColor = Color.White,
+          ),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.testTag("audit_level_set_button"),
+        ) {
+          if (isUpdatingLevel) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+          } else {
+            Text("लेवल सेट करें", fontWeight = FontWeight.ExtraBold)
+          }
+        }
+      }
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        val currentBase = parsedTargetLevel ?: (previewForCurrentId?.currentLevel ?: 1)
+        listOf(
+          Triple("-5", (currentBase - 5).coerceIn(1, 120), "audit_level_dec_5"),
+          Triple("-1", (currentBase - 1).coerceIn(1, 120), "audit_level_dec_1"),
+          Triple("+1", (currentBase + 1).coerceIn(1, 120), "audit_level_inc_1"),
+          Triple("+5", (currentBase + 5).coerceIn(1, 120), "audit_level_inc_5"),
+          Triple("LV.1", 1, "audit_level_min_1"),
+          Triple("LV.120", 120, "audit_level_max_120"),
+        ).forEach { (label, target, tag) ->
+          FilterChip(
+            selected = parsedTargetLevel == target && (label == "LV.1" || label == "LV.120"),
+            onClick = { levelInput = target.toString() },
+            label = {
+              Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+              )
+            },
+            modifier = Modifier
+              .weight(1f)
+              .testTag(tag),
+          )
+        }
+      }
+
+      if (lastLevelUpdateSummary != null) {
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = Color(0xFFF3EEFF),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("audit_level_status_banner"),
+        ) {
+          Text(
+            text = "✅ ${lastLevelUpdateSummary.displayName} (ID: ${lastLevelUpdateSummary.numericId}): LV.${lastLevelUpdateSummary.previousLevel} → LV.${lastLevelUpdateSummary.newLevel} (${SwarUserIdentity.formatIndianNumber(lastLevelUpdateSummary.newHp)} HP)",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF4527A0),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+          )
+        }
+      }
     }
   }
 }
@@ -884,10 +1024,23 @@ private fun AdminAuditUserDetailView(
   lastCoinGrantSummary: AdminCoinGrantSummary? = null,
   onLookupCoinTargetById: (String) -> Unit = {},
   onGrantCoinsById: (numericId: String, amountText: String) -> Unit = { _, _ -> },
+  isUpdatingLevel: Boolean = false,
+  lastLevelUpdateSummary: AdminLevelUpdateSummary? = null,
+  onSetLevelById: (numericId: String, targetLevel: Int) -> Unit = { _, _ -> },
 ) {
   var showCoinBox by remember(user.userId) { mutableStateOf(false) }
   var detailCoinAmount by remember(user.userId) { mutableStateOf("1000") }
   val detailPreview = lastCoinGrantSummary?.takeIf { it.numericId == user.numericId }
+  val detailLevelSummary = lastLevelUpdateSummary?.takeIf { it.numericId == user.numericId }
+  var detailLevelInput by remember(user.userId) {
+    mutableStateOf((detailLevelSummary?.newLevel ?: detailPreview?.currentLevel ?: 1).toString())
+  }
+  LaunchedEffect(detailPreview?.currentLevel, detailLevelSummary?.newLevel) {
+    val synced = detailLevelSummary?.newLevel ?: detailPreview?.currentLevel
+    if (synced != null) {
+      detailLevelInput = synced.coerceIn(1, 120).toString()
+    }
+  }
 
   LaunchedEffect(showCoinBox, user.numericId) {
     if (showCoinBox && user.numericId.length == 10) {
@@ -970,7 +1123,7 @@ private fun AdminAuditUserDetailView(
               )
               Spacer(modifier = Modifier.width(4.dp))
               Text(
-                text = if (showCoinBox) "कोइंस बंद" else "कोइंस जोड़ें",
+                text = if (showCoinBox) "कॉइन / लेवल बंद" else "कॉइन / लेवल",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF946200),
@@ -1001,6 +1154,7 @@ private fun AdminAuditUserDetailView(
         if (showCoinBox) {
           val parsedDetailAmount = detailCoinAmount.filter { it.isDigit() }.toLongOrNull()
           val isDetailAmountValid = parsedDetailAmount != null && parsedDetailAmount in 1L..999_999_999_999L
+          val parsedDetailLevel = detailLevelInput.filter { it.isDigit() }.toIntOrNull()?.coerceIn(1, 120)
           Card(
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBF0)),
@@ -1018,7 +1172,7 @@ private fun AdminAuditUserDetailView(
                 verticalAlignment = Alignment.CenterVertically,
               ) {
                 Text(
-                  text = "इस यूज़र को कोइंस जोड़ें (ID: ${user.numericId})",
+                  text = "कॉइंस और लेवल नियंत्रण (ID: ${user.numericId})",
                   style = MaterialTheme.typography.labelLarge,
                   color = Color(0xFF7D5200),
                   fontWeight = FontWeight.ExtraBold,
@@ -1036,9 +1190,9 @@ private fun AdminAuditUserDetailView(
 
               if (detailPreview != null) {
                 val msg = if (detailPreview.addedCoins > 0L) {
-                  "✅ +${detailPreview.addedCoins} कोइंस जोड़े गए • नया बैलेंस: ${detailPreview.newBalance} कोइंस"
+                  "✅ +${detailPreview.addedCoins} कोइंस जोड़े गए • नया बैलेंस: ${detailPreview.newBalance} • LV.${detailPreview.currentLevel}"
                 } else {
-                  "मौजूदा बैलेंस: ${detailPreview.newBalance} कोइंस"
+                  "मौजूदा बैलेंस: ${detailPreview.newBalance} कोइंस • स्तर: LV.${detailPreview.currentLevel} (${SwarUserIdentity.formatIndianNumber(detailPreview.currentHp)} HP)"
                 }
                 Surface(
                   shape = RoundedCornerShape(8.dp),
@@ -1100,6 +1254,86 @@ private fun AdminAuditUserDetailView(
                   Text(
                     text = if (isGrantingCoins) "..." else "जोड़ें",
                     fontWeight = FontWeight.ExtraBold,
+                  )
+                }
+              }
+
+              HorizontalDivider(color = SwarGold.copy(alpha = 0.25f))
+
+              Text(
+                text = "लेवल बदलें (बढ़ाएं या घटाएं: LV.1–120)",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF4527A0),
+                fontWeight = FontWeight.Bold,
+              )
+
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                val baseDetailLvl = parsedDetailLevel ?: (detailPreview?.currentLevel ?: 1)
+                listOf(
+                  "-5" to (baseDetailLvl - 5).coerceIn(1, 120),
+                  "-1" to (baseDetailLvl - 1).coerceIn(1, 120),
+                  "+1" to (baseDetailLvl + 1).coerceIn(1, 120),
+                  "+5" to (baseDetailLvl + 5).coerceIn(1, 120),
+                ).forEach { (lbl, tgt) ->
+                  FilterChip(
+                    selected = false,
+                    onClick = { detailLevelInput = tgt.toString() },
+                    label = { Text(lbl, style = MaterialTheme.typography.labelSmall) },
+                    modifier = Modifier.weight(1f),
+                  )
+                }
+              }
+
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                OutlinedTextField(
+                  value = detailLevelInput,
+                  onValueChange = { raw -> detailLevelInput = raw.filter { it.isDigit() }.take(3) },
+                  label = { Text("लक्ष्य लेवल (1–120)") },
+                  singleLine = true,
+                  keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier
+                    .weight(1f)
+                    .testTag("audit_detail_level_input"),
+                )
+                Button(
+                  onClick = { parsedDetailLevel?.let { onSetLevelById(user.numericId, it) } },
+                  enabled = user.numericId.length == 10 && parsedDetailLevel != null && !isUpdatingLevel,
+                  colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF5E35B1),
+                    contentColor = Color.White,
+                  ),
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier.testTag("audit_detail_level_set_button"),
+                ) {
+                  Text(
+                    text = if (isUpdatingLevel) "..." else "सेट करें",
+                    fontWeight = FontWeight.ExtraBold,
+                  )
+                }
+              }
+
+              if (detailLevelSummary != null) {
+                Surface(
+                  shape = RoundedCornerShape(8.dp),
+                  color = Color(0xFFF3EEFF),
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("audit_detail_level_status_banner"),
+                ) {
+                  Text(
+                    text = "✅ LV.${detailLevelSummary.previousLevel} → LV.${detailLevelSummary.newLevel} (${SwarUserIdentity.formatIndianNumber(detailLevelSummary.newHp)} HP)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF4527A0),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                   )
                 }
               }
