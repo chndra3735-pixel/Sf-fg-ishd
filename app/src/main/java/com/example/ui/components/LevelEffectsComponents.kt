@@ -80,8 +80,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
@@ -434,30 +440,117 @@ fun TypingBannerChatBubble(
   modifier: Modifier = Modifier,
   onClick: (() -> Unit)? = null,
 ) {
-  val hasBanner = bannerUrl.isNotBlank()
+  val trimmedBanner = bannerUrl.trim()
+  val hasBanner = trimmedBanner.isNotBlank()
+  val builtinTier = remember(trimmedBanner) { SwarUserIdentity.builtinTypingTierFromUrl(trimmedBanner) }
   val shape = RoundedCornerShape(if (hasBanner) 16.dp else 14.dp)
-  val baseModifier = modifier
-    .widthIn(min = if (hasBanner) 170.dp else 0.dp)
-    .height(IntrinsicSize.Min)
-    .clip(shape)
-    .then(
-      if (hasBanner) {
-        Modifier.border(
-          width = 1.2.dp,
-          brush = Brush.horizontalGradient(listOf(SwarGold, SwarCyan)),
-          shape = shape,
-        )
-      } else {
-        Modifier.background(Color(0x66000000))
-      }
-    )
-    .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
 
-  Box(modifier = baseModifier) {
-    if (hasBanner) {
+  if (!hasBanner) {
+    Box(
+      modifier = modifier
+        .clip(shape)
+        .background(Color(0x66000000))
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+    ) {
+      TypingBannerMessageRow(
+        senderName = senderName,
+        messageText = messageText,
+        badgeTag = badgeTag,
+        messageType = messageType,
+        hasBanner = false,
+        titleColor = SwarCyan,
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+      )
+    }
+    return
+  }
+
+  val infiniteTransition = rememberInfiniteTransition(label = "goldenTypingAnim")
+  val sheenX by infiniteTransition.animateFloat(
+    initialValue = -0.35f,
+    targetValue = 1.35f,
+    animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart),
+    label = "sheen",
+  )
+  val glowPulse by infiniteTransition.animateFloat(
+    initialValue = 0.55f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(tween(1150, easing = LinearEasing), RepeatMode.Reverse),
+    label = "glow",
+  )
+  val sparklePhase by infiniteTransition.animateFloat(
+    initialValue = 0f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Restart),
+    label = "sparkle",
+  )
+
+  val palette = remember(builtinTier) {
+    when (builtinTier) {
+      30 -> GoldenTypingPalette(
+        topBg = Color(0xFF211428),
+        bottomBg = Color(0xFF33200B),
+        rimPrimary = Color(0xFFFFD875),
+        rimSecondary = Color(0xFFFFA96B),
+        underGlowCore = Color(0xFFFFE588),
+        underGlowEdge = Color(0xFFFF9A3C),
+        badgeBg = Color(0xDD2C1930),
+        titleColor = Color(0xFFFFDF7C),
+      )
+      60 -> GoldenTypingPalette(
+        topBg = Color(0xFF0E1A3B),
+        bottomBg = Color(0xFF2C2109),
+        rimPrimary = Color(0xFFFFD54F),
+        rimSecondary = Color(0xFF56E4FF),
+        underGlowCore = Color(0xFFFFEA8A),
+        underGlowEdge = Color(0xFF38D4FF),
+        badgeBg = Color(0xDD132248),
+        titleColor = Color(0xFFFFE066),
+      )
+      90 -> GoldenTypingPalette(
+        topBg = Color(0xFF2E0B1A),
+        bottomBg = Color(0xFF3B2106),
+        rimPrimary = Color(0xFFFFD740),
+        rimSecondary = Color(0xFFFF5277),
+        underGlowCore = Color(0xFFFFEE99),
+        underGlowEdge = Color(0xFFFF4D6D),
+        badgeBg = Color(0xDD380F21),
+        titleColor = Color(0xFFFFE47A),
+      )
+      else -> GoldenTypingPalette(
+        topBg = Color(0xFF140F07),
+        bottomBg = Color(0xFF3F2B04),
+        rimPrimary = Color(0xFFFFF3B0),
+        rimSecondary = Color(0xFFFFAE00),
+        underGlowCore = Color(0xFFFFF8D6),
+        underGlowEdge = Color(0xFFFFB703),
+        badgeBg = Color(0xDD261904),
+        titleColor = Color(0xFFFFE885),
+      )
+    }
+  }
+
+  val animatedRimBrush = Brush.horizontalGradient(
+    colors = listOf(
+      palette.rimSecondary,
+      palette.rimPrimary,
+      Color.White.copy(alpha = 0.85f * glowPulse),
+      palette.rimPrimary,
+      palette.rimSecondary,
+    )
+  )
+
+  Box(
+    modifier = modifier
+      .widthIn(min = 188.dp)
+      .clip(shape)
+      .border(width = 1.5.dp, brush = animatedRimBrush, shape = shape)
+      .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+  ) {
+    if (builtinTier == null) {
       AsyncImage(
-        model = bannerUrl,
-        contentDescription = "टाइपिंग पट्टी बैकग्राउंड",
+        model = trimmedBanner,
+        contentDescription = "गोल्डन टाइपिंग पट्टी बैकग्राउंड",
         contentScale = ContentScale.Crop,
         modifier = Modifier.matchParentSize(),
       )
@@ -465,74 +558,248 @@ fun TypingBannerChatBubble(
         modifier = Modifier
           .matchParentSize()
           .background(
-            Brush.horizontalGradient(
+            Brush.verticalGradient(
               colors = listOf(
-                Color(0x9E0E0820),
-                Color(0x72120B26),
-                Color(0x880E0820),
+                Color(0xA610091F),
+                Color(0x7A140D22),
+                Color(0xBF281B05),
               )
+            )
+          ),
+      )
+    } else {
+      Box(
+        modifier = Modifier
+          .matchParentSize()
+          .background(
+            Brush.verticalGradient(
+              colors = listOf(palette.topBg, palette.topBg.copy(alpha = 0.94f), palette.bottomBg)
             )
           ),
       )
     }
 
-    Row(
-      modifier = Modifier.padding(
-        horizontal = if (hasBanner) 13.dp else 10.dp,
-        vertical = if (hasBanner) 8.dp else 6.dp,
-      ),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      if (badgeTag.isNotBlank()) {
-        Surface(
-          color = when (messageType) {
-            "gift" -> SwarCoral
-            "join" -> SwarViolet
-            else -> if (hasBanner) Color(0xCC241547) else SwarCyan.copy(alpha = 0.25f)
-          },
-          shape = RoundedCornerShape(8.dp),
-        ) {
-          Text(
-            text = badgeTag,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (hasBanner) SwarGold else Color.White,
-            fontWeight = if (hasBanner) FontWeight.Bold else FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-          )
-        }
-        Spacer(modifier = Modifier.width(6.dp))
-      }
-
-      val textShadow = if (hasBanner) {
-        Shadow(color = Color(0xCC000000), offset = Offset(1f, 1.5f), blurRadius = 4f)
-      } else {
-        null
-      }
-      Text(
-        text = buildAnnotatedString {
-          withStyle(
-            SpanStyle(
-              color = if (hasBanner) SwarGold else SwarCyan,
-              fontWeight = FontWeight.Bold,
-              shadow = textShadow,
-            )
-          ) {
-            append("$senderName: ")
-          }
-          withStyle(
-            SpanStyle(
-              color = Color.White,
-              fontWeight = if (hasBanner) FontWeight.SemiBold else FontWeight.Normal,
-              fontSize = if (messageType == "emoji") 15.sp else MaterialTheme.typography.bodySmall.fontSize,
-              shadow = textShadow,
-            )
-          ) {
-            append(messageText)
-          }
-        },
-        style = MaterialTheme.typography.bodySmall,
+    // Specular golden light sweep + sparkling luxury diamond glints across background
+    Canvas(modifier = Modifier.matchParentSize()) {
+      val bandW = size.width * 0.34f
+      val startX = (size.width + bandW) * sheenX - bandW
+      drawRect(
+        brush = Brush.linearGradient(
+          colors = listOf(
+            Color.Transparent,
+            palette.rimPrimary.copy(alpha = 0.16f * glowPulse),
+            Color.White.copy(alpha = 0.12f),
+            Color.Transparent,
+          ),
+          start = Offset(startX, 0f),
+          end = Offset(startX + bandW, size.height),
+        )
       )
+
+      // Delicate inner corner golden filigree brackets
+      val bracket = 9.dp.toPx()
+      val inset = 4.dp.toPx()
+      val accentStroke = 1.4.dp.toPx()
+      val cornerColor = palette.rimPrimary.copy(alpha = 0.72f * glowPulse)
+      drawLine(cornerColor, Offset(inset, inset + bracket), Offset(inset, inset), strokeWidth = accentStroke, cap = StrokeCap.Round)
+      drawLine(cornerColor, Offset(inset, inset), Offset(inset + bracket, inset), strokeWidth = accentStroke, cap = StrokeCap.Round)
+      drawLine(cornerColor, Offset(size.width - inset - bracket, inset), Offset(size.width - inset, inset), strokeWidth = accentStroke, cap = StrokeCap.Round)
+      drawLine(cornerColor, Offset(size.width - inset, inset), Offset(size.width - inset, inset + bracket), strokeWidth = accentStroke, cap = StrokeCap.Round)
+
+      // Twinkling golden stardust above & along the glowing floor
+      val starPositions = listOf(0.14f, 0.36f, 0.58f, 0.79f, 0.91f)
+      starPositions.forEachIndexed { idx, xFrac ->
+        val angle = (sparklePhase * 2f * PI + idx * 1.3).toFloat()
+        val alpha = ((sin(angle) * 0.5f) + 0.5f).coerceIn(0.15f, 0.95f)
+        val sx = size.width * xFrac
+        val sy = size.height * (if (idx % 2 == 0) 0.24f else 0.72f)
+        val r = (2.2f + (idx % 3) * 1.1f).dp.toPx()
+        val starPath = Path().apply {
+          moveTo(sx, sy - r)
+          lineTo(sx + r * 0.32f, sy - r * 0.32f)
+          lineTo(sx + r, sy)
+          lineTo(sx + r * 0.32f, sy + r * 0.32f)
+          lineTo(sx, sy + r)
+          lineTo(sx - r * 0.32f, sy + r * 0.32f)
+          lineTo(sx - r, sy)
+          lineTo(sx - r * 0.32f, sy - r * 0.32f)
+          close()
+        }
+        drawPath(starPath, color = Color(0xFFFFF4C2).copy(alpha = alpha))
+      }
     }
+
+    // Typed text sits cleanly on TOP; radiant golden animated floor shines UNDERNEATH
+    Column(modifier = Modifier.fillMaxWidth()) {
+      TypingBannerMessageRow(
+        senderName = senderName,
+        messageText = messageText,
+        badgeTag = badgeTag,
+        messageType = messageType,
+        hasBanner = true,
+        titleColor = palette.titleColor,
+        badgeBgColor = palette.badgeBg,
+        modifier = Modifier.padding(start = 13.dp, end = 13.dp, top = 8.dp, bottom = 5.dp),
+      )
+
+      // Luminous shimmering golden under-glow beam & rising light wave underneath the text
+      Canvas(
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(10.dp),
+      ) {
+        // Soft golden upward aura bloom underneath the text line
+        drawRect(
+          brush = Brush.verticalGradient(
+            colors = listOf(
+              Color.Transparent,
+              palette.underGlowEdge.copy(alpha = 0.28f * glowPulse),
+              palette.rimPrimary.copy(alpha = 0.55f * glowPulse),
+            )
+          )
+        )
+
+        // Flowing dual golden wave ribbons
+        val wavePath = Path()
+        val baseY = size.height * 0.62f
+        val amp = size.height * 0.24f
+        wavePath.moveTo(0f, baseY)
+        val steps = 24
+        for (i in 0..steps) {
+          val t = i.toFloat() / steps
+          val x = size.width * t
+          val y = baseY + sin((t * 4f + sparklePhase * 2f) * PI).toFloat() * amp
+          wavePath.lineTo(x, y)
+        }
+        drawPath(
+          path = wavePath,
+          brush = Brush.horizontalGradient(
+            colors = listOf(
+              palette.underGlowEdge.copy(alpha = 0.4f),
+              palette.underGlowCore.copy(alpha = 0.95f * glowPulse),
+              Color.White.copy(alpha = 0.9f),
+              palette.underGlowCore.copy(alpha = 0.95f * glowPulse),
+              palette.underGlowEdge.copy(alpha = 0.4f),
+            )
+          ),
+          style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+        )
+
+        // Bright gliding golden energy comet along the bottom shimmer bar
+        val cometCenter = (size.width * sparklePhase).coerceIn(0f, size.width)
+        val cometRadius = size.width * 0.22f
+        drawCircle(
+          brush = Brush.radialGradient(
+            colors = listOf(
+              Color.White.copy(alpha = 0.95f),
+              palette.underGlowCore.copy(alpha = 0.72f),
+              Color.Transparent,
+            ),
+            center = Offset(cometCenter, size.height * 0.75f),
+            radius = cometRadius.coerceAtLeast(18f),
+          ),
+          center = Offset(cometCenter, size.height * 0.75f),
+          radius = cometRadius.coerceAtLeast(18f),
+        )
+
+        // Bottom specular golden floor strip
+        drawLine(
+          brush = Brush.horizontalGradient(
+            colors = listOf(
+              Color.Transparent,
+              palette.rimPrimary,
+              Color.White,
+              palette.rimPrimary,
+              Color.Transparent,
+            )
+          ),
+          start = Offset(0f, size.height - 1.dp.toPx()),
+          end = Offset(size.width, size.height - 1.dp.toPx()),
+          strokeWidth = 2.dp.toPx(),
+        )
+      }
+    }
+  }
+}
+
+private data class GoldenTypingPalette(
+  val topBg: Color,
+  val bottomBg: Color,
+  val rimPrimary: Color,
+  val rimSecondary: Color,
+  val underGlowCore: Color,
+  val underGlowEdge: Color,
+  val badgeBg: Color,
+  val titleColor: Color,
+)
+
+@Composable
+private fun TypingBannerMessageRow(
+  senderName: String,
+  messageText: String,
+  badgeTag: String,
+  messageType: String,
+  hasBanner: Boolean,
+  titleColor: Color,
+  badgeBgColor: Color = Color(0xCC241547),
+  modifier: Modifier = Modifier,
+) {
+  Row(
+    modifier = modifier,
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    if (badgeTag.isNotBlank()) {
+      Surface(
+        color = when (messageType) {
+          "gift" -> SwarCoral
+          "join" -> SwarViolet
+          else -> if (hasBanner) badgeBgColor else SwarCyan.copy(alpha = 0.25f)
+        },
+        shape = RoundedCornerShape(8.dp),
+        modifier = if (hasBanner) {
+          Modifier.border(0.8.dp, SwarGold.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
+        } else Modifier,
+      ) {
+        Text(
+          text = badgeTag,
+          style = MaterialTheme.typography.labelSmall,
+          color = if (hasBanner) SwarGold else Color.White,
+          fontWeight = if (hasBanner) FontWeight.ExtraBold else FontWeight.Medium,
+          modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+      }
+      Spacer(modifier = Modifier.width(6.dp))
+    }
+
+    val textShadow = if (hasBanner) {
+      Shadow(color = Color(0xE6000000), offset = Offset(1f, 1.5f), blurRadius = 5f)
+    } else {
+      null
+    }
+    Text(
+      text = buildAnnotatedString {
+        withStyle(
+          SpanStyle(
+            color = titleColor,
+            fontWeight = FontWeight.ExtraBold,
+            shadow = textShadow,
+          )
+        ) {
+          append("$senderName: ")
+        }
+        withStyle(
+          SpanStyle(
+            color = Color.White,
+            fontWeight = if (hasBanner) FontWeight.SemiBold else FontWeight.Normal,
+            fontSize = if (messageType == "emoji") 15.sp else MaterialTheme.typography.bodySmall.fontSize,
+            shadow = textShadow,
+          )
+        ) {
+          append(messageText)
+        }
+      },
+      style = MaterialTheme.typography.bodySmall,
+    )
   }
 }
 
@@ -585,8 +852,9 @@ fun LevelTierDetailConfiguratorDialog(
   var badgeLink by remember(tier.badgeLevel, config.profileBadgeUrl) { mutableStateOf(config.profileBadgeUrl) }
   var badgeUri by remember(tier.badgeLevel) { mutableStateOf<Uri?>(null) }
 
+  val supportsTypingBox = remember(tier.badgeLevel) { SwarUserIdentity.isTypingBoxTier(tier.badgeLevel) }
   var typingBannerLink by remember(tier.badgeLevel, config.typingBannerUrl) {
-    mutableStateOf(config.typingBannerUrl)
+    mutableStateOf(if (supportsTypingBox) config.typingBannerUrl else "")
   }
   var typingBannerUri by remember(tier.badgeLevel) { mutableStateOf<Uri?>(null) }
 
@@ -625,7 +893,12 @@ fun LevelTierDetailConfiguratorDialog(
 
   val previewFrameModel = frameUri?.toString() ?: frameLink.trim()
   val previewBadgeModel = badgeUri?.toString() ?: badgeLink.trim()
-  val previewTypingBannerModel = typingBannerUri?.toString() ?: typingBannerLink.trim()
+  val previewTypingBannerModel = if (supportsTypingBox) {
+    typingBannerUri?.toString()
+      ?: typingBannerLink.trim().ifBlank { SwarUserIdentity.defaultTypingBannerForTier(tier.badgeLevel) }
+  } else {
+    ""
+  }
   val previewVideoSource = entryVideoUri?.toString() ?: entryVideoLink.trim()
   val parsedCoins = coinsInput.trim().toLongOrNull()?.coerceIn(0L, 999999L) ?: 0L
 
@@ -840,13 +1113,13 @@ fun LevelTierDetailConfiguratorDialog(
               )
             }
 
-            // Live Typing Patti ("टाइपिंग पट्टी") Chat Bubble Preview
-            if (previewTypingBannerModel.isNotBlank()) {
+            // Live Typing Patti ("टाइपिंग पट्टी") Chat Bubble Preview — exclusively for LV.30 / 60 / 90 / 120
+            if (supportsTypingBox && previewTypingBannerModel.isNotBlank()) {
               Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                  text = "टाइपिंग पट्टी लाइव प्रीव्यू (चैट करते समय ऐसा दिखेगा):",
+                  text = "✨ ${SwarUserIdentity.typingBoxThemeTitle(previewTypingBannerModel)} — लाइव एनीमेशन प्रीव्यू:",
                   style = MaterialTheme.typography.labelSmall,
-                  color = SwarMint,
+                  color = SwarGold,
                   fontWeight = FontWeight.Bold,
                 )
                 TypingBannerChatBubble(
@@ -993,10 +1266,14 @@ fun LevelTierDetailConfiguratorDialog(
           }
         }
 
-        // Admin Configurator: Entry Video + Avatar Frame + Coins + Profile Badge + Typing Patti
+        // Admin Configurator: Entry Video + Avatar Frame + Coins + Profile Badge (+ Typing Patti ONLY on 30/60/90/120)
         if (isAdminUser) {
           Text(
-            text = "लेवल कार्ड सेटअप (सभी 5 विकल्प)",
+            text = if (supportsTypingBox) {
+              "लेवल कार्ड सेटअप (सभी 5 विकल्प — गोल्डन टाइपिंग पट्टी सहित)"
+            } else {
+              "लेवल कार्ड सेटअप (टाइपिंग पट्टी केवल LV.30, 60, 90, 120 पर उपलब्ध)"
+            },
             style = MaterialTheme.typography.labelLarge,
             color = SwarGold,
             fontWeight = FontWeight.ExtraBold,
@@ -1155,54 +1432,56 @@ fun LevelTierDetailConfiguratorDialog(
             }
           }
 
-          // Row 3: Typing Patti ("टाइपिंग पट्टी") Link + Upload
-          Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            Row(
+          // Row 3: Typing Patti ("टाइपिंग पट्टी") Link + Upload — ONLY visible on LV.30, 60, 90, 120
+          if (supportsTypingBox) {
+            Column(
               modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-              verticalAlignment = Alignment.CenterVertically,
+              verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-              OutlinedTextField(
-                value = typingBannerLink,
-                onValueChange = { typingBannerLink = it },
-                label = { Text("टाइपिंग पट्टी लिंक (Chat Bubble)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                placeholder = { Text("GIF / PNG / WebP / Pin लिंक पेस्ट करें") },
-                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Message, contentDescription = null, tint = SwarCyan) },
-                singleLine = true,
-                colors = adminFieldColors(),
-                modifier = Modifier
-                  .weight(1f)
-                  .testTag("tier_typing_banner_input"),
-              )
-              OutlinedButton(
-                onClick = {
-                  typingBannerPicker.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                  )
-                },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                modifier = Modifier
-                  .height(52.dp)
-                  .testTag("pick_tier_typing_banner_button"),
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
               ) {
-                Icon(Icons.Filled.PhotoLibrary, contentDescription = null, tint = SwarCyan, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                  text = if (typingBannerUri != null) "चुनी ✓" else "अपलोड",
-                  color = Color.White,
-                  fontSize = 12.sp,
-                  maxLines = 1,
+                OutlinedTextField(
+                  value = typingBannerLink,
+                  onValueChange = { typingBannerLink = it },
+                  label = { Text("टाइपिंग पट्टी (LV.${tier.badgeLevel} गोल्डन या कस्टम लिंक)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                  placeholder = { Text("खाली छोड़ें = बिल्ट-इन 24K गोल्डन पट्टी") },
+                  leadingIcon = { Icon(Icons.AutoMirrored.Filled.Message, contentDescription = null, tint = SwarGold) },
+                  singleLine = true,
+                  colors = adminFieldColors(),
+                  modifier = Modifier
+                    .weight(1f)
+                    .testTag("tier_typing_banner_input"),
                 )
+                OutlinedButton(
+                  onClick = {
+                    typingBannerPicker.launch(
+                      PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                  },
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  modifier = Modifier
+                    .height(52.dp)
+                    .testTag("pick_tier_typing_banner_button"),
+                ) {
+                  Icon(Icons.Filled.PhotoLibrary, contentDescription = null, tint = SwarGold, modifier = Modifier.size(16.dp))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text(
+                    text = if (typingBannerUri != null) "चुनी ✓" else "अपलोड",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                  )
+                }
               }
+              Text(
+                text = "बिल्ट-इन 24K गोल्डन एनीमेशन पहले से सक्रिय है — ऊपर टाइपिंग दिखेगी और नीचे चमकता एनीमेशन।",
+                style = MaterialTheme.typography.labelSmall,
+                color = SwarGold.copy(alpha = 0.85f),
+              )
             }
-            Text(
-              text = "रूम में टाइप करने पर आपका टेक्स्ट इसी सुंदर पट्टी के ऊपर लिखकर आएगा",
-              style = MaterialTheme.typography.labelSmall,
-              color = Color(0xFFB3ACDC),
-            )
           }
 
           Button(
@@ -1216,8 +1495,8 @@ fun LevelTierDetailConfiguratorDialog(
                 parsedCoins,
                 badgeLink,
                 badgeUri,
-                typingBannerLink,
-                typingBannerUri,
+                if (supportsTypingBox) typingBannerLink else "",
+                if (supportsTypingBox) typingBannerUri else null,
                 onDismiss,
               )
             },

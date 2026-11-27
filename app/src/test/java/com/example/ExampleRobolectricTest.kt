@@ -161,6 +161,7 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("profile_level_row").performScrollTo().performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("level_cards_showcase_dialog").assertIsDisplayed()
+    // Non-milestone LV.1 must NOT offer typing banner input
     composeTestRule.onNodeWithTag("level_card_1").performClick()
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("level_tier_detail_sheet").assertIsDisplayed()
@@ -168,13 +169,20 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("tier_frame_input").performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("tier_coins_input").performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("tier_badge_input").performScrollTo().assertIsDisplayed()
+    composeTestRule.onNodeWithTag("tier_typing_banner_input").assertDoesNotExist()
+    composeTestRule.onNodeWithTag("close_tier_detail_button").performClick()
+    composeTestRule.waitForIdle()
+
+    // Milestone LV.30 MUST have built-in Golden preview & typing banner input
+    composeTestRule.onNodeWithTag("level_card_30").performScrollTo().performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("typing_banner_live_preview").performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("tier_typing_banner_input").performScrollTo()
       .performTextInput("https://cdn.example.com/royal_patti.gif")
     composeTestRule.waitForIdle()
-    composeTestRule.onNodeWithTag("typing_banner_live_preview").performScrollTo().assertIsDisplayed()
     composeTestRule.onNodeWithTag("save_level_config_button").performScrollTo().performClick()
     composeTestRule.waitForIdle()
-    assertEquals(1, savedBadgeLevel)
+    assertEquals(30, savedBadgeLevel)
     assertEquals(0L, savedCoins)
     assertEquals("https://cdn.example.com/royal_patti.gif", savedTypingBannerLink)
     composeTestRule.onNodeWithTag("close_level_cards_button").performClick()
@@ -199,12 +207,7 @@ class ExampleRobolectricTest {
       messageType = "text",
       badgeTag = "VIP",
     )
-    val configs = mapOf(
-      1 to com.example.data.model.LevelTierConfig(
-        badgeLevel = 1L,
-        typingBannerUrl = "https://cdn.example.com/vip_banner.png",
-      )
-    )
+    val hp30 = SwarUserIdentity.requiredHpForLevel(30)
     composeTestRule.setContent {
       SwarRoomTheme {
         com.example.ui.screens.VoiceRoomScreen(
@@ -215,6 +218,7 @@ class ExampleRobolectricTest {
           isAdminUser = false,
           isUploadingMedia = false,
           userCoins = 2500L,
+          userHp = hp30,
           emojiCatalog = emptyList(),
           giftCatalog = emptyList(),
           latestMarqueeGift = null,
@@ -223,7 +227,7 @@ class ExampleRobolectricTest {
           isSpeakerOn = true,
           isMonitorLoopbackOn = false,
           micAudioLevel = 0f,
-          levelConfigs = configs,
+          levelConfigs = emptyMap(),
           onLeaveRoom = {},
           onSeatTapped = { _, _, _ -> },
           onLeaveSeat = {},
@@ -252,6 +256,15 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithTag("room_message_typing_banner_msg_patti_1").assertIsDisplayed()
     composeTestRule.onNodeWithText("शानदार गायकी!", substring = true, useUnmergedTree = true).assertIsDisplayed()
+
+    // Opening composer shows live Golden Animated Typing Box preview above input
+    composeTestRule.onNodeWithTag("say_hello_bar").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("room_live_typing_preview").assertIsDisplayed()
+    composeTestRule.onNodeWithTag("room_chat_input").performTextInput("गोल्डन आवाज़ टेस्ट")
+    composeTestRule.waitForIdle()
+    composeTestRule.onAllNodesWithText("गोल्डन आवाज़ टेस्ट", substring = true, useUnmergedTree = true)
+      .onFirst().assertIsDisplayed()
   }
 
   @Test
@@ -2184,9 +2197,11 @@ class ExampleRobolectricTest {
     composeTestRule.waitForIdle()
     assertEquals(10L, equippedFrame)
 
-    composeTestRule.onNodeWithTag("style_typing_option_10").performScrollTo().performClick()
+    // Typing box is ONLY on 30, 60, 90, 120 — LV.10 option must not exist
+    composeTestRule.onNodeWithTag("style_typing_option_10").assertDoesNotExist()
+    composeTestRule.onNodeWithTag("style_typing_option_30").performScrollTo().performClick()
     composeTestRule.waitForIdle()
-    assertEquals(10L, equippedTyping)
+    assertEquals(30L, equippedTyping)
 
     composeTestRule.onNodeWithTag("style_entry_option_10").performScrollTo().performClick()
     composeTestRule.waitForIdle()

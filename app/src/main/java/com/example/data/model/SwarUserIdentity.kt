@@ -586,14 +586,48 @@ object SwarUserIdentity {
     return null
   }
 
+  const val BUILTIN_TYPING_PREFIX = "builtin://golden_typing_"
+  val TYPING_BOX_TIER_LEVELS: Set<Int> = setOf(30, 60, 90, 120)
+
+  fun isTypingBoxTier(badgeLevel: Int): Boolean = badgeLevel in TYPING_BOX_TIER_LEVELS
+
+  fun defaultTypingBannerForTier(badgeLevel: Int): String {
+    return if (isTypingBoxTier(badgeLevel)) "$BUILTIN_TYPING_PREFIX$badgeLevel" else ""
+  }
+
+  fun effectiveTierTypingBannerUrl(
+    badgeLevel: Int,
+    configs: Map<Int, LevelTierConfig>,
+  ): String {
+    if (!isTypingBoxTier(badgeLevel)) return ""
+    val custom = configs[badgeLevel]?.typingBannerUrl?.trim().orEmpty()
+    return custom.ifBlank { defaultTypingBannerForTier(badgeLevel) }
+  }
+
+  fun builtinTypingTierFromUrl(bannerUrl: String): Int? {
+    val trimmed = bannerUrl.trim()
+    if (!trimmed.startsWith(BUILTIN_TYPING_PREFIX)) return null
+    return trimmed.removePrefix(BUILTIN_TYPING_PREFIX).toIntOrNull()?.takeIf { isTypingBoxTier(it) }
+  }
+
+  fun typingBoxThemeTitle(bannerUrl: String): String = when (builtinTypingTierFromUrl(bannerUrl)) {
+    30 -> "गोल्डन चैंपेन प्रीमियम (LV.30)"
+    60 -> "रॉयल सफायर गोल्ड (LV.60)"
+    90 -> "इंपीरियल रूबी गोल्ड (LV.90)"
+    120 -> "सुप्रीम 24K महाराजा गोल्ड (LV.120)"
+    else -> "गोल्डन प्रीमियम टाइपिंग पट्टी"
+  }
+
   fun highestUnlockedTypingBannerUrl(
     level: Int,
     configs: Map<Int, LevelTierConfig>,
   ): String {
     val unlocked = unlockedTiersForLevel(level).asReversed()
     for (tier in unlocked) {
-      val url = configs[tier.badgeLevel]?.typingBannerUrl?.trim().orEmpty()
-      if (url.isNotBlank()) return url
+      if (isTypingBoxTier(tier.badgeLevel)) {
+        val url = effectiveTierTypingBannerUrl(tier.badgeLevel, configs)
+        if (url.isNotBlank()) return url
+      }
     }
     return ""
   }
@@ -630,7 +664,7 @@ object SwarUserIdentity {
   }
 
   /**
-   * Resolves active chat typing banner URL based on user choice (0L = plain bubble, >0L = chosen unlocked tier, -1L = auto highest).
+   * Resolves active chat typing banner URL based on user choice (0L = plain bubble, >0L = chosen unlocked milestone tier 30/60/90/120, -1L = auto highest).
    */
   fun resolvedTypingBannerUrl(
     level: Int,
@@ -640,10 +674,13 @@ object SwarUserIdentity {
     if (equippedLevel == 0L) return ""
     val safeLevel = level.coerceIn(1, 120)
     if (equippedLevel > 0L) {
-      val tier = levelTiers.firstOrNull { it.badgeLevel == equippedLevel.toInt() }
-      if (tier != null && safeLevel >= tier.minLevel) {
-        val url = configs[tier.badgeLevel]?.typingBannerUrl?.trim().orEmpty()
-        if (url.isNotBlank()) return url
+      val targetBadge = equippedLevel.toInt()
+      if (isTypingBoxTier(targetBadge)) {
+        val tier = levelTiers.firstOrNull { it.badgeLevel == targetBadge }
+        if (tier != null && safeLevel >= tier.minLevel) {
+          val url = effectiveTierTypingBannerUrl(tier.badgeLevel, configs)
+          if (url.isNotBlank()) return url
+        }
       }
     }
     return highestUnlockedTypingBannerUrl(safeLevel, configs)

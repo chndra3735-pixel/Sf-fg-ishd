@@ -212,10 +212,16 @@ class ExampleUnitTest {
       "https://cdn.example.com/frame_lv20.webp",
       SwarUserIdentity.highestUnlockedFrameUrl(25, configs),
     )
+    // Typing box is exclusively on 30/60/90/120: LV.25 has none even if old config has lv1/lv20
     assertEquals(
-      "https://cdn.example.com/patti_lv20.gif",
+      "",
       SwarUserIdentity.highestUnlockedTypingBannerUrl(25, configs),
     )
+    // Even with empty configs, built-in Golden Premium Typing Box activates at 30, 60, 90, 120
+    assertEquals("builtin://golden_typing_30", SwarUserIdentity.highestUnlockedTypingBannerUrl(30, emptyMap()))
+    assertEquals("builtin://golden_typing_60", SwarUserIdentity.highestUnlockedTypingBannerUrl(60, emptyMap()))
+    assertEquals("builtin://golden_typing_90", SwarUserIdentity.highestUnlockedTypingBannerUrl(90, emptyMap()))
+    assertEquals("builtin://golden_typing_120", SwarUserIdentity.highestUnlockedTypingBannerUrl(120, emptyMap()))
     val entry = SwarUserIdentity.highestUnlockedEntryVideo(25, configs)
     assertNotNull(entry)
     assertEquals(1, entry?.first?.badgeLevel)
@@ -711,6 +717,11 @@ class ExampleUnitTest {
         typingBannerUrl = "https://cdn.example.com/typing_lv10.png",
         entryVideoUrl = "https://cdn.example.com/entry_lv10.mp4",
       ),
+      30 to com.example.data.model.LevelTierConfig(
+        badgeLevel = 30,
+        avatarFrameUrl = "https://cdn.example.com/frame_lv30.png",
+        entryVideoUrl = "https://cdn.example.com/entry_lv30.mp4",
+      ),
       120 to com.example.data.model.LevelTierConfig(
         badgeLevel = 120,
         avatarFrameUrl = "https://cdn.example.com/frame_lv120.png",
@@ -724,9 +735,13 @@ class ExampleUnitTest {
     assertEquals("https://cdn.example.com/typing_lv120.png", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, -1L))
     assertEquals(120, SwarUserIdentity.resolvedEntryVideo(120, configs, -1L)?.first?.badgeLevel)
 
-    // Explicit lower unlocked tier (LV.10) works when user is LV.120
+    // Explicit lower unlocked tier: frame/entry support LV.10, typing box supports LV.30/60/90/120 built-in golden
     assertEquals("https://cdn.example.com/frame_lv10.png", SwarUserIdentity.resolvedFrameUrl(120, configs, 10L))
-    assertEquals("https://cdn.example.com/typing_lv10.png", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 10L))
+    assertEquals("builtin://golden_typing_30", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 30L))
+    assertEquals("builtin://golden_typing_60", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 60L))
+    assertEquals("builtin://golden_typing_90", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 90L))
+    // Non-milestone LV.10 typing box request falls back to auto (120) rather than equipping LV.10
+    assertEquals("https://cdn.example.com/typing_lv120.png", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 10L))
     assertEquals("https://cdn.example.com/entry_lv10.mp4", SwarUserIdentity.resolvedEntryVideo(120, configs, 10L)?.second)
 
     // Plain / unequipped (0L) returns blank/null
@@ -734,17 +749,17 @@ class ExampleUnitTest {
     assertEquals("", SwarUserIdentity.resolvedTypingBannerUrl(120, configs, 0L))
     assertNull(SwarUserIdentity.resolvedEntryVideo(120, configs, 0L))
 
-    // If admin lowers user's level from 120 down to 10 while LV.120 was equipped, it falls back safely to LV.10
+    // If admin lowers user's level from 120 down to 35 while LV.120 was equipped, typing falls back to LV.30 golden
     val downgradedProfile = com.example.data.model.UserProfile(
       userId = "u_cos",
-      hp = SwarUserIdentity.requiredHpForLevel(10),
+      hp = SwarUserIdentity.requiredHpForLevel(35),
       equippedFrameLevel = 120L,
       equippedTypingLevel = 120L,
       equippedEntryVideoLevel = 120L,
     )
-    assertEquals("https://cdn.example.com/frame_lv10.png", SwarUserIdentity.resolvedFrameUrl(downgradedProfile, configs))
-    assertEquals("https://cdn.example.com/typing_lv10.png", SwarUserIdentity.resolvedTypingBannerUrl(downgradedProfile, configs))
-    assertEquals(10, SwarUserIdentity.resolvedEntryVideo(downgradedProfile, configs)?.first?.badgeLevel)
+    assertEquals("https://cdn.example.com/frame_lv30.png", SwarUserIdentity.resolvedFrameUrl(downgradedProfile, configs))
+    assertEquals("builtin://golden_typing_30", SwarUserIdentity.resolvedTypingBannerUrl(downgradedProfile, configs))
+    assertEquals(30, SwarUserIdentity.resolvedEntryVideo(downgradedProfile, configs)?.first?.badgeLevel)
   }
 
   @Test

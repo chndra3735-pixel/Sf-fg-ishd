@@ -1015,49 +1015,73 @@ fun VoiceRoomScreen(
       // Quick reaction space handled by EmojiPanelSheet modal below
 
       // Live Text Message Composer (expands cleanly above bottom bar)
+      val ownLevel = remember(effectiveOwnHp) { SwarUserIdentity.levelForCoins(effectiveOwnHp).level }
+      val ownActiveTypingBanner = remember(ownLevel, levelConfigs, ownEquippedTypingLevel) {
+        SwarUserIdentity.resolvedTypingBannerUrl(ownLevel, levelConfigs, ownEquippedTypingLevel)
+      }
       AnimatedVisibility(visible = showComposer) {
-        Row(
+        Column(
           modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xCC120B26))
+            .background(Color(0xD9120B26))
             .padding(horizontal = 12.dp, vertical = 8.dp),
-          verticalAlignment = Alignment.CenterVertically,
+          verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          OutlinedTextField(
-            value = composerText,
-            onValueChange = { composerText = it.take(500) },
-            placeholder = { Text("लाइव संदेश लिखें...", color = Color(0xFFA7A0C8)) },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedTextColor = Color.White,
-              unfocusedTextColor = Color.White,
-              focusedBorderColor = SwarCyan,
-              unfocusedBorderColor = Color(0x55FFFFFF),
-            ),
-            shape = RoundedCornerShape(24.dp),
-            modifier = Modifier
-              .weight(1f)
-              .testTag("room_chat_input"),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          IconButton(
-            onClick = {
-              if (composerText.isNotBlank()) {
-                onSendMessage(composerText, "text")
-                composerText = ""
-                showComposer = false
-              }
-            },
-            modifier = Modifier
-              .size(48.dp)
-              .clip(CircleShape)
-              .background(SwarCyan)
-              .testTag("room_chat_send_button"),
-          ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "भेजें", tint = Color(0xFF051824))
+          if (ownActiveTypingBanner.isNotBlank()) {
+            TypingBannerChatBubble(
+              senderName = currentUserName.ifBlank { "आप" },
+              messageText = composerText.ifBlank { "आपका गोल्डन लाइव संदेश यहाँ दिखेगा... ✨" },
+              badgeTag = "LV.$ownLevel",
+              bannerUrl = ownActiveTypingBanner,
+              modifier = Modifier
+                .fillMaxWidth()
+                .testTag("room_live_typing_preview"),
+            )
           }
-          IconButton(onClick = { showComposer = false }) {
-            Icon(Icons.Filled.Close, contentDescription = "बंद करें", tint = Color.White)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            OutlinedTextField(
+              value = composerText,
+              onValueChange = { composerText = it.take(500) },
+              placeholder = { Text("लाइव संदेश लिखें...", color = Color(0xFFA7A0C8)) },
+              singleLine = true,
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedBorderColor = if (ownActiveTypingBanner.isNotBlank()) SwarGold else SwarCyan,
+                unfocusedBorderColor = if (ownActiveTypingBanner.isNotBlank()) SwarGold.copy(alpha = 0.55f) else Color(0x55FFFFFF),
+              ),
+              shape = RoundedCornerShape(24.dp),
+              modifier = Modifier
+                .weight(1f)
+                .testTag("room_chat_input"),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(
+              onClick = {
+                if (composerText.isNotBlank()) {
+                  onSendMessage(composerText, "text")
+                  composerText = ""
+                  showComposer = false
+                }
+              },
+              modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(if (ownActiveTypingBanner.isNotBlank()) SwarGold else SwarCyan)
+                .testTag("room_chat_send_button"),
+            ) {
+              Icon(
+                Icons.AutoMirrored.Filled.Send,
+                contentDescription = "भेजें",
+                tint = Color(0xFF051824),
+              )
+            }
+            IconButton(onClick = { showComposer = false }) {
+              Icon(Icons.Filled.Close, contentDescription = "बंद करें", tint = Color.White)
+            }
           }
         }
       }

@@ -3389,28 +3389,31 @@ class SwarRoomViewModel(
           }
         }
 
-        var finalTypingBannerUrl = VideoLinkResolver.extractFirstHttpUrl(typingBannerLink)
-        if (typingBannerImageUri != null) {
-          val up = supabaseStorage.uploadMediaFromUri(
-            uri = typingBannerImageUri,
-            folder = "level_typing_banners",
-            uid = currentUserId,
-            isVideo = false,
-          )
-          up.onSuccess { finalTypingBannerUrl = it }
-            .onFailure { err ->
-              _events.tryEmit(err.message ?: "टाइपिंग पट्टी अपलोड विफल")
-              return@launch
+        var finalTypingBannerUrl = ""
+        if (SwarUserIdentity.isTypingBoxTier(badgeLevel)) {
+          finalTypingBannerUrl = VideoLinkResolver.extractFirstHttpUrl(typingBannerLink)
+          if (typingBannerImageUri != null) {
+            val up = supabaseStorage.uploadMediaFromUri(
+              uri = typingBannerImageUri,
+              folder = "level_typing_banners",
+              uid = currentUserId,
+              isVideo = false,
+            )
+            up.onSuccess { finalTypingBannerUrl = it }
+              .onFailure { err ->
+                _events.tryEmit(err.message ?: "टाइपिंग पट्टी अपलोड विफल")
+                return@launch
+              }
+          } else if (finalTypingBannerUrl.isNotBlank() && finalTypingBannerUrl.length <= 800 &&
+            !finalTypingBannerUrl.lowercase().let {
+              it.contains(".gif") || it.contains(".png") || it.contains(".webp") || it.contains(".jpg") || it.contains(".jpeg") || it.contains("supabase.co")
             }
-        } else if (finalTypingBannerUrl.isNotBlank() && finalTypingBannerUrl.length <= 800 &&
-          !finalTypingBannerUrl.lowercase().let {
-            it.contains(".gif") || it.contains(".png") || it.contains(".webp") || it.contains(".jpg") || it.contains(".jpeg") || it.contains("supabase.co")
-          }
-        ) {
-          kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            VideoLinkResolver.resolveImageUrl(finalTypingBannerUrl)
-          }.onSuccess { resolved ->
-            if (resolved.length <= 800) finalTypingBannerUrl = resolved
+          ) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+              VideoLinkResolver.resolveImageUrl(finalTypingBannerUrl)
+            }.onSuccess { resolved ->
+              if (resolved.length <= 800) finalTypingBannerUrl = resolved
+            }
           }
         }
 

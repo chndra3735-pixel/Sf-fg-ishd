@@ -345,17 +345,17 @@ fun LevelTierLargeCard(
             }
           }
         }
-        if (config.typingBannerUrl.isNotBlank()) {
+        if (SwarUserIdentity.isTypingBoxTier(tier.badgeLevel)) {
           Surface(
-            color = SwarViolet.copy(alpha = 0.25f),
+            color = SwarGold.copy(alpha = 0.22f),
             shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.border(0.8.dp, SwarViolet.copy(alpha = 0.6f), RoundedCornerShape(8.dp)),
+            modifier = Modifier.border(0.8.dp, SwarGold.copy(alpha = 0.72f), RoundedCornerShape(8.dp)),
           ) {
             Text(
-              text = "पट्टी",
+              text = "गोल्डन पट्टी",
               fontSize = 8.sp,
-              color = Color.White,
-              fontWeight = FontWeight.Bold,
+              color = SwarGold,
+              fontWeight = FontWeight.ExtraBold,
               modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
             )
           }
@@ -1160,15 +1160,16 @@ private fun MyStyleCosmeticsTab(
       onSelectLevel = { choice -> onEquipCosmetic(choice, null, null) },
     )
 
-    // 4. Typing Banner / Box Picker
+    // 4. Typing Banner / Box Picker — Exclusively LV.30 / 60 / 90 / 120
     CosmeticTierPickerSection(
-      title = "💬 टाइपिंग बॉक्स / पट्टी (चुनें या सादा रखें)",
+      title = "💬 गोल्डन टाइपिंग बॉक्स (केवल LV.30, 60, 90, 120)",
       unlockedTiers = unlockedTiers,
       equippedLevel = equippedTypingLevel,
-      hasAsset = { badge -> levelConfigs[badge]?.typingBannerUrl?.isNotBlank() == true },
+      hasAsset = { badge -> SwarUserIdentity.isTypingBoxTier(badge) },
       tagPrefix = "style_typing_option",
       plainLabel = "सादा चैट बबल",
       autoLabel = "ऑटो (उच्चतम)",
+      emptyHint = "पहला गोल्डन टाइपिंग बॉक्स LV.30 पर खुलेगा (फिर LV.60, LV.90 और LV.120 पर)।",
       onSelectLevel = { choice -> onEquipCosmetic(null, choice, null) },
     )
 
@@ -1195,6 +1196,7 @@ private fun CosmeticTierPickerSection(
   tagPrefix: String,
   plainLabel: String,
   autoLabel: String,
+  emptyHint: String = "अनलॉक स्तरों में अभी कस्टम मीडिया नहीं जुड़ा है — फिर भी आप 'सादा' या 'ऑटो' चुन सकते हैं।",
   onSelectLevel: (Long) -> Unit,
 ) {
   Surface(
@@ -1248,7 +1250,7 @@ private fun CosmeticTierPickerSection(
       val availableTiers = unlockedTiers.filter { hasAsset(it.badgeLevel) }
       if (availableTiers.isEmpty()) {
         Text(
-          text = "अनलॉक स्तरों में अभी कस्टम मीडिया नहीं जुड़ा है — फिर भी आप 'सादा' या 'ऑटो' चुन सकते हैं।",
+          text = emptyHint,
           style = MaterialTheme.typography.labelSmall,
           color = Color(0xFF9F98C4),
         )
